@@ -29,8 +29,8 @@ func TestList(t *testing.T) {
 	show := r.Get("/articles/{slug}", httpkernel.Endpoint(controller{}.Show))
 	second := nextLine()
 	r.Group("/admin").Handle("/", echo())
-	if info := show.Info(); info.Name != "" {
-		t.Errorf("before Name: %+v", info)
+	if name := r.List()[0].Name; name != "" {
+		t.Errorf("name before Name: %q", name)
 	}
 	show.Name("article_show")
 
@@ -38,7 +38,7 @@ func TestList(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("%d routes, want 2", len(got))
 	}
-	if a := got[0]; a != show.Info() || a.Name != "article_show" || a.Method != "GET" || a.Path != "/articles/{slug}" ||
+	if a := got[0]; a.Name != "article_show" || a.Method != "GET" || a.Path != "/articles/{slug}" ||
 		a.Pattern != "GET /articles/{slug}" || a.Source != first {
 		t.Errorf("first route = %+v", a)
 	}

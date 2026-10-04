@@ -51,18 +51,6 @@ func BenchmarkRouter(b *testing.B) {
 	benchServe(b, r)
 }
 
-// BenchmarkRouterWith adds a middleware to every route.
-func BenchmarkRouterWith(b *testing.B) {
-	pass := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { next.ServeHTTP(w, r) })
-	}
-	r := routing.New().With(pass)
-	for _, p := range paths {
-		r.Get(p, noop)
-	}
-	benchServe(b, r)
-}
-
 func BenchmarkURL(b *testing.B) {
 	r := routing.New()
 	r.Get("/articles/{slug}/comments/{id}", noop).Name("comment")

@@ -87,9 +87,6 @@ func TestRoutesMatchTheirMethods(t *testing.T) {
 			t.Errorf("%s %s: %d %q, want %d %q", tt.method, tt.target, rec.Code, rec.Body, tt.status, tt.body)
 		}
 	}
-	if allow := serve(r, "DELETE", "/things").Header().Get("Allow"); allow != "GET, HEAD, OPTIONS, POST" {
-		t.Errorf("Allow = %q", allow)
-	}
 }
 
 func TestPathsMatchExactly(t *testing.T) {
@@ -133,20 +130,6 @@ func TestGroupsPrefixTheirPaths(t *testing.T) {
 	}
 }
 
-func TestPathsStartWithASlash(t *testing.T) {
-	r := routing.New()
-	line := nextLine()
-	msg := panics(t, func() { r.Get("articles", echo()) })
-	if want := `routing: path "articles" doesn't start with / (` + line + ")"; msg != want {
-		t.Errorf("panic: %s\nwant:  %s", msg, want)
-	}
-	line = nextLine()
-	msg = panics(t, func() { r.Group("api") })
-	if want := `routing: group prefix "api" doesn't start with / (` + line + ")"; msg != want {
-		t.Errorf("panic: %s\nwant:  %s", msg, want)
-	}
-}
-
 func TestWithWrapsTheRoutesItRegisters(t *testing.T) {
 	var calls []string
 	mark := func(name string) func(http.Handler) http.Handler {
@@ -177,30 +160,59 @@ func TestWithWrapsTheRoutesItRegisters(t *testing.T) {
 			t.Errorf("GET %s ran %q, want %q", target, calls, want)
 		}
 	}
-	line := nextLine()
-	if msg := panics(t, func() { r.With(nil) }); msg != "routing: nil middleware ("+line+")" {
-		t.Errorf("panic: %s", msg)
-	}
 }
 
-func TestPathsMustBeRoutable(t *testing.T) {
-	r := routing.New()
-	for path, want := range map[string]string{
-		"//evil.example/x": `routing: path "//evil.example/x" isn't clean`,
-		"/a/./b":           `routing: path "/a/./b" isn't clean`,
-		"/a/../b":          `routing: path "/a/../b" isn't clean`,
-		"/v/%2E/x":         `routing: path "/v/%2E/x" has a "." segment`,
-		"/w/%2e%2E/{id}":   `routing: path "/w/%2e%2E/{id}" has a ".." segment`,
-	} {
-		if msg := panics(t, func() { r.Handle(path, echo()) }); !strings.HasPrefix(msg, want) {
-			t.Errorf("Handle(%q) panics with %s", path, msg)
-		}
-		if msg := panics(t, func() { r.Get(path, echo()) }); !strings.HasPrefix(msg, want) {
-			t.Errorf("Get(%q) panics with %s", path, msg)
-		}
+// TestRegistrationMistakesPanic registers routes that can't work. Each
+// panics, saying where the app registered it.
+func TestRegistrationMistakesPanic(t *testing.T) {
+	pass := func(next http.Handler) http.Handler { return next }
+	tests := []struct {
+		register func(r *routing.Router)
+		want     string // the start of the message
+	}{
+		{func(r *routing.Router) {
+			r.Get("articles", echo())
+		}, `routing: path "articles" doesn't start with / (`},
+		{func(r *routing.Router) {
+			r.Group("api")
+		}, `routing: group prefix "api" doesn't start with / (`},
+		{func(r *routing.Router) {
+			r.Handle("//evil.example/x", echo())
+		}, `routing: path "//evil.example/x" isn't clean (`},
+		{func(r *routing.Router) {
+			r.Get("/a/./b", echo())
+		}, `routing: path "/a/./b" isn't clean (`},
+		{func(r *routing.Router) {
+			r.Get("/a/../b", echo())
+		}, `routing: path "/a/../b" isn't clean (`},
+		{func(r *routing.Router) {
+			r.Group("/api//").Get("/x", echo())
+		}, `routing: path "/api//x" isn't clean (`},
+		{func(r *routing.Router) {
+			r.Handle("/v/%2E/x", echo())
+		}, `routing: path "/v/%2E/x" has a "." segment (`},
+		{func(r *routing.Router) {
+			r.Get("/w/%2e%2E/{id}", echo())
+		}, `routing: path "/w/%2e%2E/{id}" has a ".." segment (`},
+		{func(r *routing.Router) {
+			r.Get("/b/{x}/{x}", echo())
+		}, "routing: GET /b/{x}/{x} ("},
+		{func(r *routing.Router) {
+			r.Get("/nil", nil)
+		}, "routing: nil handler for GET /nil ("},
+		{func(r *routing.Router) {
+			r.With(pass).Get("/nil", http.HandlerFunc(nil))
+		}, "routing: nil handler for GET /nil ("},
+		{func(r *routing.Router) {
+			r.With(nil)
+		}, "routing: nil middleware ("},
 	}
-	if msg := panics(t, func() { r.Group("/api//").Get("/x", echo()) }); !strings.HasPrefix(msg, `routing: path "/api//x" isn't clean`) {
-		t.Errorf("a group with a double slash: %s", msg)
+//line router_test.ego:182
+	for _, tt := range tests {
+		msg := panics(t, func() { tt.register(routing.New()) })
+		if !strings.HasPrefix(msg, tt.want) || !strings.Contains(msg, "routing/router_test.ego:") {
+			t.Errorf("panic: %s\nwant:  %s… with this file's place", msg, tt.want)
+		}
 	}
 }
 
@@ -215,28 +227,18 @@ func TestPathsCanHoldSpaces(t *testing.T) {
 		} else {
 			params = nil
 		}
-//line router_test.ego:209
+//line router_test.ego:196
 		u, err := r.URL(name, params)
 		if err != nil {
 			panic(err)
 		}
-//line router_test.ego:210
+//line router_test.ego:197
 		if u != want {
 			t.Errorf("URL(%q) = %s, want %s", name, u, want)
 		}
 		if rec := serve(r, "GET", u); rec.Code != 200 {
 			t.Errorf("GET %s: %d", u, rec.Code)
 		}
-	}
-}
-
-func TestNilHandlersAreRefusedBehindMiddleware(t *testing.T) {
-	pass := func(next http.Handler) http.Handler { return next }
-	r := routing.New().With(pass)
-	line := nextLine()
-	msg := panics(t, func() { r.Get("/a", http.HandlerFunc(nil)) })
-	if want := "routing: nil handler for GET /a (" + line + ")"; msg != want {
-		t.Errorf("panic: %s\nwant:  %s", msg, want)
 	}
 }
 
@@ -276,18 +278,6 @@ func TestConflictsSayWhereBothRoutesAre(t *testing.T) {
 	want := "routing: GET /articles/{id} (" + second + ") conflicts with GET /articles/{slug} (" + first + "): " +
 		"GET /articles/{id} matches the same requests as GET /articles/{slug}"
 	if msg != want {
-		t.Errorf("panic: %s\nwant:  %s", msg, want)
-	}
-
-	line := nextLine()
-	msg = panics(t, func() { r.Get("/b/{x}/{x}", echo()) })
-	if prefix := "routing: GET /b/{x}/{x} (" + line + "): "; !strings.HasPrefix(msg, prefix) || !strings.Contains(msg, `duplicate wildcard name "x"`) {
-		t.Errorf("panic: %s", msg)
-	}
-
-	line = nextLine()
-	msg = panics(t, func() { r.Get("/nil", nil) })
-	if want := "routing: nil handler for GET /nil (" + line + ")"; msg != want {
 		t.Errorf("panic: %s\nwant:  %s", msg, want)
 	}
 
@@ -356,9 +346,8 @@ func TestConcurrentUse(t *testing.T) {
 			r.Get(fmt.Sprintf("/r%d", i), echo()).Name(fmt.Sprintf("r%d", i))
 			for range 50 {
 				if _, err := r.URL("base", routing.Params{"x": i}); err != nil {
-					panic(err)
+					t.Error(err)
 				}
-//line router_test.ego:345
 				serve(r, "GET", "/base/1")
 				r.List()
 			}

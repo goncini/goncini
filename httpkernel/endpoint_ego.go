@@ -52,19 +52,25 @@ type endpoint[In, Out any] struct {
 }
 
 func (e *endpoint[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if st := stateOf(r.Context()); st != nil {
+	st := stateOf(r.Context())
+	if st != nil {
 		// Middleware may have changed the request, such as its Host.
 		st.request = r
 		if r.Pattern != "" {
 			st.pattern = r.Pattern
 		}
 	}
+	var k *Kernel
+	if st != nil {
+		k = st.kernel
+	}
+//line endpoint.ego:60
 	var in In
-	if err := e.b.bind(w, r, reflect.ValueOf(&in).Elem(), kernelOf(r.Context()).bodyLimit()); err != nil {
+	if err := e.b.bind(w, r, reflect.ValueOf(&in).Elem(), k.bodyLimit()); err != nil {
 		WriteError(w, r, err)
 		return
 	}
-	if err := validate(r.Context(), &in); err != nil {
+	if err := validate(r.Context(), k, &in); err != nil {
 		WriteError(w, r, err)
 		return
 	}
@@ -113,14 +119,14 @@ func (k *Kernel) bodyLimit() int64 {
 }
 
 // validate checks a bound input: with its own Validate method if it has
-// one, then with the kernel's Validator.
-func validate(ctx context.Context, in any) error {
+// one, then with the Validator of k, the kernel serving the request if any.
+func validate(ctx context.Context, k *Kernel, in any) error {
 	if v, ok := in.(interface{ Validate() error }); ok {
 		if err := v.Validate(); err != nil {
 			return err
 		}
 	}
-	if k := kernelOf(ctx); k != nil && k.Validator != nil {
+	if k != nil && k.Validator != nil {
 		return k.Validator.Validate(ctx, in)
 	}
 	return nil

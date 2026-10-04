@@ -94,7 +94,7 @@ type Articles struct {
 	mu     sync.Mutex
 	bySlug map[string]Article
 	now    func() time.Time
-	show   *routing.Route // builds the URL of an article
+	show   *routing.Route // the route of an article, for its URL: set by Routes
 }
 
 func NewArticles(now func() time.Time) *Articles {

@@ -21,13 +21,6 @@ type Info struct {
 	Source  string       // where it was registered, as file:line
 }
 
-// Info describes the route.
-func (r *Route) Info() Info {
-	r.t.mu.RLock()
-	defer r.t.mu.RUnlock()
-	return r.info()
-}
-
 func (r *Route) info() Info {
 	return Info{Name: r.name, Method: r.method, Path: r.path, Pattern: r.pattern, Handler: r.handler, Source: r.source}
 }
@@ -76,7 +69,7 @@ func WriteTable(w io.Writer, routes []Info) error {
 		} else {
 			method = "ANY"
 		}
-//line list.ego:70
+//line list.ego:63
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Name, method, r.Path, describe(r.Handler))
 	}
 	return tw.Flush()

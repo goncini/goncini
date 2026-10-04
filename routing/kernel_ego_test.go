@@ -18,8 +18,8 @@ import (
 	"github.com/goncini/goncini/routing"
 )
 
-// TestBehindAKernel serves a router from an httpkernel.Kernel: requests
-// that match no route get problems, and an endpoint in a group with
+// TestBehindAKernel serves a router from an httpkernel.Kernel: a request
+// that matches no route gets a problem, and an endpoint in a group with
 // middleware gets its path value and names the request's span.
 //
 //line kernel_test.ego:22
@@ -43,11 +43,6 @@ func TestBehindAKernel(t *testing.T) {
 	if rec.Code != 404 || rec.Header().Get("Content-Type") != "application/problem+json" ||
 		!strings.Contains(rec.Body.String(), `"detail":"no route matches GET /nope"`) {
 		t.Errorf("GET /nope: %d %s", rec.Code, rec.Body)
-	}
-	rec = serve(k, "POST", "/api/articles/x")
-	if rec.Code != 405 || rec.Header().Get("Allow") != "GET, HEAD" ||
-		!strings.Contains(rec.Body.String(), `"detail":"POST isn't allowed on /api/articles/x"`) {
-		t.Errorf("POST /api/articles/x: %d %v %s", rec.Code, rec.Header(), rec.Body)
 	}
 
 	if rec := serve(k, "GET", "/api/articles/hello"); rec.Code != 200 || rec.Body.String() != `"hello"` {

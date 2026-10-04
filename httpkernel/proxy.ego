@@ -233,6 +233,11 @@ func Host(r *http.Request) string {
 //	self := httpkernel.BaseURL(ctx) + must a.show.URL(routing.Params{"slug": art.Slug})
 //
 // It is "" outside a Kernel, which keeps the request for it.
+//
+// Without trusted proxies, the host is the request's Host header, which the
+// client chooses. That is fine for links in the response itself, but a URL
+// that outlives it, in an email or a stored record, should start with a
+// configured base URL instead.
 func BaseURL(ctx context.Context) string {
 	st := stateOf(ctx)
 	r := st?.request

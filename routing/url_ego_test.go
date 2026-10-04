@@ -46,7 +46,7 @@ func TestURL(t *testing.T) {
 	}{
 		{"home", nil, "/"},
 		{"list", nil, "/articles"},
-		{"list", routing.Params{"page": 2, "tag": []string{"go", "api"}, "draft": nil}, "/articles?page=2&tag=go&tag=api"},
+		{"list", routing.Params{"page": 2, "tag": []string{"go", "", "api"}, "q": "", "none": []string{""}, "draft": nil}, "/articles?page=2&tag=go&tag=api"},
 		{"show", routing.Params{"slug": "hello-world"}, "/articles/hello-world"},
 		{"show", routing.Params{"slug": "a b/c?d#e%f"}, "/articles/a%20b%2Fc%3Fd%23e%25f"},
 		{"show", routing.Params{"slug": "été"}, "/articles/%C3%A9t%C3%A9"},
@@ -184,18 +184,5 @@ func TestURLErrors(t *testing.T) {
 	unnamed := r.Get("/unnamed/{x}", echo())
 	if _, err := unnamed.URL(nil); err == nil || err.Error() != `route "GET /unnamed/{x}" needs parameter "x"` {
 		t.Errorf("unnamed route: %v", err)
-	}
-}
-
-func TestQueryLeavesEmptyValuesOut(t *testing.T) {
-	r := routing.New()
-	r.Get("/articles", echo()).Name("list")
-	u, err := r.URL("list", routing.Params{"q": "", "tag": []string{"go", "", "api"}, "none": []string{""}, "nil": (*int)(nil)})
-	if err != nil {
-		panic(err)
-	}
-//line url_test.ego:169
-	if u != "/articles?tag=go&tag=api" {
-		t.Errorf("URL = %s", u)
 	}
 }

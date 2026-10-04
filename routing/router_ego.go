@@ -170,8 +170,9 @@ type Route struct {
 	segments   []segment
 }
 
-// add registers h, wrapped in r's middleware, for method and path. It is
-// called by the registering methods, which are called by the app.
+// add registers h, wrapped in r's middleware, for method and path. Only the
+// registering methods call it, so caller(2) is where the app registered the
+// route.
 func (r *Router) add(method, path string, h http.Handler) *Route {
 	source := caller(2)
 	if path != "" && !strings.HasPrefix(path, "/") {
@@ -181,7 +182,7 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 	if path == "" {
 		path = "/"
 	}
-	checkPath(path, source)
+	mustBeRoutable(path, source)
 	muxPath := spaces.Replace(path)
 	if strings.HasSuffix(muxPath, "/") {
 		muxPath += "{$}" // exactly this path, not the paths below it
@@ -192,7 +193,7 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 	} else {
 		pattern = muxPath
 	}
-//line router.ego:186
+//line router.ego:187
 	if f, ok := h.(http.HandlerFunc); h == nil || ok && f == nil {
 		panic(fmt.Sprintf("routing: nil handler for %s (%s)", pattern, source))
 	}
@@ -218,10 +219,10 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 // comes before a space as the method, and unescapes the text to match.
 var spaces = strings.NewReplacer(" ", "%20", "\t", "%09")
 
-// checkPath panics if ServeMux can't route path as it is: if it would
+// mustBeRoutable panics if ServeMux can't route p as it is: if it would
 // redirect requests for it to a cleaner path, or if it has a . or ..
 // segment, even escaped, which clients resolve away.
-func checkPath(p, source string) {
+func mustBeRoutable(p, source string) {
 	clean := pathpkg.Clean(p)
 	if strings.HasSuffix(p, "/") && clean != "/" {
 		clean += "/"
@@ -234,7 +235,7 @@ func checkPath(p, source string) {
 		if err != nil {
 			text = s
 		}
-//line router.ego:224
+//line router.ego:225
 		if text == "." || text == ".." {
 			panic(fmt.Sprintf("routing: path %q has a %q segment (%s), which clients resolve away", p, text, source))
 		}

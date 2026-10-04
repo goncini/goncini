@@ -256,13 +256,18 @@ func Host(r *http.Request) string {
 //	self := httpkernel.BaseURL(ctx) + must a.show.URL(routing.Params{"slug": art.Slug})
 //
 // It is "" outside a Kernel, which keeps the request for it.
+//
+// Without trusted proxies, the host is the request's Host header, which the
+// client chooses. That is fine for links in the response itself, but a URL
+// that outlives it, in an email or a stored record, should start with a
+// configured base URL instead.
 func BaseURL(ctx context.Context) string {
 	st := stateOf(ctx)
 	var r *http.Request
 	if st != nil {
 		r = st.request
 	}
-//line proxy.ego:239
+//line proxy.ego:244
 	if r == nil {
 		return ""
 	}
@@ -282,7 +287,7 @@ func schemeOf(c client, r *http.Request) string {
 	return v
 }
 
-//line proxy.ego:250
+//line proxy.ego:255
 func hostOf(c client, r *http.Request) string {
 	var v string
 	if c.host != "" {
@@ -296,7 +301,7 @@ func hostOf(c client, r *http.Request) string {
 // clientOf is what trusted proxies reported about the request ctx belongs
 // to: nothing, outside Proxies.Middleware.
 //
-//line proxy.ego:256
+//line proxy.ego:261
 func clientOf(ctx context.Context) client {
 	v, ok := ctx.Value(clientKey{}).(client)
 	if !ok {
@@ -307,7 +312,7 @@ func clientOf(ctx context.Context) client {
 
 // remoteAddr is the address r came from, without the port.
 //
-//line proxy.ego:261
+//line proxy.ego:266
 func remoteAddr(r *http.Request) netip.Addr {
 	return parseNode(r.RemoteAddr)
 }
@@ -342,7 +347,7 @@ func parseNode(node string) netip.Addr {
 	if err != nil {
 		ap = netip.AddrPort{}
 	}
-//line proxy.ego:292
+//line proxy.ego:297
 	if ap.IsValid() {
 		return ap.Addr().Unmap()
 	}
@@ -350,7 +355,7 @@ func parseNode(node string) netip.Addr {
 	if err != nil {
 		a = netip.Addr{}
 	}
-//line proxy.ego:296
+//line proxy.ego:301
 	return a.Unmap()
 }
 

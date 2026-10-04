@@ -30,6 +30,9 @@ Worth knowing:
   behind a `ServeMux` or a `routing.Router`.
 - Binding errors on path, query and header values are 400s; validation
   errors (`Invalid`) are 422s.
+- `BaseURL` takes the host from the request: without trusted proxies, that is
+  the Host header the client sent. A URL that outlives the response should
+  start with a configured base URL.
 - encoding/json/v2 has no default form for `time.Duration`: use a string
   field, or an encoding of your own.
 - **Cost per request (Apple M4 Pro):**

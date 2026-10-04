@@ -179,7 +179,7 @@ Each step is a package that works in any `net/http` app, the way Laravel uses Sy
 2. **`routing`:** names, groups, URLs, the route listing.
 3. **Argument binding and `validator`:** typed inputs from the path, query, headers and body, with violations.
 4. **`httpkernel`'s HttpKernel half:** typed handlers, error mapping and the renderer swap, the panic boundary, request scopes, shutdown.
-5. **Config, console, `goncini.Main`, logging and tracing.**
+5. **Config, console, `goncini.Main`, logging and tracing.** With config come trusted hosts, so that `httpkernel.BaseURL` can't use a host the client made up.
 6. **`db`, `security` (lite) and `webtest`.**
 7. **The RealWorld app**, wired by hand, then the remaining gates: the plain-Go comparison, AGENTS.md and the agent test.
 8. **`goncini generate`**, if the hand-written wiring got annoying.
