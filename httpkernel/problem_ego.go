@@ -16,7 +16,7 @@ import (
 //
 //	return httpkernel.Problem{Status: http.StatusConflict, Detail: "this username is taken"}
 //
-//line problem.ego:11
+//line problem.ego:15
 type Problem struct {
 	// Type is a URI reference identifying the kind of problem. Empty means
 	// "about:blank": the status says it all.
@@ -68,7 +68,7 @@ func (p Problem) Error() string {
 
 // status is p's status, or 500 if it isn't an error status.
 //
-//line problem.ego:58
+//line problem.ego:59
 func (p Problem) status() int {
 	if p.Status < 400 || p.Status > 599 {
 		return http.StatusInternalServerError

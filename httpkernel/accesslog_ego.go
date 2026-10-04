@@ -15,7 +15,7 @@ import (
 // the real client address. Its records carry the request's trace ID when
 // logger's handler is wrapped with effect-go's trace.LogHandler.
 //
-//line accesslog.ego:9
+//line accesslog.ego:15
 func AccessLog(logger *slog.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

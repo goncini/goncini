@@ -15,7 +15,7 @@ import (
 
 // ArticleError is what the articles service of the tests fails with.
 //
-//line articles_test.ego:9
+//line articles_test.ego:10
 type ArticleError interface {
 	error
 	isArticleError()
@@ -71,7 +71,7 @@ func (e ArticleStorage) As(target any) bool {
 // articleProblem is the response to each case: a new case doesn't compile
 // until it has one.
 //
-//line articles_test.ego:16
+//line articles_test.ego:18
 func articleProblem(err error) httpkernel.Problem {
 	var v httpkernel.Problem
 	if err == nil {
@@ -90,7 +90,7 @@ func articleProblem(err error) httpkernel.Problem {
 
 // articleProblems pairs the set with its problems, once.
 //
-//line articles_test.ego:27
+//line articles_test.ego:28
 var articleProblems = httpkernel.Map[ArticleError](articleProblem)
 
 type articles struct {

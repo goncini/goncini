@@ -19,7 +19,7 @@ import (
 
 // echo answers with the pattern that matched, then the named path values.
 //
-//line router_test.ego:18
+//line router_test.ego:19
 func echo(names ...string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, r.Pattern)

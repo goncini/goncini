@@ -15,7 +15,7 @@ import (
 
 // controller has a typed handler, as an app's controllers do.
 //
-//line list_test.ego:14
+//line list_test.ego:15
 type controller struct{}
 
 type showIn struct {

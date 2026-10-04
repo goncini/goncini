@@ -15,7 +15,7 @@ import (
 // CacheControl is the value of a Cache-Control response header. The zero
 // value writes no header.
 //
-//line cache.ego:12
+//line cache.ego:14
 type CacheControl struct {
 	// MaxAge is how long the response stays fresh (max-age).
 	MaxAge time.Duration

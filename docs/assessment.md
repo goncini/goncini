@@ -183,7 +183,7 @@ func dbConfig(c Config) db.Config                                       { return
 >   - a pointer to an error case didn't match as the case (337b365);
 >   - external test packages written in `.ego` loaded the standard library twice, so they failed to generate (43a81b8).
 >
->   goncini requires v0.2.0, which pins the library and the `ego` tool together.
+>   goncini requires v0.2.1, which pins the library and the `ego` tool together.
 > - Everything is written in `.ego`, tests included (decided). The generated Go is committed next to each file, and stack traces point at the `.ego` lines.
 >
 > **Status (2026-10-04, later):** step 2 is built: [`routing`](../routing), used by examples/articles. Choices made while building it:
@@ -200,7 +200,7 @@ func dbConfig(c Config) db.Config                                       { return
 > - **Cost:** serving through a `Router` costs what the ServeMux does (125 ns and 2 allocations for 10 routes); a middleware adds a few ns. Building a URL takes 490 ns.
 > - **An independent review found 9 defects,** all fixed with regression tests. The two that mattered: a `{name}` value of `/` gave a URL no route served, and URL could return a URL that a more specific route served. The others: conflict messages that could name the wrong route, unclean paths and spaces accepted or refused depending on whether the route had a method, a typed-nil handler that slipped through when wrapped in middleware, empty query values that didn't come back, a panic without its location, and docs promising more than the formatting did.
 > - **Not built yet:** host routes; requirements (ServeMux has no regexes, so `/articles/abc` for an integer id is a 400 from binding rather than a 404); absolute URLs, which need the request's scheme and host where a typed endpoint can't see the request; and redirects between `/x` and `/x/`, beyond the one ServeMux makes.
-> - **What it found:** the example's `Location` header held raw UTF-8 for a slug like `café`, and a title without letters or digits made an empty slug; the first is escaped now and the second is a 422. In effect-go, comments on error-set cases don't reach the generated Go, so `go doc` shows the cases undocumented (reported).
+> - **What it found:** the example's `Location` header held raw UTF-8 for a slug like `café`, and a title without letters or digits made an empty slug; the first is escaped now and the second is a 422. In effect-go, comments on error-set cases didn't reach the generated Go, so `go doc` showed the cases undocumented; looking into it, the effect-go session also found that documented declarations after an error set got wrong //line positions, so stack traces pointed up to 16 lines off in 23 of goncini's files. Both are fixed in v0.2.1.
 
 Each step is a package that works in any `net/http` app, the way Laravel uses Symfony's HttpFoundation. effect-go matters most from step 4.
 

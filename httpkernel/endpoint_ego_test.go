@@ -18,7 +18,7 @@ import (
 
 // code is a parameter type of its own: it parses itself, in upper case.
 //
-//line endpoint_test.ego:17
+//line endpoint_test.ego:18
 type code string
 
 func (c *code) UnmarshalText(b []byte) error {

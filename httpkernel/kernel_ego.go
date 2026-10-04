@@ -39,7 +39,7 @@ import (
 //
 // Set the fields before the first request and don't change them after.
 //
-//line kernel.ego:23
+//line kernel.ego:39
 type Kernel struct {
 	// Handler serves the requests: a router, or an *http.ServeMux.
 	Handler http.Handler
@@ -265,7 +265,7 @@ func stateOf(ctx context.Context) *state {
 
 // kernelOf returns the kernel serving the request ctx belongs to, or nil.
 //
-//line kernel.ego:258
+//line kernel.ego:259
 func kernelOf(ctx context.Context) *Kernel {
 	st := stateOf(ctx)
 	var v *Kernel
@@ -284,7 +284,7 @@ func kernelOf(ctx context.Context) *Kernel {
 // goroutine that outlives the handler can't use it: work that must go on
 // after the response belongs in a longer-lived scope.
 //
-//line kernel.ego:264
+//line kernel.ego:272
 func RequestScope(ctx context.Context) *scope.Scope {
 	st := stateOf(ctx)
 	var v *scope.Scope
@@ -303,7 +303,7 @@ func RequestScope(ctx context.Context) *scope.Scope {
 // done) gets no response. If the response has already started, the problem
 // can only be logged.
 //
-//line kernel.ego:277
+//line kernel.ego:285
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	k := kernelOf(r.Context())
 	if clientGone(r.Context(), err) {
@@ -377,7 +377,7 @@ func (k *Kernel) logger() *slog.Logger {
 // log logs a failed request: 5xx problems as errors, with err (and a panic's
 // stack), and the others at debug level.
 //
-//line kernel.ego:336
+//line kernel.ego:338
 func (k *Kernel) log(r *http.Request, err error, p Problem) {
 	attrs := []slog.Attr{slog.Int("status", p.status())}
 	if pe, ok := errors.AsType[*scope.Panic](err); ok {
@@ -422,7 +422,7 @@ func routeOf(r *http.Request) string {
 
 // debugProblem adds what went wrong to a 5xx problem, for development.
 //
-//line kernel.ego:370
+//line kernel.ego:371
 func debugProblem(p Problem, err error) Problem {
 	if pe, ok := errors.AsType[*scope.Panic](err); ok {
 		p.Detail = fmt.Sprintf("panic: %v", pe.Value)

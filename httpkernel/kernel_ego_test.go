@@ -33,7 +33,7 @@ import (
 // logged returns a logger that writes JSON records, debug ones included, to
 // the returned buffer.
 //
-//line kernel_test.ego:31
+//line kernel_test.ego:33
 func logged() (*slog.Logger, *bytes.Buffer) {
 	var buf bytes.Buffer
 	return slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})), &buf

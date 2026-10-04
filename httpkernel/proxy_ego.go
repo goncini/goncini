@@ -18,7 +18,7 @@ import (
 // and X-Forwarded-Host, which most of them set. Set Forwarded for proxies
 // that set the standard Forwarded header instead.
 //
-//line proxy.ego:11
+//line proxy.ego:18
 type Proxies struct {
 	// Forwarded makes the proxies trusted for the Forwarded header (RFC
 	// 7239) instead of the X-Forwarded-* headers. Only one family is read:
@@ -197,7 +197,7 @@ func cleanScheme(s string) string {
 // cleanHost returns host if it is made of what a host name, an IP address
 // and a port can be made of, and "" otherwise.
 //
-//line proxy.ego:184
+//line proxy.ego:186
 func cleanHost(host string) string {
 	if host == "" || len(host) > 255 {
 		return ""
@@ -237,7 +237,7 @@ func ClientIP(r *http.Request) netip.Addr {
 // Scheme returns "https" or "http": as reported by trusted proxies, or else
 // depending on whether r came over TLS.
 //
-//line proxy.ego:216
+//line proxy.ego:218
 func Scheme(r *http.Request) string {
 	c := clientOf(r)
 	var v string
@@ -254,7 +254,7 @@ func Scheme(r *http.Request) string {
 // Host returns the host the client asked for, with its port if any: as
 // reported by trusted proxies, or else r.Host.
 //
-//line proxy.ego:223
+//line proxy.ego:225
 func Host(r *http.Request) string {
 	c := clientOf(r)
 	var v string
@@ -269,7 +269,7 @@ func Host(r *http.Request) string {
 // clientOf is what trusted proxies reported about r: nothing, outside
 // Proxies.Middleware.
 //
-//line proxy.ego:230
+//line proxy.ego:232
 func clientOf(r *http.Request) client {
 	v, ok := r.Context().Value(clientKey{}).(client)
 	if !ok {
@@ -280,7 +280,7 @@ func clientOf(r *http.Request) client {
 
 // remoteAddr is the address r came from, without the port.
 //
-//line proxy.ego:236
+//line proxy.ego:237
 func remoteAddr(r *http.Request) netip.Addr {
 	return parseNode(r.RemoteAddr)
 }

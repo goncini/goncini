@@ -11,7 +11,7 @@ import (
 
 // Info describes a route.
 //
-//line list.ego:10
+//line list.ego:11
 type Info struct {
 	Name    string       // empty for a route without a name
 	Method  string       // empty for a route of every method

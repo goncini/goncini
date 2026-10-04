@@ -19,7 +19,7 @@ import (
 // Params are the parameters of a URL by name: the values of the route's
 // wildcards, then query parameters.
 //
-//line url.ego:15
+//line url.ego:17
 type Params map[string]any
 
 // URLError is everything building a URL can fail with. Each case is a
@@ -29,6 +29,7 @@ type URLError interface {
 	isURLError()
 }
 
+// UnknownRoute means that no route has the name.
 type UnknownRoute struct{ Name string }
 
 func (UnknownRoute) isURLError() {}
@@ -44,6 +45,8 @@ func (e UnknownRoute) As(target any) bool {
 	return false
 }
 
+// MissingParam means that a wildcard of the route has no value. Route
+// is the route's name, or its pattern if it has none.
 type MissingParam struct {
 	Route string
 	Param string
@@ -64,6 +67,8 @@ func (e MissingParam) As(target any) bool {
 	return false
 }
 
+// InvalidParam means that a value can't be part of the URL, for the
+// Reason given, such as "is empty".
 type InvalidParam struct {
 	Route  string
 	Param  string
@@ -85,6 +90,9 @@ func (e InvalidParam) As(target any) bool {
 	return false
 }
 
+// Shadowed means that another route, By, would serve the URL: a more
+// specific one, such as /articles/feed for /articles/{slug} with the
+// slug "feed".
 type Shadowed struct {
 	Route string
 	URL   string
@@ -108,7 +116,7 @@ func (e Shadowed) As(target any) bool {
 
 // URL returns the URL of the route named name, with params. See Route.URL.
 //
-//line url.ego:47
+//line url.ego:48
 func (r *Router) URL(name string, params Params) (string, error) {
 	r.t.mu.RLock()
 	route := r.t.byName[name]
@@ -281,7 +289,7 @@ func (t *table) label(pattern string) string {
 
 // hasWildcard reports whether the route has a wildcard with the name.
 //
-//line url.ego:182
+//line url.ego:183
 func (r *Route) hasWildcard(name string) bool {
 	for _, s := range r.segments {
 		if (s.kind == wildcard || s.kind == remainder) && s.text == name {
@@ -307,7 +315,7 @@ func (r *Route) label() string {
 
 // absent reports whether v is nil, or a nil pointer.
 //
-//line url.ego:200
+//line url.ego:201
 func absent(v any) bool {
 	rv := reflect.ValueOf(v)
 	return !rv.IsValid() || rv.Kind() == reflect.Pointer && rv.IsNil()
@@ -389,10 +397,10 @@ func format(v any) (string, error) {
 type segmentKind int
 
 const (
-	fixed segmentKind = iota
-	wildcard
-	remainder
-	trailing
+	fixed     segmentKind = iota // text
+	wildcard                     // {name}
+	remainder                    // {name...}
+	trailing                     // {$}, after a trailing slash
 )
 
 func (v segmentKind) String() string {
@@ -411,7 +419,7 @@ func (v segmentKind) String() string {
 
 // segment is a part of a route's path, between slashes.
 //
-//line url.ego:273
+//line url.ego:274
 type segment struct {
 	kind segmentKind
 	text string // fixed: the text, escaped; wildcards: the name

@@ -40,7 +40,7 @@ import (
 // The handler has a String method naming h, which route listings show:
 // articles.(*Controller).Show.
 //
-//line endpoint.ego:12
+//line endpoint.ego:40
 func Endpoint[In, Out any](h func(context.Context, In) (Out, error)) http.Handler {
 	return &endpoint[In, Out]{h: h, b: newBinder(reflect.TypeFor[In]())}
 }

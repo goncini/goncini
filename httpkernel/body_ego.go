@@ -17,7 +17,7 @@ import (
 // DefaultBodyLimit is the most bytes DecodeJSON reads from a request body:
 // 1 MiB.
 //
-//line body.ego:14
+//line body.ego:16
 const DefaultBodyLimit = 1 << 20
 
 // BodyError is everything DecodeJSON can fail with. ProblemFor gives each
@@ -163,7 +163,7 @@ func (e BodyUnsupportedType) As(target any) bool {
 // a BodyMalformed even if a value doesn't fit its field. A BodyDecoder has
 // other settings.
 //
-//line body.ego:37
+//line body.ego:48
 func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
 	return BodyDecoder{}.Decode(w, r, v)
 }
@@ -287,7 +287,7 @@ func bodyProblem(err error) Problem {
 // invalidBody is the 422 for a value that doesn't fit its field, with a
 // violation pointing at it.
 //
-//line body.ego:157
+//line body.ego:159
 func invalidBody(e BodyInvalid) Problem {
 	return Problem{
 		Status: http.StatusUnprocessableEntity,

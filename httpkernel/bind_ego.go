@@ -19,7 +19,7 @@ import (
 // binder fills the input of an Endpoint from a request. It is built once,
 // when the Endpoint is.
 //
-//line bind.ego:16
+//line bind.ego:18
 type binder struct {
 	params []param
 	body   int // index of the Body field, or -1
@@ -143,7 +143,7 @@ func (s paramSource) tag() string {
 // throughPointer reports whether the field at index is reached through an
 // embedded pointer, which may be nil.
 //
-//line bind.ego:126
+//line bind.ego:128
 func throughPointer(t reflect.Type, index []int) bool {
 	for _, i := range index[:len(index)-1] {
 		f := t.Field(i)

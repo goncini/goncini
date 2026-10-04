@@ -21,7 +21,7 @@ import (
 
 // Article is what the API serves.
 //
-//line articles.ego:15
+//line articles.ego:16
 type Article struct {
 	Slug      string    `json:"slug"`
 	Title     string    `json:"title"`
@@ -69,7 +69,7 @@ func (e Duplicate) As(target any) bool {
 // Problem says what each ArticleError looks like over HTTP. A new case
 // doesn't compile until it has an arm here.
 //
-//line articles.ego:30
+//line articles.ego:32
 func Problem(err error) httpkernel.Problem {
 	var v httpkernel.Problem
 	if err == nil {
@@ -86,7 +86,7 @@ func Problem(err error) httpkernel.Problem {
 
 // Problems is what a kernel registers to answer ArticleErrors.
 //
-//line articles.ego:40
+//line articles.ego:41
 var Problems = httpkernel.Map[ArticleError](Problem)
 
 // Articles keeps the articles in memory.

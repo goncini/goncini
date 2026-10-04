@@ -25,7 +25,7 @@ import (
 //
 // A Router is safe for concurrent use. Make one with New.
 //
-//line router.ego:17
+//line router.ego:25
 type Router struct {
 	t          *table
 	prefix     string

@@ -7,7 +7,7 @@ import "net/http"
 // ResponseTracker is an http.ResponseWriter that records what is written
 // through it: the status, the body size, and whether the headers are out.
 //
-//line response.ego:5
+//line response.ego:7
 type ResponseTracker struct {
 	w      http.ResponseWriter
 	status int
@@ -29,7 +29,7 @@ func TrackResponse(w http.ResponseWriter) *ResponseTracker {
 
 // Header returns the header map of the response.
 //
-//line response.ego:22
+//line response.ego:23
 func (t *ResponseTracker) Header() http.Header { return t.w.Header() }
 
 // WriteHeader sends the status. Informational statuses (1xx, except 101) can

@@ -24,7 +24,7 @@ import (
 //		scope.Main(func(s *scope.Scope) error { return srv.ListenAndServe(s.Context()) })
 //	}
 //
-//line server.ego:15
+//line server.ego:24
 type Server struct {
 	// Addr is the TCP address to listen on, such as ":8080"; empty means
 	// ":http".

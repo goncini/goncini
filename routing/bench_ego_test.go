@@ -14,7 +14,7 @@ import (
 // discard is a ResponseWriter that keeps nothing, so that benchmarks measure
 // the routing.
 //
-//line bench_test.ego:11
+//line bench_test.ego:13
 type discard struct{ h http.Header }
 
 func (d *discard) Header() http.Header         { return d.h }

@@ -26,7 +26,7 @@ import (
 //		return err
 //	}
 //
-//line params.ego:13
+//line params.ego:24
 type Params struct {
 	in         paramSource
 	values     func(name string) []string
@@ -57,7 +57,7 @@ func (v paramSource) String() string {
 // Query reads the query string of r. A malformed query string is a
 // violation of its own.
 //
-//line params.ego:37
+//line params.ego:39
 func Query(r *http.Request) *Params {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	p := &Params{in: inQuery, values: func(name string) []string { return q[name] }}

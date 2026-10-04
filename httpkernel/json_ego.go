@@ -18,7 +18,7 @@ import (
 // v is encoded before anything is written: if encoding fails, the response is
 // untouched and the caller can still send an error.
 //
-//line json.ego:14
+//line json.ego:17
 func WriteJSON(w http.ResponseWriter, status int, v any) error {
 	return write(w, status, "application/json", v)
 }
@@ -164,7 +164,7 @@ func describeType(t reflect.Type) string {
 // expectedKind is the kind of JSON value that decodes into t, or
 // KindInvalid if it depends.
 //
-//line json.ego:147
+//line json.ego:149
 func expectedKind(t reflect.Type) jsontext.Kind {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
@@ -197,7 +197,7 @@ func expectedKind(t reflect.Type) jsontext.Kind {
 // sameKind reports whether two kinds are the same, counting true and false
 // as one.
 //
-//line json.ego:168
+//line json.ego:170
 func sameKind(a, b jsontext.Kind) bool {
 	if a == 'f' {
 		a = 't'
@@ -233,7 +233,7 @@ func describeKind(k jsontext.Kind) string {
 // shorten cuts a value quoted back to the client to at most 40 bytes, at
 // the start of a character.
 //
-//line json.ego:193
+//line json.ego:195
 func shorten(s string) string {
 	if len(s) <= 40 {
 		return s

@@ -19,7 +19,7 @@ import (
 // highest quality; ties go to the earlier offer. Parameters other than q are
 // ignored.
 //
-//line negotiate.ego:10
+//line negotiate.ego:19
 func Negotiate(r *http.Request, offers ...string) string {
 	header := r.Header.Values("Accept")
 	if len(header) == 0 {
