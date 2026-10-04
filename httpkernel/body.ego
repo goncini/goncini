@@ -1,0 +1,165 @@
+package httpkernel
+
+import (
+	"bytes"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
+	"io"
+	"mime"
+	"net/http"
+	"strings"
+)
+
+// DefaultBodyLimit is the most bytes DecodeJSON reads from a request body:
+// 1 MiB.
+const DefaultBodyLimit = 1 << 20
+
+// BodyError is everything DecodeJSON can fail with. ProblemFor gives each
+// case its response: 415, 413, 400 or 422 for the client's mistakes, and 500
+// for BodyUnsupportedType, the API's.
+error BodyError {
+	BodyMediaType{ ContentType string } "unsupported Content-Type {ContentType:q}: send application/json"
+	BodyTooLarge{ Limit int64 } "the request body is larger than {Limit} bytes"
+	BodyEmpty{} "the request body is empty"
+	BodyMalformed {
+		Offset int64
+		Cause  error
+	} "malformed JSON at byte {Offset}"
+	BodyInvalid {
+		Pointer string
+		Cause   error
+	} "invalid JSON value at {Pointer:q}"
+	BodyUnreadable{ Cause error } "could not read the request body"
+	BodyUnsupportedType{ Cause error } "the request body's Go type has no JSON form"
+}
+
+// DecodeJSON reads the JSON body of r into v, which must be a non-nil
+// pointer:
+//   - the Content-Type must be application/json, or end in +json;
+//   - the body must be one JSON value of at most DefaultBodyLimit bytes;
+//   - names match struct fields exactly, case included; members with no
+//     field are ignored.
+//
+// Its errors are the BodyError cases, checked in that order: a body too
+// large is a BodyTooLarge even if it is malformed too, and malformed JSON is
+// a BodyMalformed even if a value doesn't fit its field. A BodyDecoder has
+// other settings.
+func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) BodyError {
+	return BodyDecoder{}.Decode(w, r, v)
+}
+
+// BodyDecoder decodes JSON request bodies with settings other than
+// DecodeJSON's.
+type BodyDecoder struct {
+	// Limit is the most bytes read from a body; zero means DefaultBodyLimit.
+	Limit int64
+	// RejectUnknown makes a member with no matching field a BodyInvalid,
+	// instead of ignoring it.
+	RejectUnknown bool
+}
+
+// Decode reads the JSON body of r into v, as DecodeJSON does, with d's
+// settings. A body too large also makes the response close the connection,
+// since the rest of it is left unread.
+func (d BodyDecoder) Decode(w http.ResponseWriter, r *http.Request, v any) BodyError {
+	ct := r.Header.Get("Content-Type")
+	if !isJSON(ct) {
+		fail BodyMediaType{ContentType: ct}
+	}
+	limit := d.Limit
+	if limit <= 0 {
+		limit = DefaultBodyLimit
+	}
+	body := r.Body
+	if body == nil {
+		body = http.NoBody
+	}
+	b, err := io.ReadAll(http.MaxBytesReader(w, body, limit))
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+		if w != nil {
+			w.Header().Set("Connection", "close")
+		}
+		fail BodyTooLarge{Limit: limit}
+	}
+	if err != nil {
+		fail BodyUnreadable{Cause: err}
+	}
+	if len(bytes.Trim(b, " \t\r\n")) == 0 {
+		fail BodyEmpty{}
+	}
+	if offset, cause := syntaxError(b); cause != nil {
+		fail BodyMalformed{Offset: offset, Cause: cause}
+	}
+	return valueError(json.Unmarshal(b, v, json.RejectUnknownMembers(d.RejectUnknown)))
+}
+
+// isJSON reports whether a Content-Type is JSON: application/json, or a type
+// ending in +json such as application/merge-patch+json.
+func isJSON(contentType string) bool {
+	t, _, err := mime.ParseMediaType(contentType)
+	return err == nil && (t == "application/json" || strings.HasSuffix(t, "+json"))
+}
+
+var errTrailingData = errors.New("unexpected data after the JSON value")
+
+// syntaxError returns where b stops being one well-formed JSON value, and
+// why, or a nil cause if it is one.
+func syntaxError(b []byte) (offset int64, cause error) {
+	dec := jsontext.NewDecoder(bytes.NewReader(b))
+	if _, err := dec.ReadValue(); err != nil {
+		if se, ok := errors.AsType[*jsontext.SyntacticError](err); ok {
+			return se.ByteOffset, err
+		}
+		return dec.InputOffset(), err
+	}
+	end := dec.InputOffset()
+	if _, err := dec.ReadToken(); err != io.EOF {
+		rest := b[end:]
+		return end + int64(len(rest)-len(bytes.TrimLeft(rest, " \t\r\n"))), errTrailingData
+	}
+	return 0, nil
+}
+
+// valueError is the case for an error from unmarshaling well-formed JSON.
+func valueError(err error) BodyError {
+	if err == nil {
+		return nil
+	}
+	if se, ok := errors.AsType[*json.SemanticError](err); ok {
+		if se.GoType != nil && undecodable(se.GoType) {
+			fail BodyUnsupportedType{Cause: err}
+		}
+		fail BodyInvalid{Pointer: string(se.JSONPointer), Cause: err}
+	}
+	if se, ok := errors.AsType[*jsontext.SyntacticError](err); ok {
+		fail BodyMalformed{Offset: se.ByteOffset, Cause: err}
+	}
+	fail BodyInvalid{Cause: err}
+}
+
+// bodyProblem is the response to each case. err is declared as a BodyError,
+// so the match needs no _ arm, and a new case doesn't compile until it has a
+// response.
+func bodyProblem(err BodyError) Problem {
+	return match err {
+		nil                    => Problem{}
+		BodyMediaType(e)       => Problem{Status: http.StatusUnsupportedMediaType, Detail: e.Error()}
+		BodyTooLarge(e)        => Problem{Status: http.StatusRequestEntityTooLarge, Detail: e.Error()}
+		BodyEmpty(e)           => Problem{Status: http.StatusBadRequest, Detail: e.Error()}
+		BodyMalformed(e)       => Problem{Status: http.StatusBadRequest, Detail: f"{e.Error()}: {syntaxReason(e.Cause)}"}
+		BodyInvalid(e)         => invalidBody(e)
+		BodyUnreadable(e)      => Problem{Status: http.StatusBadRequest, Detail: e.Error()}
+		BodyUnsupportedType(_) => Problem{Status: http.StatusInternalServerError}
+	}
+}
+
+// invalidBody is the 422 for a value that doesn't fit its field, with a
+// violation pointing at it.
+func invalidBody(e BodyInvalid) Problem {
+	return Problem{
+		Status: http.StatusUnprocessableEntity,
+		Detail: "the request body has an invalid value",
+		Errors: []Violation{{Pointer: "#" + e.Pointer, Detail: semanticReason(e.Cause)}},
+	}
+}

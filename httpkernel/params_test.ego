@@ -1,0 +1,149 @@
+package httpkernel_test
+
+import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+type order string
+
+const (
+	newest order = "newest"
+	oldest order = "oldest"
+)
+
+func TestQuery(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/articles?limit=5&offset=&tag=go&tag=api&draft=true&score=4.5&since=2026-10-04T09:30:00Z&order=oldest", nil)
+	q := httpkernel.Query(r)
+	if got := q.Int("limit", 20); got != 5 {
+		t.Errorf("limit = %d, want 5", got)
+	}
+	if got := q.Int("offset", 0); got != 0 {
+		t.Errorf("offset = %d: an empty value is absent", got)
+	}
+	if got := q.Int("missing", 7); got != 7 {
+		t.Errorf("missing = %d, want the default", got)
+	}
+	if got := q.Strings("tag"); !slices.Equal(got, []string{"go", "api"}) {
+		t.Errorf("tags = %q", got)
+	}
+	if got := q.String("tag", ""); got != "go" {
+		t.Errorf("tag = %q, want the first value", got)
+	}
+	if !q.Bool("draft", false) {
+		t.Error("draft = false")
+	}
+	if got := q.Float("score", 0); got != 4.5 {
+		t.Errorf("score = %v", got)
+	}
+	if got := q.Time("since", time.Time{}); !got.Equal(time.Date(2026, 10, 4, 9, 30, 0, 0, time.UTC)) {
+		t.Errorf("since = %v", got)
+	}
+	if got := q.Enum("order", newest, newest, oldest); got != oldest {
+		t.Errorf("order = %q", got)
+	}
+	if !q.Has("tag") || q.Has("offset") {
+		t.Error("Has: want tag present, offset absent")
+	}
+	if err := q.Err(); err != nil {
+		t.Errorf("Err = %v", err)
+	}
+}
+
+func TestQueryViolations(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/articles?limit=ten&draft=maybe&order=random&score=NaN&since=today", nil)
+	q := httpkernel.Query(r)
+	if got := q.Int("limit", 20); got != 20 {
+		t.Errorf("limit = %d, want the default", got)
+	}
+	q.Bool("draft", false)
+	q.Enum("order", newest, newest, oldest)
+	q.Float("score", 1)
+	q.Time("since", time.Time{})
+	p, ok := errors.AsType[httpkernel.Problem](q.Err())
+	if !ok || p.Status != http.StatusBadRequest || p.Detail != "invalid query parameters" {
+		t.Fatalf("Err = %v, want a 400 problem", q.Err())
+	}
+	want := []httpkernel.Violation{
+		{Parameter: "limit", Detail: "must be an integer"},
+		{Parameter: "draft", Detail: "must be true or false"},
+		{Parameter: "order", Detail: "must be one of: newest, oldest"},
+		{Parameter: "score", Detail: "must be a number"},
+		{Parameter: "since", Detail: "must be an RFC 3339 time, such as 2026-10-04T09:30:00Z"},
+	}
+	if !reflect.DeepEqual(p.Errors, want) {
+		t.Errorf("violations = %+v\nwant         %+v", p.Errors, want)
+	}
+}
+
+func TestMalformedQuery(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/articles", nil)
+	r.URL.RawQuery = "limit=5&tag=%zz"
+	q := httpkernel.Query(r)
+	if got := q.Int("limit", 20); got != 5 {
+		t.Errorf("limit = %d: the valid pairs are still read", got)
+	}
+	p, ok := errors.AsType[httpkernel.Problem](q.Err())
+	if !ok || len(p.Errors) != 1 || p.Errors[0].Detail != "malformed query string" {
+		t.Errorf("Err = %v, want one violation for the malformed query", q.Err())
+	}
+}
+
+func TestPath(t *testing.T) {
+	var id int
+	var err error
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /articles/{id}", func(w http.ResponseWriter, r *http.Request) {
+		p := httpkernel.Path(r)
+		id = p.Int("id", 0)
+		err = p.Err()
+	})
+
+	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/articles/42", nil))
+	if id != 42 || err != nil {
+		t.Errorf("id = %d, err = %v", id, err)
+	}
+
+	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/articles/abc", nil))
+	p, ok := errors.AsType[httpkernel.Problem](err)
+	want := []httpkernel.Violation{{Parameter: "id", Detail: "must be an integer"}}
+	if !ok || p.Detail != "invalid path parameters" || !reflect.DeepEqual(p.Errors, want) {
+		t.Errorf("err = %v, want a violation for id", err)
+	}
+}
+
+func TestHeader(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/articles", nil)
+	r.Header.Set("X-Page", "two")
+	r.Header.Add("X-Tag", "a")
+	r.Header.Add("X-Tag", "b")
+	h := httpkernel.Header(r)
+	if got := h.Strings("X-Tag"); !slices.Equal(got, []string{"a", "b"}) {
+		t.Errorf("X-Tag = %q", got)
+	}
+	if got := h.Int("X-Page", 1); got != 1 {
+		t.Errorf("X-Page = %d, want the default", got)
+	}
+	p, ok := errors.AsType[httpkernel.Problem](h.Err())
+	want := []httpkernel.Violation{{Header: "X-Page", Detail: "must be an integer"}}
+	if !ok || p.Detail != "invalid headers" || !reflect.DeepEqual(p.Errors, want) {
+		t.Errorf("Err = %v, want a violation for X-Page", h.Err())
+	}
+}
+
+func TestParamsInt64(t *testing.T) {
+	q := httpkernel.Query(httptest.NewRequest(http.MethodGet, "/?id=9007199254740993&bad=1.5", nil))
+	if got := q.Int64("id", 0); got != 9007199254740993 {
+		t.Errorf("id = %d", got)
+	}
+	if got := q.Int64("bad", -1); got != -1 || q.Err() == nil {
+		t.Errorf("bad = %d, err %v", got, q.Err())
+	}
+}

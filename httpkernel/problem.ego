@@ -1,0 +1,149 @@
+package httpkernel
+
+import (
+	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
+	"net/http"
+)
+
+// Problem is an error response, as RFC 9457 defines it ("Problem Details for
+// HTTP APIs"). It is also an error, so a handler can return one:
+//
+//	return httpkernel.Problem{Status: http.StatusConflict, Detail: "this username is taken"}
+type Problem struct {
+	// Type is a URI reference identifying the kind of problem. Empty means
+	// "about:blank": the status says it all.
+	Type string `json:"type,omitempty"`
+	// Title summarizes the kind of problem. Empty means the status text,
+	// such as "Not Found".
+	Title string `json:"title,omitempty"`
+	// Status is the HTTP status code, 4xx or 5xx. Zero, or anything else,
+	// means 500.
+	Status int `json:"status,omitzero"`
+	// Detail explains this occurrence of the problem to the client.
+	Detail string `json:"detail,omitempty"`
+	// Instance is a URI reference identifying this occurrence.
+	Instance string `json:"instance,omitempty"`
+	// Errors lists what the request got wrong, one entry per invalid value,
+	// as in RFC 9457's example.
+	Errors []Violation `json:"errors,omitempty"`
+	// Extensions are more members, written next to the ones above. Those
+	// named like the members above are left out.
+	Extensions map[string]any `json:",embed"`
+}
+
+// Violation is one thing a request got wrong. At most one of Pointer,
+// Parameter and Header says where; none means the request as a whole.
+type Violation struct {
+	// Detail says what is wrong, such as "must be an integer".
+	Detail string `json:"detail"`
+	// Pointer locates a value in the JSON body: a URI fragment holding a
+	// JSON Pointer (RFC 6901), such as "#/article/title".
+	Pointer string `json:"pointer,omitempty"`
+	// Parameter names a query or path parameter.
+	Parameter string `json:"parameter,omitempty"`
+	// Header names a header.
+	Header string `json:"header,omitempty"`
+}
+
+// Error returns the status and the detail, such as
+// "404 Not Found: no article how-to-train".
+func (p Problem) Error() string {
+	s := f"{p.status()} {p.title()}"
+	return if p.Detail == "" { s } else { f"{s}: {p.Detail}" }
+}
+
+// status is p's status, or 500 if it isn't an error status.
+func (p Problem) status() int {
+	if p.Status < 400 || p.Status > 599 {
+		return http.StatusInternalServerError
+	}
+	return p.Status
+}
+
+// title is p's title, or the text of its status.
+func (p Problem) title() string {
+	if p.Title != "" {
+		return p.Title
+	}
+	if t := http.StatusText(p.status()); t != "" {
+		return t
+	}
+	return "Error"
+}
+
+// WriteProblem writes p as the response, with the media type
+// application/problem+json. A Status that isn't 4xx or 5xx is written as
+// 500, and an empty Title as the status text.
+//
+// Error responses must not fail, so invalid UTF-8 in the strings is
+// replaced, and extensions that can't be encoded are left out.
+func WriteProblem(w http.ResponseWriter, p Problem) error {
+	p.Status, p.Title = p.status(), p.title()
+	if len(p.Extensions) > 0 {
+		ext := make(map[string]any, len(p.Extensions))
+		for name, v := range p.Extensions {
+			if !reservedMembers[name] {
+				ext[name] = v
+			}
+		}
+		p.Extensions = ext
+	}
+	opts := []json.Options{json.Deterministic(true), jsontext.AllowInvalidUTF8(true)}
+	b, err := json.Marshal(p, opts...)
+	if err != nil {
+		p.Extensions = nil
+		if b, err = json.Marshal(p, opts...); err != nil {
+			return err
+		}
+	}
+	return writeBody(w, p.Status, "application/problem+json", b)
+}
+
+// reservedMembers are the names of Problem's own members.
+var reservedMembers = map[string]bool{
+	"type": true, "title": true, "status": true, "detail": true, "instance": true, "errors": true,
+}
+
+// ProblemError is an error that knows its response: what plain-Go error
+// types implement to choose their status, like Symfony's
+// HttpExceptionInterface. effect-go error sets use Map instead.
+type ProblemError interface {
+	error
+	Problem() Problem
+}
+
+// Invalid returns the 422 problem for a request whose values are well-formed
+// but invalid, with a violation for each.
+func Invalid(violations ...Violation) Problem {
+	return Problem{
+		Status: http.StatusUnprocessableEntity,
+		Detail: "the request has invalid values",
+		Errors: violations,
+	}
+}
+
+// ProblemFor returns the problem to answer err with:
+//   - err itself, when it is or wraps a Problem;
+//   - err's Problem method, when it is or wraps a ProblemError;
+//   - the problem for each of httpkernel's errors, such as a 413 for
+//     BodyTooLarge;
+//   - a 504 when err is a deadline that ran out (context.DeadlineExceeded,
+//     or an effect-go timeout);
+//   - otherwise a bare 500. err's text may reveal internals, so it stays out
+//     of the response: log it instead.
+func ProblemFor(err error) Problem {
+	match err {
+		Problem(p)      => return p
+		ProblemError(e) => return e.Problem()
+		BodyError(e)    => return bodyProblem(e)
+		_               => {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return Problem{Status: http.StatusGatewayTimeout, Detail: "the request took too long"}
+			}
+			return Problem{Status: http.StatusInternalServerError}
+		}
+	}
+}

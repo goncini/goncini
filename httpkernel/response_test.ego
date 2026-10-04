@@ -1,0 +1,70 @@
+package httpkernel_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+func TestResponseTracker(t *testing.T) {
+	rec := httptest.NewRecorder()
+	tr := httpkernel.TrackResponse(rec)
+	if tr.Started() || tr.Status() != 0 {
+		t.Fatal("a new tracker has started")
+	}
+	if httpkernel.TrackResponse(tr) != tr {
+		t.Error("tracking a tracker wraps it again")
+	}
+	tr.WriteHeader(http.StatusCreated)
+	tr.Write([]byte("hello"))
+	tr.Write([]byte(", world"))
+	if tr.Status() != http.StatusCreated || tr.Size() != 12 || !tr.Started() {
+		t.Errorf("status %d, size %d", tr.Status(), tr.Size())
+	}
+	if rec.Code != http.StatusCreated || rec.Body.String() != "hello, world" {
+		t.Errorf("recorder got %d %q", rec.Code, rec.Body)
+	}
+}
+
+// statuses records the statuses written, as a server does: 1xx statuses can
+// precede the final one.
+type statuses struct {
+	httptest.ResponseRecorder
+	written []int
+}
+
+func (c *statuses) WriteHeader(code int) { c.written = append(c.written, code) }
+
+func TestResponseTrackerInformationalStatus(t *testing.T) {
+	c := &statuses{ResponseRecorder: *httptest.NewRecorder()}
+	tr := httpkernel.TrackResponse(c)
+	tr.WriteHeader(http.StatusEarlyHints)
+	if tr.Started() {
+		t.Error("a 103 counts as the status")
+	}
+	tr.WriteHeader(http.StatusNoContent)
+	if tr.Status() != http.StatusNoContent || len(c.written) != 2 {
+		t.Errorf("status %d, written %v", tr.Status(), c.written)
+	}
+}
+
+func TestResponseTrackerImplicitStatus(t *testing.T) {
+	tr := httpkernel.TrackResponse(httptest.NewRecorder())
+	tr.Write([]byte("x"))
+	if tr.Status() != http.StatusOK {
+		t.Errorf("status = %d, want 200", tr.Status())
+	}
+}
+
+func TestResponseTrackerFlushes(t *testing.T) {
+	rec := httptest.NewRecorder()
+	tr := httpkernel.TrackResponse(rec)
+	if err := http.NewResponseController(tr).Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if !rec.Flushed || tr.Status() != http.StatusOK {
+		t.Errorf("flushed %v, status %d", rec.Flushed, tr.Status())
+	}
+}

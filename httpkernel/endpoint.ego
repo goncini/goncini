@@ -1,0 +1,152 @@
+package httpkernel
+
+import (
+	"context"
+	"encoding/json/v2"
+	"net/http"
+	"reflect"
+)
+
+// Endpoint returns an http.Handler for a typed handler. For each request it
+// binds an In from the request, validates it, calls h, and writes the Out
+// that h returns as JSON, or its error as a problem with WriteError. h is
+// usually an effect method:
+//
+//	effect (c *Controller) Show(in ShowInput) (Article, ArticleError)
+//
+// compiles to func(ctx context.Context, in ShowInput) (Article, error), and
+// httpkernel.Endpoint(c.Show) serves it.
+//
+// In must be a struct. Its fields tagged path, query or header get those
+// values of the request, and a field named Body gets the JSON body:
+//
+//	type ShowInput struct {
+//		Slug  string   `path:"slug"`
+//		Limit int      `query:"limit" default:"20"`
+//		Tags  []string `query:"tag"`
+//	}
+//
+// The package documentation lists the field types and tag options. Endpoint
+// panics if In isn't a struct or has a field it can't bind: that is a
+// programming error, found when the routes are registered.
+//
+// The result is written with status 200, unless it writes its own response
+// by implementing Responder, as Created, NoContent, Response and Cached do.
+func Endpoint[In, Out any](h func(context.Context, In) (Out, error)) http.Handler {
+	b := newBinder(reflect.TypeFor[In]())
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		st := stateOf(r.Context())
+		if st != nil && r.Pattern != "" {
+			st.pattern = r.Pattern
+		}
+		var in In
+		if err := b.bind(w, r, reflect.ValueOf(&in).Elem(), kernelOf(r.Context()).bodyLimit()); err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		if err := validate(r.Context(), &in); err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		out, err := h(r.Context(), in)
+		if err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		if res, ok := any(out).(Responder); ok {
+			err = res.Respond(w, r)
+		} else {
+			err = WriteJSON(w, http.StatusOK, out)
+		}
+		if err != nil {
+			WriteError(w, r, err)
+		}
+	})
+}
+
+// bodyLimit is the kernel's BodyLimit, or DefaultBodyLimit.
+func (k *Kernel) bodyLimit() int64 {
+	if k != nil && k.BodyLimit > 0 {
+		return k.BodyLimit
+	}
+	return DefaultBodyLimit
+}
+
+// validate checks a bound input: with its own Validate method if it has
+// one, then with the kernel's Validator.
+func validate(ctx context.Context, in any) error {
+	if v, ok := in.(interface{ Validate() error }); ok {
+		if err := v.Validate(); err != nil {
+			return err
+		}
+	}
+	if k := kernelOf(ctx); k != nil && k.Validator != nil {
+		return k.Validator.Validate(ctx, in)
+	}
+	return nil
+}
+
+// Responder is an Endpoint result that writes its own response, instead of
+// being written as JSON with status 200.
+type Responder interface {
+	Respond(w http.ResponseWriter, r *http.Request) error
+}
+
+// Created is a 201 response: Body as JSON, with a Location header unless
+// Location is empty.
+type Created[T any] struct {
+	Location string
+	Body     T
+}
+
+// Respond writes c.
+func (c Created[T]) Respond(w http.ResponseWriter, r *http.Request) error {
+	var h http.Header
+	if c.Location != "" {
+		h = http.Header{"Location": {c.Location}}
+	}
+	return Response[T]{Status: http.StatusCreated, Header: h, Body: c.Body}.Respond(w, r)
+}
+
+// NoContent is a 204 response, without a body.
+type NoContent struct{}
+
+// Respond writes a 204.
+func (NoContent) Respond(w http.ResponseWriter, r *http.Request) error {
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// Response is a JSON response with any status and headers.
+type Response[T any] struct {
+	// Status is the HTTP status; zero means 200.
+	Status int
+	// Header holds headers to add to the response. Its Content-Type, if
+	// any, replaces application/json, for a media type such as
+	// application/vnd.api+json.
+	Header http.Header
+	Body   T
+}
+
+// Respond writes res. The body is encoded first: if that fails, nothing is
+// written.
+func (res Response[T]) Respond(w http.ResponseWriter, r *http.Request) error {
+	b, err := json.Marshal(res.Body, json.Deterministic(true))
+	if err != nil {
+		return err
+	}
+	for name, values := range res.Header {
+		for _, v := range values {
+			w.Header().Add(name, v)
+		}
+	}
+	status := res.Status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	mediaType := "application/json"
+	if ct := res.Header.Get("Content-Type"); ct != "" {
+		mediaType = ct
+	}
+	return writeBody(w, status, mediaType, b)
+}

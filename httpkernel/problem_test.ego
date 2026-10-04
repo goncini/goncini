@@ -1,0 +1,89 @@
+package httpkernel_test
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"testing"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+func TestWriteProblemFillsStatusAndTitle(t *testing.T) {
+	rec := httptest.NewRecorder()
+	if err := httpkernel.WriteProblem(rec, httpkernel.Problem{Detail: "boom"}); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	want := `{"title":"Internal Server Error","status":500,"detail":"boom"}`
+	if got := rec.Body.String(); got != want {
+		t.Errorf("body = %s\nwant   %s", got, want)
+	}
+}
+
+func TestWriteProblemWithViolationsAndExtensions(t *testing.T) {
+	rec := httptest.NewRecorder()
+	p := httpkernel.Problem{
+		Type:       "https://example.com/probs/invalid",
+		Status:     http.StatusUnprocessableEntity,
+		Errors:     []httpkernel.Violation{{Pointer: "#/age", Detail: "must be positive"}},
+		Extensions: map[string]any{"traceId": "abc"},
+	}
+	if err := httpkernel.WriteProblem(rec, p); err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf(`{"type":"https://example.com/probs/invalid","title":%q,"status":422,`+
+		`"errors":[{"detail":"must be positive","pointer":"#/age"}],"traceId":"abc"}`,
+		http.StatusText(http.StatusUnprocessableEntity))
+	if got := rec.Body.String(); got != want {
+		t.Errorf("body = %s\nwant   %s", got, want)
+	}
+}
+
+func TestProblemError(t *testing.T) {
+	tests := []struct {
+		p    httpkernel.Problem
+		want string
+	}{
+		{httpkernel.Problem{Status: 404, Detail: "no article how-to"}, "404 Not Found: no article how-to"},
+		{httpkernel.Problem{}, "500 Internal Server Error"},
+		{httpkernel.Problem{Status: 42}, "500 Internal Server Error"},
+		{httpkernel.Problem{Status: 409, Title: "Username taken"}, "409 Username taken"},
+	}
+	for _, tt := range tests {
+		if got := tt.p.Error(); got != tt.want {
+			t.Errorf("%+v.Error() = %q, want %q", tt.p, got, tt.want)
+		}
+	}
+}
+
+func TestProblemForPassesProblemsThrough(t *testing.T) {
+	p := httpkernel.Problem{Status: http.StatusConflict, Detail: "this username is taken"}
+	if got := httpkernel.ProblemFor(fmt.Errorf("register: %w", p)); !reflect.DeepEqual(got, p) {
+		t.Errorf("ProblemFor = %+v, want %+v", got, p)
+	}
+}
+
+func TestProblemForHidesOtherErrors(t *testing.T) {
+	got := httpkernel.ProblemFor(errors.New("pq: password authentication failed for user app"))
+	if got.Status != http.StatusInternalServerError || got.Detail != "" || got.Title != "" {
+		t.Errorf("ProblemFor = %+v, want a bare 500", got)
+	}
+}
+
+func TestProblemNeedsAnErrorStatus(t *testing.T) {
+	for _, status := range []int{0, 100, 200, 302, 600} {
+		rec := httptest.NewRecorder()
+		httpkernel.WriteProblem(rec, httpkernel.Problem{Status: status})
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("status %d written as %d, want 500", status, rec.Code)
+		}
+	}
+}

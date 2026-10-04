@@ -1,0 +1,144 @@
+package main
+
+import (
+	"net/http"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+	"unicode"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+// Article is what the API serves.
+type Article struct {
+	Slug      string    `json:"slug"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Tags      []string  `json:"tags"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// ArticleError is everything the articles endpoints fail with.
+error ArticleError {
+	NotFound{ Slug string } "no article {Slug}"
+	Duplicate{ Slug string } "an article {Slug} already exists"
+}
+
+// Problem says what each ArticleError looks like over HTTP. A new case
+// doesn't compile until it has an arm here.
+func Problem(err ArticleError) httpkernel.Problem {
+	return match err {
+		nil          => httpkernel.Problem{}
+		NotFound(e)  => httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
+		Duplicate(e) => httpkernel.Problem{Status: http.StatusConflict, Detail: e.Error()}
+	}
+}
+
+// Problems is what a kernel registers to answer ArticleErrors.
+var Problems = httpkernel.Map[ArticleError](Problem)
+
+// Articles keeps the articles in memory.
+type Articles struct {
+	mu     sync.Mutex
+	bySlug map[string]Article
+	now    func() time.Time
+}
+
+func NewArticles(now func() time.Time) *Articles {
+	return &Articles{bySlug: map[string]Article{}, now: now}
+}
+
+// Routes registers the endpoints. Each effect method compiles to a
+// func(ctx, In) (Out, error), which httpkernel.Endpoint serves.
+func (a *Articles) Routes(mux *http.ServeMux) {
+	mux.Handle("GET /articles", httpkernel.Endpoint(a.List))
+	mux.Handle("GET /articles/{slug}", httpkernel.Endpoint(a.Show))
+	mux.Handle("POST /articles", httpkernel.Endpoint(a.Create))
+}
+
+type ListInput struct {
+	Tag   string `query:"tag"`
+	Limit int    `query:"limit" default:"20"`
+}
+
+func (in *ListInput) Validate() error {
+	if in.Limit < 1 || in.Limit > 100 {
+		return httpkernel.Invalid(httpkernel.Violation{Parameter: "limit", Detail: "must be from 1 to 100"})
+	}
+	return nil
+}
+
+type ListOutput struct {
+	Articles []Article `json:"articles"`
+	Count    int       `json:"count"`
+}
+
+// List returns the newest articles first, with the tag if one is given.
+effect (a *Articles) List(in ListInput) (ListOutput, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var list []Article
+	for _, art := range a.bySlug {
+		if in.Tag == "" || slices.Contains(art.Tags, in.Tag) {
+			list = append(list, art)
+		}
+	}
+	slices.SortFunc(list, (x, y) => y.CreatedAt.Compare(x.CreatedAt))
+	return ListOutput{Articles: list[:min(in.Limit, len(list))], Count: len(list)}, nil
+}
+
+type ShowInput struct {
+	Slug string `path:"slug"`
+}
+
+effect (a *Articles) Show(in ShowInput) (Article, ArticleError) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	art, ok := a.bySlug[in.Slug]
+	if !ok {
+		fail NotFound{Slug: in.Slug}
+	}
+	return art, nil
+}
+
+type CreateInput struct {
+	Body struct {
+		Title string   `json:"title"`
+		Body  string   `json:"body"`
+		Tags  []string `json:"tags"`
+	}
+}
+
+func (in *CreateInput) Validate() error {
+	var vs []httpkernel.Violation
+	if strings.TrimSpace(in.Body.Title) == "" {
+		vs = append(vs, httpkernel.Violation{Pointer: "#/title", Detail: "can't be blank"})
+	}
+	if strings.TrimSpace(in.Body.Body) == "" {
+		vs = append(vs, httpkernel.Violation{Pointer: "#/body", Detail: "can't be blank"})
+	}
+	if len(vs) > 0 {
+		return httpkernel.Invalid(vs...)
+	}
+	return nil
+}
+
+effect (a *Articles) Create(in CreateInput) (httpkernel.Created[Article], ArticleError) {
+	slug := slugify(in.Body.Title)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, taken := a.bySlug[slug]; taken {
+		fail Duplicate{Slug: slug}
+	}
+	art := Article{Slug: slug, Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: a.now()}
+	a.bySlug[slug] = art
+	return httpkernel.Created[Article]{Location: "/articles/" + slug, Body: art}, nil
+}
+
+// slugify turns a title into a slug: "Hello, World!" becomes "hello-world".
+func slugify(title string) string {
+	words := strings.FieldsFunc(strings.ToLower(title), r => !unicode.IsLetter(r) && !unicode.IsDigit(r))
+	return strings.Join(words, "-")
+}

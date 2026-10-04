@@ -1,0 +1,54 @@
+package httpkernel_test
+
+import (
+	"net/http"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+// ArticleError is what the articles service of the tests fails with.
+error ArticleError {
+	ArticleNotFound{ Slug string } "no article {Slug}"
+	ArticleLocked{ Slug string } "the article {Slug} is locked"
+	ArticleStorage{ Cause error } "storage: {Cause}"
+}
+
+// articleProblem is the response to each case: a new case doesn't compile
+// until it has one.
+func articleProblem(err ArticleError) httpkernel.Problem {
+	return match err {
+		nil                => httpkernel.Problem{}
+		ArticleNotFound(e) => httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
+		ArticleLocked(e)   => httpkernel.Problem{Status: http.StatusConflict, Detail: e.Error()}
+		ArticleStorage(_)  => httpkernel.Problem{Status: http.StatusServiceUnavailable, Detail: "try again later"}
+	}
+}
+
+// articleProblems pairs the set with its problems, once.
+var articleProblems = httpkernel.Map[ArticleError](articleProblem)
+
+type articles struct {
+	titles map[string]string
+}
+
+type showArticle struct {
+	Slug string `path:"slug"`
+}
+
+type articleOut struct {
+	Slug  string `json:"slug"`
+	Title string `json:"title"`
+}
+
+// Show is an effect method: it compiles to a func(ctx, showArticle)
+// (articleOut, error), which httpkernel.Endpoint serves.
+effect (a *articles) Show(in showArticle) (articleOut, ArticleError) {
+	title, ok := a.titles[in.Slug]
+	if !ok {
+		fail ArticleNotFound{Slug: in.Slug}
+	}
+	if title == "" {
+		fail ArticleLocked{Slug: in.Slug}
+	}
+	return articleOut{Slug: in.Slug, Title: title}, nil
+}

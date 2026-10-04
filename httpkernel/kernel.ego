@@ -1,0 +1,446 @@
+package httpkernel
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"maps"
+	"net/http"
+	"runtime/debug"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/effect-go/effect-go/scope"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+)
+
+// Kernel is an HTTP application: Handler, usually a router, behind the
+// middleware and the error boundary that every request goes through. It is
+// an http.Handler, and Server serves it.
+//
+// For each request, the kernel:
+//   - starts an OpenTelemetry server span, continuing the caller's trace,
+//     named after the route pattern that matched;
+//   - runs the request in its own effect-go scope (see RequestScope);
+//   - turns the errors passed to WriteError, and panics, into problem
+//     responses through ErrorMappers and Renderer, and logs those that are
+//     the server's fault (5xx);
+//   - answers requests that match no route with a 404 or 405 problem, when
+//     Handler is an *http.ServeMux or another router with the same Handler
+//     method.
+//
+// Set the fields before the first request and don't change them after.
+type Kernel struct {
+	// Handler serves the requests: a router, or an *http.ServeMux.
+	Handler http.Handler
+	// Middleware wraps Handler, the first one outermost. It runs inside the
+	// error boundary, so its errors and panics become problems too.
+	Middleware []Middleware
+	// ErrorMappers turn errors into problems. They are tried in order, then
+	// ProblemFor. Map makes one for an effect-go error set.
+	ErrorMappers []ErrorMapper
+	// Renderer writes the problems; nil means WriteProblem. An API with an
+	// error format of its own replaces it.
+	Renderer Renderer
+	// Validator checks the inputs Endpoint binds; nil leaves it to their
+	// Validate methods.
+	Validator Validator
+	// BodyLimit is the most bytes Endpoint reads from a request body; zero
+	// means DefaultBodyLimit.
+	BodyLimit int64
+	// StopTimeout bounds how long a request waits, once its handler has
+	// returned, for the fibers forked in its scope to stop; zero means 10
+	// seconds. A fiber that ignores its context is then left running,
+	// instead of holding the request forever, and logged unless the handler
+	// panicked: the panic is what gets reported then.
+	StopTimeout time.Duration
+	// Logger logs failed requests and panics; nil means slog.Default().
+	Logger *slog.Logger
+	// Debug puts error messages and panic stacks in 5xx responses. Never set
+	// it in production: they reveal internals.
+	Debug bool
+
+	once  sync.Once
+	chain http.Handler
+}
+
+// Middleware wraps a handler, to act before and after it.
+type Middleware func(http.Handler) http.Handler
+
+// ErrorMapper returns the problem for err when err is one of the errors it
+// knows, and reports whether it was.
+type ErrorMapper func(err error) (Problem, bool)
+
+// Map returns the ErrorMapper for the errors of type E, usually an effect-go
+// error set, with problem saying what each one looks like:
+//
+//	httpkernel.Map[articles.ArticleError](articles.Problem)
+//
+// articles.Problem is an exhaustive match over the set, so a new case
+// doesn't compile until it has a response. It receives the error that
+// errors.AsType finds, so wrapped errors match too.
+//
+// Nothing checks that problem belongs to E: a set parameter compiles to
+// error. Pair them once, next to the set, and register the pair:
+//
+//	var Problems = httpkernel.Map[ArticleError](Problem)
+func Map[E error](problem func(error) Problem) ErrorMapper {
+	return err => {
+		if e, ok := errors.AsType[E](err); ok {
+			return problem(e), true
+		}
+		return Problem{}, false
+	}
+}
+
+// Renderer writes a problem as the response to r.
+type Renderer func(w http.ResponseWriter, r *http.Request, p Problem)
+
+// Validator checks the inputs Endpoint binds, after their own Validate
+// method if they have one. Its errors become responses like any other:
+// return Invalid(…) for a 422 that lists the violations.
+type Validator interface {
+	Validate(ctx context.Context, v any) error
+}
+
+// Instrumentation is the instrumentation scope the kernel's spans are
+// reported under.
+const Instrumentation = "github.com/goncini/goncini/httpkernel"
+
+// ServeHTTP serves r through the error boundary, the middleware and Handler.
+func (k *Kernel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	k.once.Do(k.build)
+	tw := TrackResponse(w)
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx, span := otel.Tracer(Instrumentation).Start(ctx, r.Method, trace.WithSpanKind(trace.SpanKindServer))
+	if span.IsRecording() {
+		span.SetAttributes(
+			attribute.String("http.request.method", r.Method),
+			attribute.String("url.path", r.URL.Path),
+		)
+	}
+	st := &state{kernel: k}
+	r = r.WithContext(context.WithValue(ctx, stateKey{}, st))
+	defer k.end(span, tw, r, st)
+	k.serve(tw, r, st)
+}
+
+// build puts the middleware around Handler.
+func (k *Kernel) build() {
+	var h http.Handler
+	switch m := k.Handler.(type) {
+	case nil:
+		h = http.HandlerFunc(notFound)
+	case matcher:
+		h = unmatched{m}
+	default:
+		h = m
+	}
+	for i := len(k.Middleware) - 1; i >= 0; i-- {
+		h = k.Middleware[i](h)
+	}
+	k.chain = h
+}
+
+// serve runs the request in its own scope, behind the panic boundary.
+func (k *Kernel) serve(w *ResponseTracker, r *http.Request, st *state) {
+	defer func() {
+		v := recover()
+		if v == nil {
+			return
+		}
+		if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
+			// net/http's way to abort a response. It compares the value
+			// itself, so a *scope.Panic wrapping it must be unwrapped.
+			panic(http.ErrAbortHandler)
+		}
+		p, ok := v.(*scope.Panic)
+		if !ok {
+			p = &scope.Panic{Value: v, Stack: debug.Stack()}
+		}
+		st.panic = p
+		k.answerPanic(w, r, p)
+	}()
+	_, err := scope.Run(r.Context(), func(s *scope.Scope) (struct{}, error) {
+		st.scope = s
+		req := r.WithContext(s.Context())
+		defer func() {
+			// A ServeMux sets the pattern on the request it serves, even
+			// when the handler then panics.
+			if st.pattern == "" {
+				st.pattern = req.Pattern
+			}
+		}()
+		k.chain.ServeHTTP(w, req)
+		return struct{}{}, nil
+	}, scope.StopTimeout(orDefault(k.StopTimeout, 10*time.Second)))
+	if err != nil {
+		k.logger().ErrorContext(r.Context(), "closing the request scope failed", requestAttrs(r, slog.Any("error", err))...)
+	}
+}
+
+// answerPanic answers a request that panicked with a 500. If that panics
+// too, in a renderer for instance, it logs the second panic and writes a
+// fixed 500, so that nothing escapes the kernel.
+func (k *Kernel) answerPanic(w http.ResponseWriter, r *http.Request, p *scope.Panic) {
+	defer func() {
+		v := recover()
+		if v == nil {
+			return
+		}
+		k.logger().ErrorContext(r.Context(), "answering a panic panicked",
+			requestAttrs(r, slog.String("panic", fmt.Sprint(v)), slog.String("stack", string(debug.Stack())))...)
+		if !started(w) {
+			writeFallback(w, http.StatusInternalServerError)
+		}
+	}()
+	WriteError(w, r, p)
+}
+
+// writeFallback writes a problem with only a status and its title, which
+// can't fail to encode.
+func writeFallback(w http.ResponseWriter, status int) {
+	b := fmt.Appendf(nil, `{"title":%q,"status":%d}`, http.StatusText(status), status)
+	_ = writeBody(w, status, "application/problem+json", b)
+}
+
+// end finishes the request's span: its name and route come from the pattern
+// that matched, its status from the response.
+func (k *Kernel) end(span trace.Span, w *ResponseTracker, r *http.Request, st *state) {
+	if !span.IsRecording() {
+		span.End()
+		return
+	}
+	status := w.Status()
+	if status == 0 {
+		status = http.StatusOK // what net/http sends when the handler writes nothing
+	}
+	span.SetAttributes(attribute.Int("http.response.status_code", status))
+	if st.pattern != "" {
+		method, route, ok := strings.Cut(st.pattern, " ")
+		if !ok {
+			method, route = r.Method, st.pattern
+		}
+		span.SetName(f"{method} {route}")
+		span.SetAttributes(attribute.String("http.route", route))
+	}
+	if st.panic != nil {
+		span.RecordError(st.panic)
+	}
+	if status >= 500 {
+		span.SetStatus(codes.Error, http.StatusText(status))
+	}
+	span.End()
+}
+
+// state is what the kernel keeps for each request.
+type state struct {
+	kernel  *Kernel
+	scope   *scope.Scope
+	pattern string       // the route pattern that matched
+	panic   *scope.Panic // the panic that ended the request, if any
+}
+
+type stateKey struct{}
+
+// stateOf returns the kernel's state for the request ctx belongs to, or nil
+// outside a kernel.
+func stateOf(ctx context.Context) *state {
+	return ctx.Value(stateKey{}).(*state) ?? nil
+}
+
+// kernelOf returns the kernel serving the request ctx belongs to, or nil.
+func kernelOf(ctx context.Context) *Kernel {
+	st := stateOf(ctx)
+	return st?.kernel
+}
+
+// RequestScope returns the effect-go scope of the request ctx belongs to, or
+// nil outside a kernel. Fibers forked in it are interrupted and awaited, and
+// resources acquired in it released, when the handler returns: before the
+// request ends.
+//
+// The scope is closed from then on, and forking in it panics, so a
+// goroutine that outlives the handler can't use it: work that must go on
+// after the response belongs in a longer-lived scope.
+func RequestScope(ctx context.Context) *scope.Scope {
+	st := stateOf(ctx)
+	return st?.scope
+}
+
+// WriteError answers r with the problem for err, as the kernel serving r
+// does: through its ErrorMappers and Renderer, logging the problems that are
+// the server's fault (5xx) with err. Outside a kernel, it uses ProblemFor and
+// WriteProblem, and logs with slog.Default().
+//
+// A request the client gave up on (err is a cancellation and r's context is
+// done) gets no response. If the response has already started, the problem
+// can only be logged.
+func WriteError(w http.ResponseWriter, r *http.Request, err error) {
+	k := kernelOf(r.Context())
+	if clientGone(r.Context(), err) {
+		k.logger().DebugContext(r.Context(), "the client went away", requestAttrs(r, slog.Any("error", err))...)
+		return
+	}
+	p := k.problemFor(err)
+	k.log(r, err, p)
+	if started(w) {
+		return
+	}
+	debug, render := k?.Debug, k?.Renderer
+	if debug && p.status() >= 500 {
+		p = debugProblem(p, err)
+	}
+	if render != nil {
+		render(w, r, p)
+		return
+	}
+	if werr := WriteProblem(w, p); werr != nil {
+		k.logger().DebugContext(r.Context(), "writing a problem failed", requestAttrs(r, slog.Any("error", werr))...)
+	}
+}
+
+// clientGone reports whether err comes from the client giving up on the
+// request: ctx was cancelled, not timed out, and err is that cancellation.
+func clientGone(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) && errors.Is(err, context.Canceled)
+}
+
+// problemFor returns the problem for err: a 500 for a panic, which is a bug
+// whatever its value; else the first mapper's that knows err, or else
+// ProblemFor's.
+func (k *Kernel) problemFor(err error) Problem {
+	if _, ok := errors.AsType[*scope.Panic](err); ok {
+		return Problem{Status: http.StatusInternalServerError}
+	}
+	mappers := k?.ErrorMappers
+	for _, m := range mappers {
+		if p, ok := m(err); ok {
+			return p
+		}
+	}
+	return ProblemFor(err)
+}
+
+// logger is the kernel's logger, or slog.Default().
+func (k *Kernel) logger() *slog.Logger {
+	return k?.Logger ?? slog.Default()
+}
+
+// log logs a failed request: 5xx problems as errors, with err (and a panic's
+// stack), and the others at debug level.
+func (k *Kernel) log(r *http.Request, err error, p Problem) {
+	attrs := []slog.Attr{slog.Int("status", p.status())}
+	if pe, ok := errors.AsType[*scope.Panic](err); ok {
+		attrs = append(attrs, slog.String("panic", fmt.Sprint(pe.Value)), slog.String("stack", string(pe.Stack)))
+	} else {
+		attrs = append(attrs, slog.Any("error", err))
+	}
+	if p.status() >= 500 {
+		k.logger().ErrorContext(r.Context(), "request failed", requestAttrs(r, attrs...)...)
+	} else {
+		k.logger().DebugContext(r.Context(), "request rejected", requestAttrs(r, attrs...)...)
+	}
+}
+
+// requestAttrs are the log attributes of r, followed by more.
+func requestAttrs(r *http.Request, more ...slog.Attr) []any {
+	attrs := []any{slog.String("method", r.Method), slog.String("path", r.URL.Path)}
+	if route := routeOf(r); route != "" {
+		attrs = append(attrs, slog.String("route", route))
+	}
+	for _, a := range more {
+		attrs = append(attrs, a)
+	}
+	return attrs
+}
+
+// routeOf returns the route pattern that matched r, if known yet.
+func routeOf(r *http.Request) string {
+	st := stateOf(r.Context())
+	return if st?.pattern != "" { st.pattern } else { r.Pattern }
+}
+
+// debugProblem adds what went wrong to a 5xx problem, for development.
+func debugProblem(p Problem, err error) Problem {
+	if pe, ok := errors.AsType[*scope.Panic](err); ok {
+		p.Detail = f"panic: {pe.Value}"
+		ext := maps.Clone(p.Extensions) ?? map[string]any{}
+		ext["stack"] = strings.Split(strings.TrimSpace(string(pe.Stack)), "\n")
+		p.Extensions = ext
+	} else if p.Detail == "" {
+		p.Detail = err.Error()
+	}
+	return p
+}
+
+// matcher is a router that can tell which handler and pattern match a
+// request, as *http.ServeMux does.
+type matcher interface {
+	http.Handler
+	Handler(r *http.Request) (h http.Handler, pattern string)
+}
+
+// unmatched answers the requests its router has no pattern for with
+// problems: a 404, or a 405 with the Allow header, instead of ServeMux's
+// plain text.
+type unmatched struct{ m matcher }
+
+func (u unmatched) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h, pattern := u.m.Handler(r)
+	if pattern != "" {
+		// Record the pattern now: middleware may hand the router a copy of
+		// the request, and the router sets the pattern on that copy.
+		if st := stateOf(r.Context()); st != nil && st.pattern == "" {
+			st.pattern = pattern
+		}
+		u.m.ServeHTTP(w, r)
+		return
+	}
+	// The router's own handler: a 404 or a 405. Find out which.
+	probe := &probeWriter{header: http.Header{}}
+	h.ServeHTTP(probe, r)
+	match probe.status {
+		http.StatusNotFound         => notFound(w, r)
+		http.StatusMethodNotAllowed => {
+			if allow := probe.header.Get("Allow"); allow != "" {
+				w.Header().Set("Allow", allow)
+			}
+			WriteError(w, r, Problem{Status: http.StatusMethodNotAllowed, Detail: f"{r.Method} isn't allowed on {r.URL.EscapedPath()}"})
+		}
+		_ => u.m.ServeHTTP(w, r) // a redirect to the canonical path
+	}
+}
+
+// notFound answers r with a 404 problem.
+func notFound(w http.ResponseWriter, r *http.Request) {
+	WriteError(w, r, Problem{Status: http.StatusNotFound, Detail: f"no route matches {r.Method} {r.URL.EscapedPath()}"})
+}
+
+// probeWriter records the status and headers a handler writes, and drops
+// the body.
+type probeWriter struct {
+	header http.Header
+	status int
+}
+
+func (p *probeWriter) Header() http.Header { return p.header }
+
+func (p *probeWriter) WriteHeader(code int) {
+	if p.status == 0 {
+		p.status = code
+	}
+}
+
+func (p *probeWriter) Write(b []byte) (int, error) {
+	if p.status == 0 {
+		p.status = http.StatusOK
+	}
+	return len(b), nil
+}

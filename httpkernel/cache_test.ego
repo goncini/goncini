@@ -1,0 +1,172 @@
+package httpkernel_test
+
+import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+func TestCacheControl(t *testing.T) {
+	tests := []struct {
+		cc   httpkernel.CacheControl
+		want string
+	}{
+		{httpkernel.CacheControl{}, ""},
+		{httpkernel.CacheControl{Public: true, MaxAge: time.Minute}, "public, max-age=60"},
+		{httpkernel.CacheControl{Private: true, NoCache: true}, "private, no-cache"},
+		{httpkernel.CacheControl{NoStore: true}, "no-store"},
+		{httpkernel.CacheControl{MaxAge: time.Hour, SharedMaxAge: 10 * time.Minute, StaleWhileRevalidate: 30 * time.Second, MustRevalidate: true}, "max-age=3600, s-maxage=600, stale-while-revalidate=30, must-revalidate"},
+		{httpkernel.CacheControl{Public: true, MaxAge: 365 * 24 * time.Hour, Immutable: true}, "public, max-age=31536000, immutable"},
+	}
+	for _, tt := range tests {
+		if got := tt.cc.String(); got != tt.want {
+			t.Errorf("%+v = %q, want %q", tt.cc, got, tt.want)
+		}
+	}
+}
+
+func TestETag(t *testing.T) {
+	a, b := httpkernel.ETag([]byte(`{"a":1}`)), httpkernel.ETag([]byte(`{"a":2}`))
+	if a == b || a != httpkernel.ETag([]byte(`{"a":1}`)) {
+		t.Errorf("ETag: %s %s", a, b)
+	}
+	if len(a) < 3 || a[0] != '"' || a[len(a)-1] != '"' {
+		t.Errorf("ETag %s isn't quoted", a)
+	}
+}
+
+func get(headers ...string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/articles/1", nil)
+	for i := 0; i+1 < len(headers); i += 2 {
+		r.Header.Add(headers[i], headers[i+1])
+	}
+	return r
+}
+
+func TestNotModified(t *testing.T) {
+	modified := time.Date(2026, 10, 4, 9, 30, 15, 500, time.UTC)
+	lastModified := modified.Format(http.TimeFormat)
+	tests := []struct {
+		name string
+		r    *http.Request
+		want bool
+	}{
+		{"unconditional", get(), false},
+		{"same etag", get("If-None-Match", `"v1"`), true},
+		{"weak etag", get("If-None-Match", `W/"v1"`), true},
+		{"etag in a list", get("If-None-Match", `"v0", "v1"`), true},
+		{"star", get("If-None-Match", "*"), true},
+		{"other etag", get("If-None-Match", `"v2"`), false},
+		{"etag wins over date", get("If-None-Match", `"v2"`, "If-Modified-Since", lastModified), false},
+		{"not modified since", get("If-Modified-Since", lastModified), true},
+		{"modified since", get("If-Modified-Since", modified.Add(-time.Hour).Format(http.TimeFormat)), false},
+		{"bad date", get("If-Modified-Since", "yesterday"), false},
+		{"post", httptest.NewRequest(http.MethodPost, "/articles/1", nil), false},
+	}
+	for _, tt := range tests {
+		rec := httptest.NewRecorder()
+		rec.Header().Set("Content-Type", "application/json")
+		got := httpkernel.NotModified(rec, tt.r, `"v1"`, modified)
+		if got != tt.want {
+			t.Errorf("%s: NotModified = %v, want %v", tt.name, got, tt.want)
+		}
+		if rec.Header().Get("ETag") != `"v1"` || rec.Header().Get("Last-Modified") != lastModified {
+			t.Errorf("%s: headers %v", tt.name, rec.Header())
+		}
+		if got && (rec.Code != http.StatusNotModified || rec.Header().Get("Content-Type") != "") {
+			t.Errorf("%s: wrote %d with %v", tt.name, rec.Code, rec.Header())
+		}
+	}
+}
+
+func TestPrecondition(t *testing.T) {
+	modified := time.Date(2026, 10, 4, 9, 30, 15, 0, time.UTC)
+	put := func(headers ...string) *http.Request {
+		r := get(headers...)
+		r.Method = http.MethodPut
+		return r
+	}
+	tests := []struct {
+		name string
+		r    *http.Request
+		ok   bool
+	}{
+		{"unconditional", put(), true},
+		{"same etag", put("If-Match", `"v1"`), true},
+		{"other etag", put("If-Match", `"v0"`), false},
+		{"weak etag never matches", put("If-Match", `W/"v1"`), false},
+		{"star", put("If-Match", "*"), true},
+		{"unmodified since", put("If-Unmodified-Since", modified.Format(http.TimeFormat)), true},
+		{"modified since", put("If-Unmodified-Since", modified.Add(-time.Hour).Format(http.TimeFormat)), false},
+	}
+	for _, tt := range tests {
+		err := httpkernel.Precondition(tt.r, `"v1"`, modified)
+		if (err == nil) != tt.ok {
+			t.Errorf("%s: Precondition = %v", tt.name, err)
+		}
+		if p, isProblem := errors.AsType[httpkernel.Problem](err); err != nil && (!isProblem || p.Status != http.StatusPreconditionFailed) {
+			t.Errorf("%s: err = %v, want a 412", tt.name, err)
+		}
+	}
+}
+
+func TestWriteCachedJSON(t *testing.T) {
+	cc := httpkernel.CacheControl{Public: true, MaxAge: time.Minute}
+	rec := httptest.NewRecorder()
+	if err := httpkernel.WriteCachedJSON(rec, get(), cc, map[string]int{"n": 1}); err != nil {
+		t.Fatal(err)
+	}
+	etag := rec.Header().Get("ETag")
+	if rec.Code != http.StatusOK || rec.Body.String() != `{"n":1}` || etag == "" || rec.Header().Get("Cache-Control") != "public, max-age=60" {
+		t.Fatalf("first response: %d %v %s", rec.Code, rec.Header(), rec.Body)
+	}
+
+	rec = httptest.NewRecorder()
+	if err := httpkernel.WriteCachedJSON(rec, get("If-None-Match", etag), cc, map[string]int{"n": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
+		t.Errorf("revalidation: %d %s, want an empty 304", rec.Code, rec.Body)
+	}
+}
+
+func TestPreconditionIfNoneMatch(t *testing.T) {
+	put := func(headers ...string) *http.Request {
+		r := get(headers...)
+		r.Method = http.MethodPut
+		return r
+	}
+	if err := httpkernel.Precondition(put("If-None-Match", "*"), `"v1"`, time.Time{}); err == nil {
+		t.Error("create-only PUT on an existing resource succeeded")
+	}
+	if err := httpkernel.Precondition(put("If-None-Match", "*"), "", time.Time{}); err != nil {
+		t.Errorf("create-only PUT on a missing resource: %v", err)
+	}
+	if err := httpkernel.Precondition(put("If-None-Match", `W/"v1"`), `"v1"`, time.Time{}); err == nil {
+		t.Error("If-None-Match uses weak comparison: it should match")
+	}
+	if err := httpkernel.Precondition(put("If-None-Match", `"v0"`), `"v1"`, time.Time{}); err != nil {
+		t.Errorf("another etag: %v", err)
+	}
+}
+
+func TestPreconditionEdgeCases(t *testing.T) {
+	put := func(headers ...string) *http.Request {
+		r := get(headers...)
+		r.Method = http.MethodPut
+		return r
+	}
+	if err := httpkernel.Precondition(put("If-Unmodified-Since", "yesterday"), `"v1"`, time.Now()); err != nil {
+		t.Errorf("an invalid date must be ignored: %v", err)
+	}
+	if err := httpkernel.Precondition(put("If-Match", "*"), `W/"v1"`, time.Time{}); err != nil {
+		t.Errorf("If-Match: * matches any current resource, even with a weak etag: %v", err)
+	}
+	if err := httpkernel.Precondition(put("If-Match", "*"), "", time.Time{}); err == nil {
+		t.Error("If-Match: * on a missing resource succeeded")
+	}
+}

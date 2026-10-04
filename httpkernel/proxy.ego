@@ -1,0 +1,291 @@
+package httpkernel
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/netip"
+	"strings"
+)
+
+// Proxies are the reverse proxies (load balancers, CDNs) trusted to report
+// the client's address, scheme and host. Requests from anyone else keep their
+// own values, so clients can't spoof them.
+//
+// By default the proxies are trusted for X-Forwarded-For, X-Forwarded-Proto
+// and X-Forwarded-Host, which most of them set. Set Forwarded for proxies
+// that set the standard Forwarded header instead.
+type Proxies struct {
+	// Forwarded makes the proxies trusted for the Forwarded header (RFC
+	// 7239) instead of the X-Forwarded-* headers. Only one family is read:
+	// a proxy that sets one usually passes the other on from the client,
+	// unchecked.
+	Forwarded bool
+
+	trusted []netip.Prefix
+}
+
+// privateRanges are what "private" stands for in TrustProxies.
+var privateRanges = []string{"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7"}
+
+// TrustProxies returns the proxies at the given addresses or CIDR ranges,
+// such as "10.0.0.0/8" or "127.0.0.1". "private" stands for the loopback and
+// private ranges: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+// ::1 and fc00::/7.
+func TrustProxies(addrs ...string) (*Proxies, error) {
+	p := &Proxies{}
+	for _, a := range addrs {
+		if a == "private" {
+			for _, r := range privateRanges {
+				p.trusted = append(p.trusted, netip.MustParsePrefix(r))
+			}
+			continue
+		}
+		if prefix, err := netip.ParsePrefix(a); err == nil {
+			p.trusted = append(p.trusted, unmapPrefix(prefix.Masked()))
+			continue
+		}
+		addr := check netip.ParseAddr(a) "httpkernel: trusted proxy {a:q} is neither an address nor a CIDR range"
+		addr = addr.Unmap()
+		p.trusted = append(p.trusted, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return p, nil
+}
+
+// unmapPrefix turns an IPv4-mapped IPv6 range, such as ::ffff:10.0.0.0/104,
+// into the IPv4 range it maps, since addresses are compared unmapped.
+func unmapPrefix(prefix netip.Prefix) netip.Prefix {
+	if prefix.Addr().Is4In6() && prefix.Bits() >= 96 {
+		return netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
+	}
+	return prefix
+}
+
+// trusts reports whether addr is one of the proxies.
+func (p *Proxies) trusts(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	for _, prefix := range p.trusted {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// Middleware reads, for each request that comes from a trusted proxy, the
+// client address, scheme and host the proxies report, so that ClientIP,
+// Scheme and Host return them.
+//
+// Each proxy appends the address it received the request from. The client
+// is the first one, from the right, that isn't a trusted proxy: anything
+// left of it could be made up by the client. The scheme and host are the
+// ones reported along with that address.
+func (p *Proxies) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		peer := remoteAddr(r)
+		if !peer.IsValid() || !p.trusts(peer) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		var hops []hop
+		if p.Forwarded {
+			hops = forwardedHops(r.Header)
+		} else {
+			hops = xForwardedHops(r.Header)
+		}
+		c := client{ip: peer}
+		for i := len(hops) - 1; i >= 0 && p.trusts(c.ip); i-- {
+			if !hops[i].addr.IsValid() {
+				break // an unknown or obfuscated hop: nothing beyond it can be trusted
+			}
+			c = client{ip: hops[i].addr, scheme: hops[i].proto, host: hops[i].host}
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientKey{}, c)))
+	})
+}
+
+// hop is what a proxy reported about the request it received: from which
+// address, over which scheme, for which host. Invalid values are zero.
+type hop struct {
+	addr  netip.Addr
+	proto string
+	host  string
+}
+
+// forwardedHops reads the Forwarded headers: one hop per element.
+func forwardedHops(h http.Header) []hop {
+	values := h.Values("Forwarded")
+	if len(values) == 0 {
+		return nil
+	}
+	var hops []hop
+	for _, elem := range splitQuoted(strings.Join(values, ","), ',') {
+		params := forwardedParams(elem)
+		hops = append(hops, hop{
+			addr:  parseNode(params["for"]),
+			proto: cleanScheme(params["proto"]),
+			host:  cleanHost(params["host"]),
+		})
+	}
+	return hops
+}
+
+// xForwardedHops reads the X-Forwarded-* headers: one hop per address in
+// X-Forwarded-For. A hop's scheme and host are the X-Forwarded-Proto and
+// X-Forwarded-Host values at the same position when there is one value per
+// address; otherwise the last values, set by the nearest proxy.
+func xForwardedHops(h http.Header) []hop {
+	addrs := listValues(h.Values("X-Forwarded-For"))
+	protos := listValues(h.Values("X-Forwarded-Proto"))
+	hosts := listValues(h.Values("X-Forwarded-Host"))
+	hops := make([]hop, len(addrs))
+	for i, a := range addrs {
+		hops[i] = hop{
+			addr:  parseNode(a),
+			proto: cleanScheme(aligned(protos, i, len(addrs))),
+			host:  cleanHost(aligned(hosts, i, len(addrs))),
+		}
+	}
+	return hops
+}
+
+// aligned returns the value for hop i of n: the i-th value when there is
+// one per hop, else the last one.
+func aligned(values []string, i, n int) string {
+	switch {
+	case len(values) == n:
+		return values[i]
+	case len(values) > 0:
+		return values[len(values)-1]
+	}
+	return ""
+}
+
+// listValues splits comma-separated header values into their entries.
+func listValues(values []string) []string {
+	var entries []string
+	for _, v := range values {
+		for e := range strings.SplitSeq(v, ",") {
+			entries = append(entries, strings.TrimSpace(e))
+		}
+	}
+	return entries
+}
+
+// cleanScheme returns "http" or "https", or "" for anything else.
+func cleanScheme(s string) string {
+	return match strings.ToLower(s) {
+		"http"  => "http"
+		"https" => "https"
+		_       => ""
+	}
+}
+
+// cleanHost returns host if it is made of what a host name, an IP address
+// and a port can be made of, and "" otherwise.
+func cleanHost(host string) string {
+	if host == "" || len(host) > 255 {
+		return ""
+	}
+	for i := 0; i < len(host); i++ {
+		c := host[i]
+		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || strings.IndexByte(".-_:[]", c) >= 0) {
+			return ""
+		}
+	}
+	return host
+}
+
+// client is what trusted proxies reported about a request.
+type client struct {
+	ip     netip.Addr
+	scheme string
+	host   string
+}
+
+type clientKey struct{}
+
+// ClientIP returns the address of the client that sent r: the one reported
+// by trusted proxies (see Proxies), or else the address r came from. It is
+// the zero Addr when that doesn't parse.
+func ClientIP(r *http.Request) netip.Addr {
+	c := clientOf(r)
+	return if c.ip.IsValid() { c.ip } else { remoteAddr(r) }
+}
+
+// Scheme returns "https" or "http": as reported by trusted proxies, or else
+// depending on whether r came over TLS.
+func Scheme(r *http.Request) string {
+	c := clientOf(r)
+	return if c.scheme != "" { c.scheme } else if r.TLS != nil { "https" } else { "http" }
+}
+
+// Host returns the host the client asked for, with its port if any: as
+// reported by trusted proxies, or else r.Host.
+func Host(r *http.Request) string {
+	c := clientOf(r)
+	return if c.host != "" { c.host } else { r.Host }
+}
+
+// clientOf is what trusted proxies reported about r: nothing, outside
+// Proxies.Middleware.
+func clientOf(r *http.Request) client {
+	return r.Context().Value(clientKey{}).(client) ?? client{}
+}
+
+// remoteAddr is the address r came from, without the port.
+func remoteAddr(r *http.Request) netip.Addr {
+	return parseNode(r.RemoteAddr)
+}
+
+// forwardedParams parses one element of a Forwarded header, such as
+// for=192.0.2.60;proto=https, into lowercase names and unquoted values.
+func forwardedParams(elem string) map[string]string {
+	params := map[string]string{}
+	for _, pair := range splitQuoted(elem, ';') {
+		name, value, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+			value = strings.ReplaceAll(value[1:len(value)-1], `\"`, `"`)
+		}
+		params[strings.ToLower(strings.TrimSpace(name))] = value
+	}
+	return params
+}
+
+// parseNode parses a hop: an address, possibly with a port, possibly with
+// brackets around an IPv6 address. An obfuscated port, as in
+// 192.0.2.43:_hidden, is ignored; "unknown" and obfuscated identifiers such
+// as _hidden give the zero Addr.
+func parseNode(node string) netip.Addr {
+	if i := strings.LastIndexByte(node, ':'); i >= 0 && strings.HasPrefix(node[i+1:], "_") {
+		node = node[:i]
+	}
+	ap := netip.ParseAddrPort(node) else netip.AddrPort{}
+	if ap.IsValid() {
+		return ap.Addr().Unmap()
+	}
+	a := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(node, "["), "]")) else netip.Addr{}
+	return a.Unmap()
+}
+
+// splitQuoted splits s at sep, except inside double quotes.
+func splitQuoted(s string, sep byte) []string {
+	var parts []string
+	start, quoted := 0, false
+	for i := 0; i < len(s); i++ {
+		switch {
+		case s[i] == '\\' && quoted:
+			i++
+		case s[i] == '"':
+			quoted = !quoted
+		case s[i] == sep && !quoted:
+			parts = append(parts, s[start:i])
+			start = i + 1
+		}
+	}
+	return append(parts, s[start:])
+}

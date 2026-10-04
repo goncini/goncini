@@ -1,0 +1,674 @@
+package httpkernel_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/effect-go/effect-go/scope"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+// logged returns a logger that writes JSON records, debug ones included, to
+// the returned buffer.
+func logged() (*slog.Logger, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})), &buf
+}
+
+// do serves a request with an optional body and returns the response.
+func do(h http.Handler, method, target string, body ...string) *httptest.ResponseRecorder {
+	var r *http.Request
+	if len(body) > 0 {
+		r = httptest.NewRequest(method, target, strings.NewReader(body[0]))
+		r.Header.Set("Content-Type", "application/json")
+	} else {
+		r = httptest.NewRequest(method, target, nil)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	return rec
+}
+
+// problem decodes a problem response.
+func problem(t *testing.T, rec *httptest.ResponseRecorder) httpkernel.Problem {
+	t.Helper()
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("Content-Type = %q, want a problem; body %s", ct, rec.Body)
+	}
+	var p httpkernel.Problem
+	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func articlesKernel(a *articles) *httpkernel.Kernel {
+	mux := http.NewServeMux()
+	mux.Handle("GET /articles/{slug}", httpkernel.Endpoint(a.Show))
+	return &httpkernel.Kernel{
+		Handler:      mux,
+		ErrorMappers: []httpkernel.ErrorMapper{articleProblems},
+	}
+}
+
+func TestKernelServesEffectEndpoints(t *testing.T) {
+	k := articlesKernel(&articles{titles: map[string]string{"go": "Go", "locked": ""}})
+	k.Logger, _ = logged()
+
+	rec := do(k, http.MethodGet, "/articles/go")
+	if rec.Code != http.StatusOK || rec.Body.String() != `{"slug":"go","title":"Go"}` {
+		t.Errorf("found: %d %s", rec.Code, rec.Body)
+	}
+	rec = do(k, http.MethodGet, "/articles/rust")
+	if p := problem(t, rec); rec.Code != http.StatusNotFound || p.Detail != "no article rust" {
+		t.Errorf("missing: %d %+v", rec.Code, p)
+	}
+	rec = do(k, http.MethodGet, "/articles/locked")
+	if p := problem(t, rec); rec.Code != http.StatusConflict || p.Detail != "the article locked is locked" {
+		t.Errorf("locked: %d %+v", rec.Code, p)
+	}
+}
+
+func TestKernelMapsWrappedErrors(t *testing.T) {
+	logger, logs := logged()
+	k := &httpkernel.Kernel{
+		Handler: httpkernel.Endpoint(func(ctx context.Context, _ struct{}) (struct{}, error) {
+			return struct{}{}, fmt.Errorf("loading the feed: %w", ArticleStorage{Cause: errors.New("connection refused")})
+		}),
+		ErrorMappers: []httpkernel.ErrorMapper{articleProblems},
+		Logger:       logger,
+	}
+	rec := do(k, http.MethodGet, "/feed")
+	if p := problem(t, rec); rec.Code != http.StatusServiceUnavailable || p.Detail != "try again later" {
+		t.Errorf("got %d %+v", rec.Code, p)
+	}
+	if !strings.Contains(logs.String(), "connection refused") || !strings.Contains(logs.String(), `"level":"ERROR"`) {
+		t.Errorf("a 503 isn't logged as an error with its cause:\n%s", logs)
+	}
+}
+
+func TestKernelHidesUnmappedErrors(t *testing.T) {
+	for _, debug := range []bool{false, true} {
+		logger, logs := logged()
+		k := &httpkernel.Kernel{
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				httpkernel.WriteError(w, r, errors.New("pq: password authentication failed"))
+			}),
+			Logger: logger,
+			Debug:  debug,
+		}
+		rec := do(k, http.MethodGet, "/")
+		p := problem(t, rec)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d", rec.Code)
+		}
+		if leaked := p.Detail != ""; leaked != debug {
+			t.Errorf("debug %v: detail %q", debug, p.Detail)
+		}
+		if !strings.Contains(logs.String(), "password authentication failed") {
+			t.Errorf("the error isn't logged:\n%s", logs)
+		}
+	}
+}
+
+func TestKernelLogsRejectedRequestsAtDebugLevel(t *testing.T) {
+	logger, logs := logged()
+	k := articlesKernel(&articles{})
+	k.Logger = logger
+	do(k, http.MethodGet, "/articles/rust")
+	if !strings.Contains(logs.String(), `"level":"DEBUG"`) || strings.Contains(logs.String(), `"level":"ERROR"`) {
+		t.Errorf("a 404 should be logged at debug level:\n%s", logs)
+	}
+}
+
+func TestKernelRecoversPanics(t *testing.T) {
+	for _, debug := range []bool{false, true} {
+		logger, logs := logged()
+		k := &httpkernel.Kernel{
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { panic("boom") }),
+			Logger:  logger,
+			Debug:   debug,
+		}
+		rec := do(k, http.MethodGet, "/")
+		p := problem(t, rec)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("status = %d", rec.Code)
+		}
+		if debug && (p.Detail != "panic: boom" || p.Extensions["stack"] == nil) {
+			t.Errorf("debug problem = %+v", p)
+		}
+		if !debug && (p.Detail != "" || p.Extensions != nil) {
+			t.Errorf("problem reveals the panic: %+v", p)
+		}
+		if !strings.Contains(logs.String(), `"panic":"boom"`) || !strings.Contains(logs.String(), "kernel_test.ego") {
+			t.Errorf("the panic isn't logged with its stack:\n%s", logs)
+		}
+	}
+}
+
+func TestKernelRecoversPanicsInMiddleware(t *testing.T) {
+	k := &httpkernel.Kernel{
+		Handler: http.NotFoundHandler(),
+		Middleware: []httpkernel.Middleware{func(http.Handler) http.Handler {
+			return http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(errors.New("middleware bug")) })
+		}},
+	}
+	k.Logger, _ = logged()
+	if rec := do(k, http.MethodGet, "/"); rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d", rec.Code)
+	}
+}
+
+func TestKernelLetsAbortHandlerThrough(t *testing.T) {
+	k := &httpkernel.Kernel{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic(http.ErrAbortHandler)
+	})}
+	defer func() {
+		if v := recover(); v != http.ErrAbortHandler {
+			t.Errorf("recovered %v, want http.ErrAbortHandler", v)
+		}
+	}()
+	do(k, http.MethodGet, "/")
+}
+
+func TestKernelPanicAfterResponseStarted(t *testing.T) {
+	logger, logs := logged()
+	k := &httpkernel.Kernel{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, "partial")
+			panic("too late")
+		}),
+		Logger: logger,
+	}
+	rec := do(k, http.MethodGet, "/")
+	if rec.Code != http.StatusOK || rec.Body.String() != "partial" {
+		t.Errorf("response changed after it started: %d %q", rec.Code, rec.Body)
+	}
+	if !strings.Contains(logs.String(), "too late") {
+		t.Errorf("the panic isn't logged:\n%s", logs)
+	}
+}
+
+func TestKernelRoutingProblems(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle("GET /articles/{slug}", http.NotFoundHandler())
+	mux.Handle("/docs/", http.NotFoundHandler())
+	k := &httpkernel.Kernel{Handler: mux}
+	k.Logger, _ = logged()
+
+	rec := do(k, http.MethodGet, "/nowhere")
+	if p := problem(t, rec); rec.Code != http.StatusNotFound || p.Detail != "no route matches GET /nowhere" {
+		t.Errorf("404: %d %+v", rec.Code, p)
+	}
+	rec = do(k, http.MethodPost, "/articles/go")
+	if p := problem(t, rec); rec.Code != http.StatusMethodNotAllowed || p.Detail != "POST isn't allowed on /articles/go" {
+		t.Errorf("405: %d %+v", rec.Code, p)
+	}
+	if allow := rec.Header().Get("Allow"); allow != "GET, HEAD" {
+		t.Errorf("Allow = %q", allow)
+	}
+	rec = do(k, http.MethodGet, "/docs")
+	if rec.Code/100 != 3 || rec.Header().Get("Location") != "/docs/" {
+		t.Errorf("ServeMux's redirect was changed: %d %v", rec.Code, rec.Header())
+	}
+}
+
+func TestKernelWithoutHandler(t *testing.T) {
+	k := &httpkernel.Kernel{}
+	k.Logger, _ = logged()
+	if rec := do(k, http.MethodGet, "/"); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d", rec.Code)
+	}
+}
+
+func TestKernelRenderer(t *testing.T) {
+	k := articlesKernel(&articles{})
+	k.Logger, _ = logged()
+	k.Renderer = func(w http.ResponseWriter, r *http.Request, p httpkernel.Problem) {
+		httpkernel.WriteJSON(w, p.Status, map[string]any{"errors": map[string][]string{"body": {p.Detail}}})
+	}
+	rec := do(k, http.MethodGet, "/articles/rust")
+	if rec.Code != http.StatusNotFound || rec.Body.String() != `{"errors":{"body":["no article rust"]}}` {
+		t.Errorf("got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestKernelMiddlewareOrder(t *testing.T) {
+	var order []string
+	mw := func(name string) httpkernel.Middleware {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				order = append(order, name)
+				next.ServeHTTP(w, r)
+			})
+		}
+	}
+	k := &httpkernel.Kernel{
+		Handler:    http.HandlerFunc(func(http.ResponseWriter, *http.Request) { order = append(order, "handler") }),
+		Middleware: []httpkernel.Middleware{mw("outer"), mw("inner")},
+	}
+	do(k, http.MethodGet, "/")
+	if want := []string{"outer", "inner", "handler"}; !slices.Equal(order, want) {
+		t.Errorf("order = %v, want %v", order, want)
+	}
+}
+
+func TestRequestScope(t *testing.T) {
+	if httpkernel.RequestScope(context.Background()) != nil {
+		t.Error("a scope outside a kernel")
+	}
+	var events []string
+	k := &httpkernel.Kernel{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s := httpkernel.RequestScope(r.Context())
+		scope.Fork(s, func(ctx context.Context) (struct{}, error) {
+			<-ctx.Done()
+			events = append(events, "fiber interrupted")
+			return struct{}{}, nil
+		})
+		s.Defer(func(context.Context) error {
+			events = append(events, "resource released")
+			return nil
+		})
+		w.WriteHeader(http.StatusNoContent)
+	})}
+	do(k, http.MethodGet, "/")
+	if want := []string{"fiber interrupted", "resource released"}; !slices.Equal(events, want) {
+		t.Errorf("events = %v, want %v when the request ends", events, want)
+	}
+}
+
+// recordSpans installs a tracer provider that records spans, and W3C trace
+// context propagation, for the rest of the test.
+func recordSpans(t *testing.T) *tracetest.SpanRecorder {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	prevTP, prevProp := otel.GetTracerProvider(), otel.GetTextMapPropagator()
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prevTP)
+		otel.SetTextMapPropagator(prevProp)
+	})
+	return rec
+}
+
+func attr(s sdktrace.ReadOnlySpan, key attribute.Key) attribute.Value {
+	for _, kv := range s.Attributes() {
+		if kv.Key == key {
+			return kv.Value
+		}
+	}
+	return attribute.Value{}
+}
+
+func TestKernelSpans(t *testing.T) {
+	spans := recordSpans(t)
+	k := articlesKernel(&articles{titles: map[string]string{"go": "Go"}})
+	k.Logger, _ = logged()
+	r := httptest.NewRequest(http.MethodGet, "/articles/go", nil)
+	r.Header.Set("Traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+	k.ServeHTTP(httptest.NewRecorder(), r)
+
+	var server sdktrace.ReadOnlySpan
+	for _, s := range spans.Ended() {
+		if s.SpanKind() == trace.SpanKindServer {
+			server = s
+		}
+	}
+	if server == nil {
+		t.Fatal("no server span")
+	}
+	if server.Name() != "GET /articles/{slug}" {
+		t.Errorf("name = %q", server.Name())
+	}
+	if got := server.SpanContext().TraceID().String(); got != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Errorf("the caller's trace isn't continued: trace %s", got)
+	}
+	if got := server.Parent().SpanID().String(); got != "00f067aa0ba902b7" {
+		t.Errorf("parent = %s", got)
+	}
+	if attr(server, "http.route").AsString() != "/articles/{slug}" || attr(server, "http.response.status_code").AsInt64() != 200 {
+		t.Errorf("attributes = %v", server.Attributes())
+	}
+	children := 0
+	for _, s := range spans.Ended() {
+		if s.Parent().SpanID() == server.SpanContext().SpanID() {
+			children++ // the effect method's own span
+		}
+	}
+	if children != 1 {
+		t.Errorf("%d spans under the server span, want the effect method's", children)
+	}
+}
+
+func TestKernelSpanOfAPanic(t *testing.T) {
+	spans := recordSpans(t)
+	k := &httpkernel.Kernel{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { panic("boom") })}
+	k.Logger, _ = logged()
+	do(k, http.MethodGet, "/")
+	s := spans.Ended()[0]
+	if s.Status().Code != codes.Error || len(s.Events()) == 0 || s.Events()[0].Name != "exception" {
+		t.Errorf("status %v, events %v: want an error with the panic recorded", s.Status(), s.Events())
+	}
+}
+
+func TestWriteErrorOutsideKernel(t *testing.T) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpkernel.WriteError(w, r, httpkernel.Problem{Status: http.StatusConflict, Detail: "taken"})
+	})
+	rec := do(h, http.MethodGet, "/")
+	if p := problem(t, rec); rec.Code != http.StatusConflict || p.Detail != "taken" {
+		t.Errorf("got %d %+v", rec.Code, p)
+	}
+}
+
+func TestWriteErrorClientGone(t *testing.T) {
+	logger, logs := logged()
+	k := &httpkernel.Kernel{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			httpkernel.WriteError(w, r, r.Context().Err())
+		}),
+		Logger: logger,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rec := httptest.NewRecorder()
+	k.ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil))
+	if rec.Body.Len() != 0 || rec.Header().Get("Content-Type") != "" {
+		t.Errorf("answered a client that went away: %v %s", rec.Header(), rec.Body)
+	}
+	if !strings.Contains(logs.String(), "the client went away") {
+		t.Errorf("logs:\n%s", logs)
+	}
+}
+
+// signup validates itself, and the kernel's validator rejects reserved names.
+type signup struct {
+	Body struct {
+		Username string `json:"username"`
+	}
+}
+
+func (s *signup) Validate() error {
+	if s.Body.Username == "" {
+		return httpkernel.Invalid(httpkernel.Violation{Pointer: "#/username", Detail: "can't be blank"})
+	}
+	return nil
+}
+
+type reserved struct{}
+
+func (reserved) Validate(ctx context.Context, v any) error {
+	if s, ok := v.(*signup); ok && s.Body.Username == "admin" {
+		return httpkernel.Invalid(httpkernel.Violation{Pointer: "#/username", Detail: "is reserved"})
+	}
+	return nil
+}
+
+func TestKernelValidation(t *testing.T) {
+	k := &httpkernel.Kernel{
+		Handler: httpkernel.Endpoint(func(ctx context.Context, in signup) (string, error) {
+			return "welcome " + in.Body.Username, nil
+		}),
+		Validator: reserved{},
+	}
+	k.Logger, _ = logged()
+	tests := []struct {
+		body   string
+		status int
+		errors []httpkernel.Violation
+	}{
+		{`{"username":"ada"}`, http.StatusOK, nil},
+		{`{"username":""}`, http.StatusUnprocessableEntity, []httpkernel.Violation{{Pointer: "#/username", Detail: "can't be blank"}}},
+		{`{"username":"admin"}`, http.StatusUnprocessableEntity, []httpkernel.Violation{{Pointer: "#/username", Detail: "is reserved"}}},
+	}
+	for _, tt := range tests {
+		rec := do(k, http.MethodPost, "/signup", tt.body)
+		if rec.Code != tt.status {
+			t.Errorf("%s: status %d, want %d", tt.body, rec.Code, tt.status)
+			continue
+		}
+		if tt.errors != nil {
+			if p := problem(t, rec); !reflect.DeepEqual(p.Errors, tt.errors) {
+				t.Errorf("%s: violations %+v", tt.body, p.Errors)
+			}
+		}
+	}
+}
+
+func TestKernelNamesTheSpanOfAPanickingRoute(t *testing.T) {
+	spans := recordSpans(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /crash/{id}", func(http.ResponseWriter, *http.Request) { panic("boom") })
+	k := &httpkernel.Kernel{Handler: mux}
+	k.Logger, _ = logged()
+	do(k, http.MethodGet, "/crash/1")
+	if name := spans.Ended()[0].Name(); name != "GET /crash/{id}" {
+		t.Errorf("span name = %q", name)
+	}
+}
+
+func TestKernelUnwrapsAbortHandlerFromBranches(t *testing.T) {
+	k := &httpkernel.Kernel{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		scope.All2(r.Context(),
+			func(context.Context) (int, error) { panic(http.ErrAbortHandler) },
+			func(context.Context) (int, error) { return 0, nil })
+	})}
+	defer func() {
+		if v := recover(); v != http.ErrAbortHandler {
+			t.Errorf("recovered %v (%T), want http.ErrAbortHandler itself", v, v)
+		}
+	}()
+	do(k, http.MethodGet, "/")
+}
+
+func TestKernelReportsTheHandlersPanicOverAFibers(t *testing.T) {
+	logger, logs := logged()
+	k := &httpkernel.Kernel{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			f := scope.Fork(httpkernel.RequestScope(r.Context()), func(context.Context) (struct{}, error) {
+				panic("fiber boom")
+			})
+			<-f.Done()
+			panic("handler boom")
+		}),
+		Logger: logger,
+	}
+	do(k, http.MethodGet, "/")
+	if !strings.Contains(logs.String(), `"panic":"handler boom"`) {
+		t.Errorf("the handler's panic isn't the one reported:\n%s", logs)
+	}
+}
+
+func TestKernelLogsAnUnjoinedFibersPanic(t *testing.T) {
+	logger, logs := logged()
+	k := &httpkernel.Kernel{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			f := scope.Fork(httpkernel.RequestScope(r.Context()), func(context.Context) (struct{}, error) {
+				panic("fiber boom")
+			})
+			<-f.Done()
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		Logger: logger,
+	}
+	rec := do(k, http.MethodGet, "/")
+	if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
+		t.Errorf("the response changed after it started: %d %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(logs.String(), `"panic":"fiber boom"`) {
+		t.Errorf("the fiber's panic is lost:\n%s", logs)
+	}
+}
+
+func TestKernelStopTimeout(t *testing.T) {
+	logger, logs := logged()
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	k := &httpkernel.Kernel{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			scope.Fork(httpkernel.RequestScope(r.Context()), func(context.Context) (struct{}, error) {
+				<-release // ignores its context
+				return struct{}{}, nil
+			})
+			w.WriteHeader(http.StatusAccepted)
+		}),
+		StopTimeout: 20 * time.Millisecond,
+		Logger:      logger,
+	}
+	start := time.Now()
+	rec := do(k, http.MethodGet, "/")
+	if rec.Code != http.StatusAccepted || time.Since(start) > 5*time.Second {
+		t.Errorf("status %d after %v", rec.Code, time.Since(start))
+	}
+	if !strings.Contains(logs.String(), "closing the request scope failed") || !strings.Contains(logs.String(), "still running") {
+		t.Errorf("the stuck fiber isn't logged:\n%s", logs)
+	}
+}
+
+// Problems must always be written, whatever they hold.
+func TestKernelProblemsThatResistEncoding(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.Handle("GET /articles/{slug}", httpkernel.Endpoint(func(ctx context.Context, in showArticle) (struct{}, error) {
+		return struct{}{}, httpkernel.Problem{Status: http.StatusNotFound, Detail: "no article " + in.Slug}
+	}))
+	mux.Handle("GET /extensions", httpkernel.Endpoint(func(ctx context.Context, _ struct{}) (struct{}, error) {
+		return struct{}{}, httpkernel.Problem{Status: http.StatusConflict, Extensions: map[string]any{"status": 1, "ok": true, "bad": make(chan int)}}
+	}))
+	k := &httpkernel.Kernel{Handler: mux}
+	k.Logger, _ = logged()
+	for _, tt := range []struct {
+		method, target string
+		status         int
+	}{
+		{http.MethodGet, "/%ff", http.StatusNotFound},                   // invalid UTF-8 in the 404's detail
+		{http.MethodPost, "/articles/%ff", http.StatusMethodNotAllowed}, // and in the 405's
+		{http.MethodGet, "/articles/%ff", http.StatusNotFound},          // in a handler's problem
+		{http.MethodGet, "/extensions", http.StatusConflict},            // a reserved name, and a value JSON can't hold
+	} {
+		rec := do(k, tt.method, tt.target)
+		if rec.Code != tt.status {
+			t.Errorf("%s %s: status %d, want %d; body %q", tt.method, tt.target, rec.Code, tt.status, rec.Body)
+			continue
+		}
+		if p := problem(t, rec); p.Status != tt.status {
+			t.Errorf("%s %s: problem %+v", tt.method, tt.target, p)
+		}
+	}
+}
+
+func TestKernelDeadlineIsA504(t *testing.T) {
+	timeout := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), time.Millisecond)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+	k := &httpkernel.Kernel{
+		Handler: httpkernel.Endpoint(func(ctx context.Context, _ struct{}) (struct{}, error) {
+			<-ctx.Done()
+			return struct{}{}, fmt.Errorf("query: %w", ctx.Err())
+		}),
+		Middleware: []httpkernel.Middleware{timeout},
+	}
+	k.Logger, _ = logged()
+	if rec := do(k, http.MethodGet, "/"); rec.Code != http.StatusGatewayTimeout {
+		t.Errorf("status %d %q, want 504", rec.Code, rec.Body)
+	}
+}
+
+func TestKernelNamesSpansWhenMiddlewareCopiesTheRequest(t *testing.T) {
+	spans := recordSpans(t)
+	copying := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), struct{}{}, 1)))
+		})
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /plain/{id}", func(w http.ResponseWriter, r *http.Request) {})
+	k := &httpkernel.Kernel{Handler: mux, Middleware: []httpkernel.Middleware{copying}}
+	do(k, http.MethodGet, "/plain/1")
+	if name := spans.Ended()[0].Name(); name != "GET /plain/{id}" {
+		t.Errorf("span name = %q", name)
+	}
+}
+
+// otherError is a set that articleProblem doesn't know.
+type otherError struct{}
+
+func (otherError) Error() string { return "other" }
+
+func TestKernelSurvivesAMispairedMapper(t *testing.T) {
+	logger, logs := logged()
+	k := &httpkernel.Kernel{
+		Handler: httpkernel.Endpoint(func(ctx context.Context, _ struct{}) (struct{}, error) {
+			return struct{}{}, otherError{}
+		}),
+		// The mapper for otherError calls a match that only knows ArticleError.
+		ErrorMappers: []httpkernel.ErrorMapper{httpkernel.Map[otherError](articleProblem)},
+		Logger:       logger,
+	}
+	rec := do(k, http.MethodGet, "/")
+	if p := problem(t, rec); rec.Code != http.StatusInternalServerError || p.Status != http.StatusInternalServerError {
+		t.Errorf("got %d %+v", rec.Code, p)
+	}
+	if !strings.Contains(logs.String(), `"panic"`) {
+		t.Errorf("the mapper's panic isn't logged:\n%s", logs)
+	}
+}
+
+func TestKernelMapsAPointerToACase(t *testing.T) {
+	k := &httpkernel.Kernel{Handler: httpkernel.Endpoint(func(ctx context.Context, _ struct{}) (struct{}, error) {
+		return struct{}{}, &httpkernel.BodyTooLarge{Limit: 1}
+	})}
+	k.Logger, _ = logged()
+	if rec := do(k, http.MethodGet, "/"); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status %d %q: a pointer to a case should answer as the case", rec.Code, rec.Body)
+	}
+}
+
+func TestKernelSurvivesAPanickingRenderer(t *testing.T) {
+	logger, logs := logged()
+	k := &httpkernel.Kernel{
+		Handler:  http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("handler") }),
+		Renderer: func(http.ResponseWriter, *http.Request, httpkernel.Problem) { panic("renderer") },
+		Logger:   logger,
+	}
+	rec := do(k, http.MethodGet, "/")
+	if p := problem(t, rec); rec.Code != http.StatusInternalServerError || p.Title != "Internal Server Error" {
+		t.Errorf("got %d %+v", rec.Code, p)
+	}
+	if !strings.Contains(logs.String(), "answering a panic panicked") {
+		t.Errorf("logs:\n%s", logs)
+	}
+}
+
+func TestKernelClosesTheConnectionOnATooLargeBody(t *testing.T) {
+	k := &httpkernel.Kernel{Handler: echo[createArticle]("POST /articles"), BodyLimit: 8}
+	k.Logger, _ = logged()
+	rec := do(k, http.MethodPost, "/articles", `{"title":"Hello"}`)
+	if rec.Code != http.StatusRequestEntityTooLarge || rec.Header().Get("Connection") != "close" {
+		t.Errorf("got %d with %v", rec.Code, rec.Header())
+	}
+}

@@ -1,0 +1,83 @@
+package httpkernel_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+func TestNegotiate(t *testing.T) {
+	jsonXML := []string{"application/json", "application/xml"}
+	tests := []struct {
+		accept string
+		offers []string
+		want   string
+	}{
+		{"", jsonXML, "application/json"},
+		{"", nil, ""},
+		{"application/json", []string{"application/json"}, "application/json"},
+		{"APPLICATION/JSON", []string{"application/json"}, "application/json"},
+		{"text/html", []string{"application/json"}, ""},
+		{"*/*", jsonXML, "application/json"},
+		{"application/*", jsonXML, "application/json"},
+		{"application/xml", jsonXML, "application/xml"},
+		{"application/*;q=0.5, application/problem+json", []string{"application/json", "application/problem+json"}, "application/problem+json"},
+		{"text/html, application/json;q=0.9", []string{"application/json"}, "application/json"},
+		{"application/json;q=0", []string{"application/json"}, ""},
+		// The most specific range decides, even with a lower q.
+		{"application/json;q=0.1, */*", jsonXML, "application/xml"},
+		// Unparsable ranges are skipped.
+		{"nonsense, application/json;q=2, application/xml", jsonXML, "application/xml"},
+	}
+	for _, tt := range tests {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		if tt.accept != "" {
+			r.Header.Set("Accept", tt.accept)
+		}
+		if got := httpkernel.Negotiate(r, tt.offers...); got != tt.want {
+			t.Errorf("Negotiate(%q, %q) = %q, want %q", tt.accept, tt.offers, got, tt.want)
+		}
+	}
+}
+
+func TestNegotiateLanguage(t *testing.T) {
+	enFr := []string{"en", "fr"}
+	tests := []struct {
+		accept string
+		offers []string
+		want   string
+	}{
+		{"", enFr, "en"},
+		{"", nil, ""},
+		{"fr", enFr, "fr"},
+		{"FR", enFr, "fr"},
+		{"de", enFr, ""},
+		{"*", enFr, "en"},
+		{"fr-CA, en;q=0.8", enFr, "fr"},             // fr-CA falls back to fr
+		{"en;q=0.5, fr;q=0.9", enFr, "fr"},          // the higher q wins
+		{"en", []string{"en-US", "en-GB"}, "en-US"}, // en matches both: the first offer wins
+		{"en-GB, en;q=0.9", []string{"en-US", "en-GB"}, "en-GB"},
+		{"fr;q=0, *", enFr, "en"},     // fr refused, anything else accepted
+		{"en;q=nope, fr", enFr, "fr"}, // an unparsable q skips the range
+		{"de-CH, de;q=0.9, *;q=0.1", []string{"fr", "de"}, "de"},
+	}
+	for _, tt := range tests {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		if tt.accept != "" {
+			r.Header.Set("Accept-Language", tt.accept)
+		}
+		if got := httpkernel.NegotiateLanguage(r, tt.offers...); got != tt.want {
+			t.Errorf("NegotiateLanguage(%q, %q) = %q, want %q", tt.accept, tt.offers, got, tt.want)
+		}
+	}
+}
+
+func TestNegotiateRejectsNaNQuality(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Accept", "application/json;q=NaN")
+	if got := httpkernel.Negotiate(r, "application/json"); got != "" {
+		t.Errorf("Negotiate = %q: q=NaN isn't a quality", got)
+	}
+}

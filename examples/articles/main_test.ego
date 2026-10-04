@@ -1,0 +1,58 @@
+package main
+
+import (
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestArticlesAPI(t *testing.T) {
+	now := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
+	clock := func() time.Time { now = now.Add(time.Minute); return now }
+	api := NewKernel(NewArticles(clock), slog.New(slog.DiscardHandler))
+
+	tests := []struct {
+		method, target, body string
+		status               int
+		want                 string // a substring of the response body
+	}{
+		{"POST", "/articles", `{"title":"Hello, World!","body":"First","tags":["go"]}`, 201, `"slug":"hello-world"`},
+		{"POST", "/articles", `{"title":"Second post","body":"Again"}`, 201, `"tags":[]`},
+		{"POST", "/articles", `{"title":"hello world","body":"Same slug"}`, 409, `"detail":"an article hello-world already exists"`},
+		{"POST", "/articles", `{"title":" ","body":""}`, 422, `"errors":[{"detail":"can't be blank","pointer":"#/title"},{"detail":"can't be blank","pointer":"#/body"}]`},
+		{"POST", "/articles", `{"title":1}`, 422, `"pointer":"#/title"`},
+		{"GET", "/articles/hello-world", "", 200, `"title":"Hello, World!"`},
+		{"GET", "/articles/nope", "", 404, `"detail":"no article nope"`},
+		{"GET", "/articles", "", 200, `"count":2`},
+		{"GET", "/articles?tag=go", "", 200, `"count":1`},
+		{"GET", "/articles?limit=1", "", 200, `{"articles":[{"slug":"second-post"`},
+		{"GET", "/articles?limit=0", "", 422, `"detail":"must be from 1 to 100","parameter":"limit"`},
+		{"GET", "/articles?limit=all", "", 400, `"detail":"must be an integer","parameter":"limit"`},
+		{"DELETE", "/articles/hello-world", "", 405, `"detail":"DELETE isn't allowed on /articles/hello-world"`},
+	}
+	for _, tt := range tests {
+		r := httptest.NewRequest(tt.method, tt.target, strings.NewReader(tt.body))
+		if tt.body != "" {
+			r.Header.Set("Content-Type", "application/json")
+		}
+		rec := httptest.NewRecorder()
+		api.ServeHTTP(rec, r)
+		if rec.Code != tt.status || !strings.Contains(rec.Body.String(), tt.want) {
+			t.Errorf("%s %s: %d %s\nwant %d with %s", tt.method, tt.target, rec.Code, rec.Body, tt.status, tt.want)
+		}
+	}
+}
+
+func TestCreatedLocation(t *testing.T) {
+	api := NewKernel(NewArticles(time.Now), slog.New(slog.DiscardHandler))
+	r := httptest.NewRequest(http.MethodPost, "/articles", strings.NewReader(`{"title":"Go 1.27","body":"News"}`))
+	r.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	api.ServeHTTP(rec, r)
+	if loc := rec.Header().Get("Location"); loc != "/articles/go-1-27" {
+		t.Errorf("Location = %q", loc)
+	}
+}

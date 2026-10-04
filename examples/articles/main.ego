@@ -1,0 +1,37 @@
+// Command articles is a small API built with httpkernel: an effect-go error
+// set mapped to responses, typed endpoints, validation, and a server that
+// shuts down gracefully.
+//
+//	go run ./examples/articles
+//	curl -i localhost:8080/articles -H 'Content-Type: application/json' -d '{"title":"Hello","body":"First post"}'
+package main
+
+import (
+	"log/slog"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+func main() {
+	slog.SetDefault(slog.New(trace.LogHandler(slog.NewTextHandler(os.Stderr, nil))))
+	srv := &httpkernel.Server{
+		Addr:    os.LookupEnv("ADDR") ?? ":8080",
+		Handler: NewKernel(NewArticles(time.Now), slog.Default()),
+	}
+	scope.Main(s => srv.ListenAndServe(s.Context()))
+}
+
+// NewKernel serves the articles API, logging each request.
+func NewKernel(a *Articles, logger *slog.Logger) *httpkernel.Kernel {
+	mux := http.NewServeMux()
+	a.Routes(mux)
+	return &httpkernel.Kernel{
+		Handler:      mux,
+		Middleware:   []httpkernel.Middleware{httpkernel.AccessLog(logger)},
+		ErrorMappers: []httpkernel.ErrorMapper{Problems},
+		Logger:       logger,
+	}
+}

@@ -1,0 +1,44 @@
+package httpkernel_test
+
+import (
+	"encoding/json/v2"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+func TestAccessLog(t *testing.T) {
+	access, lines := logged()
+	k := articlesKernel(&articles{titles: map[string]string{"go": "Go"}})
+	k.Logger, _ = logged()
+	k.Middleware = []httpkernel.Middleware{httpkernel.AccessLog(access)}
+	do(k, http.MethodGet, "/articles/go")
+
+	var record map[string]any
+	if err := json.Unmarshal(lines.Bytes(), &record); err != nil {
+		t.Fatalf("%v in %s", err, lines)
+	}
+	for key, want := range map[string]any{
+		"msg": "request", "method": "GET", "path": "/articles/go", "route": "GET /articles/{slug}",
+		"status": float64(200), "size": float64(len(`{"slug":"go","title":"Go"}`)), "client": "192.0.2.1",
+	} {
+		if record[key] != want {
+			t.Errorf("%s = %v, want %v", key, record[key], want)
+		}
+	}
+}
+
+func TestAccessLogOfAPanic(t *testing.T) {
+	access, lines := logged()
+	k := &httpkernel.Kernel{
+		Handler:    http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }),
+		Middleware: []httpkernel.Middleware{httpkernel.AccessLog(access)},
+	}
+	k.Logger, _ = logged()
+	do(k, http.MethodGet, "/")
+	if !strings.Contains(lines.String(), `"status":500`) {
+		t.Errorf("access log: %s", lines)
+	}
+}

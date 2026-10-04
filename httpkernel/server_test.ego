@@ -1,0 +1,107 @@
+package httpkernel_test
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+var quiet = slog.New(slog.DiscardHandler)
+
+func listen(t *testing.T) net.Listener {
+	t.Helper()
+	ln := must net.Listen("tcp", "127.0.0.1:0")
+	return ln
+}
+
+func TestServerShutsDownGracefully(t *testing.T) {
+	ln := listen(t)
+	inFlight, release := make(chan struct{}), make(chan struct{})
+	var ctxErr error
+	srv := &httpkernel.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			close(inFlight)
+			<-release
+			ctxErr = r.Context().Err()
+			io.WriteString(w, "done")
+		}),
+		Logger: quiet,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(ctx, ln) }()
+
+	answer := make(chan string, 1)
+	go func() {
+		res, err := http.Get("http://" + ln.Addr().String())
+		if err != nil {
+			answer <- err.Error()
+			return
+		}
+		defer res.Body.Close()
+		b, _ := io.ReadAll(res.Body)
+		answer <- string(b)
+	}()
+	<-inFlight
+	cancel()
+	select {
+	case err := <-served:
+		t.Fatalf("Serve returned with a request in flight: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if got := <-answer; got != "done" {
+		t.Errorf("the request in flight got %q", got)
+	}
+	if ctxErr != nil {
+		t.Errorf("the request's context was cancelled by the shutdown: %v", ctxErr)
+	}
+	if err := <-served; err != nil {
+		t.Errorf("Serve = %v", err)
+	}
+	if _, err := http.Get("http://" + ln.Addr().String()); err == nil {
+		t.Error("the server still accepts connections")
+	}
+}
+
+func TestServerShutdownTimeout(t *testing.T) {
+	ln := listen(t)
+	inFlight := make(chan struct{})
+	srv := &httpkernel.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			close(inFlight)
+			<-r.Context().Done() // stuck until its connection is closed
+		}),
+		ShutdownTimeout: 50 * time.Millisecond,
+		Logger:          quiet,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(ctx, ln) }()
+	go http.Get("http://" + ln.Addr().String())
+	<-inFlight
+	cancel()
+	if err := <-served; err == nil || !strings.Contains(err.Error(), "still running") {
+		t.Errorf("Serve = %v, want an error about the requests still running", err)
+	}
+}
+
+func TestServerFailure(t *testing.T) {
+	ln := listen(t)
+	ln.Close()
+	srv := &httpkernel.Server{Handler: http.NotFoundHandler(), Logger: quiet}
+	if err := srv.Serve(context.Background(), ln); err == nil {
+		t.Error("Serve on a closed listener succeeded")
+	}
+	srv.Addr = "256.0.0.1:http"
+	if err := srv.ListenAndServe(context.Background()); err == nil {
+		t.Error("ListenAndServe on a bad address succeeded")
+	}
+}
