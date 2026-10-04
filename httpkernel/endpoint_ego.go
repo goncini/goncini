@@ -7,6 +7,8 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"reflect"
+	"runtime"
+	"strings"
 )
 
 // Endpoint returns an http.Handler for a typed handler. For each request it
@@ -35,37 +37,68 @@ import (
 // The result is written with status 200, unless it writes its own response
 // by implementing Responder, as Created, NoContent, Response and Cached do.
 //
-//line endpoint.ego:10
+// The handler has a String method naming h, which route listings show:
+// articles.(*Controller).Show.
+//
+//line endpoint.ego:12
 func Endpoint[In, Out any](h func(context.Context, In) (Out, error)) http.Handler {
-	b := newBinder(reflect.TypeFor[In]())
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		st := stateOf(r.Context())
-		if st != nil && r.Pattern != "" {
-			st.pattern = r.Pattern
-		}
-		var in In
-		if err := b.bind(w, r, reflect.ValueOf(&in).Elem(), kernelOf(r.Context()).bodyLimit()); err != nil {
-			WriteError(w, r, err)
-			return
-		}
-		if err := validate(r.Context(), &in); err != nil {
-			WriteError(w, r, err)
-			return
-		}
-		out, err := h(r.Context(), in)
-		if err != nil {
-			WriteError(w, r, err)
-			return
-		}
-		if res, ok := any(out).(Responder); ok {
-			err = res.Respond(w, r)
-		} else {
-			err = WriteJSON(w, http.StatusOK, out)
-		}
-		if err != nil {
-			WriteError(w, r, err)
-		}
-	})
+	return &endpoint[In, Out]{h: h, b: newBinder(reflect.TypeFor[In]())}
+}
+
+// endpoint is the handler Endpoint returns.
+type endpoint[In, Out any] struct {
+	h func(context.Context, In) (Out, error)
+	b *binder
+}
+
+func (e *endpoint[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	st := stateOf(r.Context())
+	if st != nil && r.Pattern != "" {
+		st.pattern = r.Pattern
+	}
+	var in In
+	if err := e.b.bind(w, r, reflect.ValueOf(&in).Elem(), kernelOf(r.Context()).bodyLimit()); err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	if err := validate(r.Context(), &in); err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	out, err := e.h(r.Context(), in)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	if res, ok := any(out).(Responder); ok {
+		err = res.Respond(w, r)
+	} else {
+		err = WriteJSON(w, http.StatusOK, out)
+	}
+	if err != nil {
+		WriteError(w, r, err)
+	}
+}
+
+// String names the typed handler.
+func (e *endpoint[In, Out]) String() string {
+	return funcName(e.h)
+}
+
+// funcName is the name of a function without its package's import path,
+// and without the -fm suffix of a method value: articles.(*Controller).Show.
+func funcName(fn any) string {
+	f := runtime.FuncForPC(reflect.ValueOf(fn).Pointer())
+	if f == nil {
+		return "unknown"
+	}
+	name := strings.TrimSuffix(f.Name(), "-fm")
+	// Type arguments can hold import paths too: cut before them.
+	head, _, _ := strings.Cut(name, "[")
+	if i := strings.LastIndexByte(head, '/'); i >= 0 {
+		name = name[i+1:]
+	}
+	return name
 }
 
 // bodyLimit is the kernel's BodyLimit, or DefaultBodyLimit.

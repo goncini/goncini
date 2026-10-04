@@ -1,18 +1,26 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/routing"
 )
+
+func newAPI(now func() time.Time) *httpkernel.Kernel {
+	return NewKernel(routing.New(NewArticles(now)), slog.New(slog.DiscardHandler))
+}
 
 func TestArticlesAPI(t *testing.T) {
 	now := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
 	clock := func() time.Time { now = now.Add(time.Minute); return now }
-	api := NewKernel(NewArticles(clock), slog.New(slog.DiscardHandler))
+	api := newAPI(clock)
 
 	tests := []struct {
 		method, target, body string
@@ -23,6 +31,7 @@ func TestArticlesAPI(t *testing.T) {
 		{"POST", "/articles", `{"title":"Second post","body":"Again"}`, 201, `"tags":[]`},
 		{"POST", "/articles", `{"title":"hello world","body":"Same slug"}`, 409, `"detail":"an article hello-world already exists"`},
 		{"POST", "/articles", `{"title":" ","body":""}`, 422, `"errors":[{"detail":"can't be blank","pointer":"#/title"},{"detail":"can't be blank","pointer":"#/body"}]`},
+		{"POST", "/articles", `{"title":"!?","body":"x"}`, 422, `"errors":[{"detail":"needs a letter or a digit","pointer":"#/title"}]`},
 		{"POST", "/articles", `{"title":1}`, 422, `"pointer":"#/title"`},
 		{"GET", "/articles/hello-world", "", 200, `"title":"Hello, World!"`},
 		{"GET", "/articles/nope", "", 404, `"detail":"no article nope"`},
@@ -47,12 +56,39 @@ func TestArticlesAPI(t *testing.T) {
 }
 
 func TestCreatedLocation(t *testing.T) {
-	api := NewKernel(NewArticles(time.Now), slog.New(slog.DiscardHandler))
-	r := httptest.NewRequest(http.MethodPost, "/articles", strings.NewReader(`{"title":"Go 1.27","body":"News"}`))
-	r.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	api.ServeHTTP(rec, r)
-	if loc := rec.Header().Get("Location"); loc != "/articles/go-1-27" {
-		t.Errorf("Location = %q", loc)
+	api := newAPI(time.Now)
+	for title, want := range map[string]string{
+		"Go 1.27":    "/articles/go-1-27",
+		"Café crème": "/articles/caf%C3%A9-cr%C3%A8me",
+	} {
+		r := httptest.NewRequest(http.MethodPost, "/articles", strings.NewReader(fmt.Sprintf(`{"title":%q,"body":"News"}`, title)))
+		r.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		api.ServeHTTP(rec, r)
+		loc := rec.Header().Get("Location")
+		if loc != want {
+			t.Errorf("%s: Location = %q, want %q", title, loc, want)
+			continue
+		}
+		rec = httptest.NewRecorder()
+		api.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, loc, nil))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), fmt.Sprintf(`"title":%q`, title)) {
+			t.Errorf("GET %s: %d %s", loc, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestRoutes(t *testing.T) {
+	var b strings.Builder
+	must routing.WriteTable(&b, routing.New(NewArticles(time.Now)).List())
+	// Test binaries name package main after its import path; the command
+	// itself prints main.(*Articles).List.
+	want := "" +
+		"NAME            METHOD  PATH              HANDLER\n" +
+		"article_list    GET     /articles         articles.(*Articles).List\n" +
+		"article_show    GET     /articles/{slug}  articles.(*Articles).Show\n" +
+		"article_create  POST    /articles         articles.(*Articles).Create\n"
+	if b.String() != want {
+		t.Errorf("routes:\n%s\nwant:\n%s", b.String(), want)
 	}
 }

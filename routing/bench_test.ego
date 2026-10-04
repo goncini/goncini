@@ -1,0 +1,74 @@
+package routing_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/goncini/goncini/routing"
+)
+
+// discard is a ResponseWriter that keeps nothing, so that benchmarks measure
+// the routing.
+type discard struct{ h http.Header }
+
+func (d *discard) Header() http.Header         { return d.h }
+func (d *discard) Write(b []byte) (int, error) { return len(b), nil }
+func (d *discard) WriteHeader(int)             {}
+
+var noop = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+
+// paths are the routes of a small API.
+var paths = []string{
+	"/articles", "/articles/{slug}", "/articles/{slug}/comments", "/articles/{slug}/comments/{id}",
+	"/articles/{slug}/favorite", "/profiles/{username}", "/profiles/{username}/follow", "/tags", "/user", "/users",
+}
+
+func benchServe(b *testing.B, h http.Handler) {
+	w := &discard{h: http.Header{}}
+	r := httptest.NewRequest(http.MethodGet, "/articles/hello/comments/7", nil)
+	b.ReportAllocs()
+	for b.Loop() {
+		h.ServeHTTP(w, r)
+	}
+}
+
+// BenchmarkServeMux is the baseline: the routes on a ServeMux.
+func BenchmarkServeMux(b *testing.B) {
+	mux := http.NewServeMux()
+	for _, p := range paths {
+		mux.Handle("GET "+p, noop)
+	}
+	benchServe(b, mux)
+}
+
+// BenchmarkRouter registers the same routes, named.
+func BenchmarkRouter(b *testing.B) {
+	r := routing.New()
+	for i, p := range paths {
+		r.Get(p, noop).Name(f"route{i}")
+	}
+	benchServe(b, r)
+}
+
+// BenchmarkRouterWith adds a middleware to every route.
+func BenchmarkRouterWith(b *testing.B) {
+	pass := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { next.ServeHTTP(w, r) })
+	}
+	r := routing.New().With(pass)
+	for _, p := range paths {
+		r.Get(p, noop)
+	}
+	benchServe(b, r)
+}
+
+func BenchmarkURL(b *testing.B) {
+	r := routing.New()
+	r.Get("/articles/{slug}/comments/{id}", noop).Name("comment")
+	params := routing.Params{"slug": "hello-world", "id": 7, "page": 2}
+	b.ReportAllocs()
+	for b.Loop() {
+		must r.URL("comment", params)
+	}
+}

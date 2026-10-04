@@ -185,6 +185,22 @@ func dbConfig(c Config) db.Config                                       { return
 >
 >   goncini requires v0.2.0, which pins the library and the `ego` tool together.
 > - Everything is written in `.ego`, tests included (decided). The generated Go is committed next to each file, and stack traces point at the `.ego` lines.
+>
+> **Status (2026-10-04, later):** step 2 is built: [`routing`](../routing), used by examples/articles. Choices made while building it:
+> - **A `Router` registers on a `ServeMux`** with `Get`, `Post`, `Put`, `Patch`, `Delete`, `Method` and `Handle` (any method), each returning a `*Route` that `Name` names. `Group(prefix)`, `NamePrefix(p)` and `With(middleware…)` return derived routers sharing the mux and the names, so nothing depends on call order. Controllers implement `routing.Routes`; `New(routes…)` and `Include(routes…)` register them, under a group's prefixes when included in one.
+> - **Routes match exactly.** ServeMux reads `/articles/` as "everything below"; the router registers it as `/articles/{$}`, and a subtree is spelled `/files/{path...}`. A catch-all can't swallow unknown URLs that should be 404s.
+> - **`URL(name, params)` returns the path and query**, relative to the host: wildcards are filled and escaped, other parameters become the query string, sorted, and empty ones are left out, since binding reads them as absent. Values format the way `Endpoint` parses them. Failures are an error set, `URLError`; they are bugs, so handlers use `must`. What URL refuses rather than build a URL that goes astray:
+>   - a value of `/`, which ServeMux can't route to a `{name}` wildcard;
+>   - `.` and `..` segments, even escaped: RFC 3986 and browsers treat `%2E` as a dot and resolve them away;
+>   - a URL that a more specific route would serve, such as `/articles/feed` for `/articles/{slug}` with the slug `feed` (the `Shadowed` case). It costs a ServeMux lookup per URL.
+>
+>   A test serves the URLs built for awkward values and checks the route gets each value back; the review ran it on 800,000 random values.
+> - **Registration mistakes panic at startup, saying where both sides were registered:** conflicting patterns (ServeMux's own message names routing's code, so the router rewrites it), duplicate names, paths without a leading slash, and paths ServeMux would redirect (double slashes, dot segments).
+> - **The listing:** `List`, `Match` and `WriteTable` are what `debug:router` and `router:match` will print, and `Endpoint` handlers now name their function there: `main.(*Articles).Show`.
+> - **Cost:** serving through a `Router` costs what the ServeMux does (125 ns and 2 allocations for 10 routes); a middleware adds a few ns. Building a URL takes 490 ns.
+> - **An independent review found 9 defects,** all fixed with regression tests. The two that mattered: a `{name}` value of `/` gave a URL no route served, and URL could return a URL that a more specific route served. The others: conflict messages that could name the wrong route, unclean paths and spaces accepted or refused depending on whether the route had a method, a typed-nil handler that slipped through when wrapped in middleware, empty query values that didn't come back, a panic without its location, and docs promising more than the formatting did.
+> - **Not built yet:** host routes; requirements (ServeMux has no regexes, so `/articles/abc` for an integer id is a 400 from binding rather than a 404); absolute URLs, which need the request's scheme and host where a typed endpoint can't see the request; and redirects between `/x` and `/x/`, beyond the one ServeMux makes.
+> - **What it found:** the example's `Location` header held raw UTF-8 for a slug like `café`, and a title without letters or digits made an empty slug; the first is escaped now and the second is a 422. In effect-go, comments on error-set cases don't reach the generated Go, so `go doc` shows the cases undocumented (reported).
 
 Each step is a package that works in any `net/http` app, the way Laravel uses Symfony's HttpFoundation. effect-go matters most from step 4.
 

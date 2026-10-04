@@ -1,0 +1,52 @@
+package routing_test
+
+import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+
+	"github.com/goncini/goncini/routing"
+)
+
+func Example() {
+	r := routing.New()
+	r.Get("/articles/{slug}", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		fmt.Fprintf(w, "the article %s", req.PathValue("slug"))
+	})).Name("article_show")
+
+	u := must r.URL("article_show", routing.Params{"slug": "hello world", "lang": "fr"})
+	fmt.Println(u)
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, u, nil))
+	fmt.Println(rec.Body)
+	// Output:
+	// /articles/hello%20world?lang=fr
+	// the article hello world
+}
+
+func ExampleRouter_Group() {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {})
+	r := routing.New()
+	api := r.Group("/api").NamePrefix("api_")
+	api.Get("/articles", ok).Name("article_list")
+	api.Get("/articles/{slug}", ok).Name("article_show")
+	for _, route := range r.List() {
+		fmt.Println(route.Name, route.Pattern)
+	}
+	// Output:
+	// api_article_list GET /api/articles
+	// api_article_show GET /api/articles/{slug}
+}
+
+func ExampleWriteTable() {
+	r := routing.New()
+	r.Get("/articles/{slug}", http.NotFoundHandler()).Name("article_show")
+	r.Delete("/articles/{slug}", http.NotFoundHandler()).Name("article_delete")
+	routing.WriteTable(os.Stdout, r.List())
+	// Output:
+	// NAME            METHOD  PATH              HANDLER
+	// article_show    GET     /articles/{slug}  http.HandlerFunc
+	// article_delete  DELETE  /articles/{slug}  http.HandlerFunc
+}

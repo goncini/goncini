@@ -1,0 +1,293 @@
+package routing
+
+import (
+	"fmt"
+	"net/http"
+	"net/url"
+	pathpkg "path"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+// Router registers routes on an http.ServeMux, and serves them.
+//
+// Group, NamePrefix and With derive routers that register their routes
+// under a path prefix, a name prefix or middleware of their own. They share
+// the ServeMux and the names of the router they come from: any of them
+// serves every route, and builds the URL of every named route.
+//
+// A Router is safe for concurrent use. Make one with New.
+type Router struct {
+	t          *table
+	prefix     string
+	namePrefix string
+	middleware []httpkernel.Middleware
+}
+
+// table is what a router shares with the routers derived from it.
+type table struct {
+	mux       *http.ServeMux
+	mu        sync.RWMutex
+	routes    []*Route // in the order they were registered
+	byName    map[string]*Route
+	byPattern map[string]*Route
+}
+
+// Routes is implemented by the parts of an app that have routes, such as
+// controllers, so that they are registered together:
+//
+//	func (c *Controller) Routes(r *routing.Router) {
+//		r.Get("/articles/{slug}", httpkernel.Endpoint(c.Show)).Name("article_show")
+//	}
+type Routes interface {
+	Routes(r *Router)
+}
+
+// New returns a router on a new ServeMux, with the routes of each of routes
+// registered in order.
+func New(routes ...Routes) *Router {
+	r := &Router{t: &table{
+		mux:       http.NewServeMux(),
+		byName:    map[string]*Route{},
+		byPattern: map[string]*Route{},
+	}}
+	r.Include(routes...)
+	return r
+}
+
+// Include registers the routes of each of routes on r, in order, under r's
+// prefixes and middleware:
+//
+//	r.Group("/api").Include(articles, users)
+func (r *Router) Include(routes ...Routes) {
+	for _, rs := range routes {
+		rs.Routes(r)
+	}
+}
+
+// Get registers h for GET requests to path, and HEAD requests.
+func (r *Router) Get(path string, h http.Handler) *Route {
+	return r.add(http.MethodGet, path, h)
+}
+
+// Post registers h for POST requests to path.
+func (r *Router) Post(path string, h http.Handler) *Route {
+	return r.add(http.MethodPost, path, h)
+}
+
+// Put registers h for PUT requests to path.
+func (r *Router) Put(path string, h http.Handler) *Route {
+	return r.add(http.MethodPut, path, h)
+}
+
+// Patch registers h for PATCH requests to path.
+func (r *Router) Patch(path string, h http.Handler) *Route {
+	return r.add(http.MethodPatch, path, h)
+}
+
+// Delete registers h for DELETE requests to path.
+func (r *Router) Delete(path string, h http.Handler) *Route {
+	return r.add(http.MethodDelete, path, h)
+}
+
+// Method registers h for requests to path with the method, such as
+// OPTIONS.
+func (r *Router) Method(method, path string, h http.Handler) *Route {
+	return r.add(method, path, h)
+}
+
+// Handle registers h for requests to path with any method.
+func (r *Router) Handle(path string, h http.Handler) *Route {
+	return r.add("", path, h)
+}
+
+// Group returns a router that registers its routes under prefix, after r's
+// own: r.Group("/api").Get("/articles", h) registers /api/articles. A
+// trailing slash on prefix is dropped, so Get("/") on a group registers the
+// prefix followed by a slash, and Get("") the prefix alone.
+func (r *Router) Group(prefix string) *Router {
+	if !strings.HasPrefix(prefix, "/") {
+		panic(f"routing: group prefix {prefix:q} doesn't start with / ({caller(1)})")
+	}
+	g := *r
+	g.prefix = r.prefix + strings.TrimSuffix(prefix, "/")
+	return &g
+}
+
+// NamePrefix returns a router that puts prefix before the names of its
+// routes, after r's own name prefix.
+func (r *Router) NamePrefix(prefix string) *Router {
+	g := *r
+	g.namePrefix = r.namePrefix + prefix
+	return &g
+}
+
+// With returns a router that wraps the handlers of its routes in mw, inside
+// r's own middleware, the first one outermost. Middleware runs once the
+// route has matched, so r.Pattern and r.PathValue are set; middleware for
+// every request belongs on the httpkernel.Kernel.
+func (r *Router) With(mw ...httpkernel.Middleware) *Router {
+	if slices.ContainsFunc(mw, m => m == nil) {
+		panic(f"routing: nil middleware ({caller(1)})")
+	}
+	g := *r
+	g.middleware = slices.Concat(r.middleware, mw)
+	return &g
+}
+
+// ServeHTTP serves req with the handler of the route that matches it, as
+// ServeMux does.
+func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	r.t.mux.ServeHTTP(w, req)
+}
+
+// Handler returns the handler for req and the pattern of the route that
+// matches it, as ServeMux.Handler does. For a request that no route
+// matches, the pattern is empty and the handler answers 404, or 405 when
+// another method would match: an httpkernel.Kernel answers those with
+// problems instead.
+func (r *Router) Handler(req *http.Request) (h http.Handler, pattern string) {
+	return r.t.mux.Handler(req)
+}
+
+// Route is a registered route. Name names it, and URL builds its URLs.
+type Route struct {
+	t          *table
+	name       string
+	method     string
+	path       string
+	pattern    string
+	handler    http.Handler
+	source     string
+	namePrefix string
+	segments   []segment
+}
+
+// add registers h, wrapped in r's middleware, for method and path. It is
+// called by the registering methods, which are called by the app.
+func (r *Router) add(method, path string, h http.Handler) *Route {
+	source := caller(2)
+	if path != "" && !strings.HasPrefix(path, "/") {
+		panic(f"routing: path {path:q} doesn't start with / ({source})")
+	}
+	path = r.prefix + path
+	if path == "" {
+		path = "/"
+	}
+	checkPath(path, source)
+	// ServeMux reads what comes before a space as the method: escape spaces,
+	// which it unescapes again to match.
+	pattern := strings.NewReplacer(" ", "%20", "\t", "%09").Replace(path)
+	if strings.HasSuffix(pattern, "/") {
+		pattern += "{$}" // exactly this path, not the paths below it
+	}
+	if method != "" {
+		pattern = method + " " + pattern
+	}
+	if f, ok := h.(http.HandlerFunc); h == nil || ok && f == nil {
+		panic(f"routing: nil handler for {pattern} ({source})")
+	}
+	served := h
+	for i := len(r.middleware) - 1; i >= 0; i-- {
+		served = r.middleware[i](served)
+	}
+	route := &Route{t: r.t, method: method, path: path, pattern: pattern, handler: h, source: source, namePrefix: r.namePrefix}
+	r.t.add(route, served)
+	return route
+}
+
+// checkPath panics if ServeMux can't route path as it is: if it would
+// redirect requests for it to a cleaner path, or if it has a . or ..
+// segment, even escaped, which clients resolve away.
+func checkPath(p, source string) {
+	clean := pathpkg.Clean(p)
+	if strings.HasSuffix(p, "/") && clean != "/" {
+		clean += "/"
+	}
+	if clean != p {
+		panic(f"routing: path {p:q} isn't clean ({source}): ServeMux would redirect it to {clean}")
+	}
+	for s := range strings.SplitSeq(p[1:], "/") {
+		text := url.PathUnescape(s) else s
+		if text == "." || text == ".." {
+			panic(f"routing: path {p:q} has a {text:q} segment ({source}), which clients resolve away")
+		}
+	}
+}
+
+// add registers a route on the ServeMux, with h serving it.
+func (t *table) add(route *Route, h http.Handler) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	defer func() {
+		if v := recover(); v != nil {
+			panic(t.explain(route, v))
+		}
+	}()
+	t.mux.Handle(route.pattern, h)
+	route.segments = segments(route.pattern)
+	t.routes = append(t.routes, route)
+	t.byPattern[route.pattern] = route
+}
+
+// explain is the message for a route that ServeMux refused, with what
+// ServeMux says. ServeMux gives the place where routing called it, so the
+// message gives where the app registered the routes instead.
+func (t *table) explain(route *Route, v any) string {
+	msg := fmt.Sprint(v)
+	for _, other := range t.routes {
+		if strings.Contains(msg, "conflicts with pattern "+strconv.Quote(other.pattern)+" (") {
+			conflict := f"routing: {route.pattern} ({route.source}) conflicts with {other.pattern} ({other.source})"
+			if _, why, ok := strings.Cut(msg, "\n"); ok {
+				conflict += ": " + why
+			}
+			return conflict
+		}
+	}
+	return f"routing: {route.pattern} ({route.source}): {msg}"
+}
+
+// Name names the route, after the name prefix of the router that registered
+// it, and returns it. Names are made of letters, digits, '_', '.' and '-',
+// such as article_show, and are unique: Name panics if another route has
+// the name, or if this one has a name already.
+func (r *Route) Name(name string) *Route {
+	full := r.namePrefix + name
+	if name == "" || strings.ContainsFunc(full, c => !nameChar(c)) {
+		panic(f"routing: invalid route name {full:q} ({r.source}): use letters, digits, '_', '.' and '-'")
+	}
+	r.t.name(r, full)
+	return r
+}
+
+// nameChar reports whether c can be part of a route name.
+func nameChar(c rune) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '.' || c == '-'
+}
+
+// name gives a route its name.
+func (t *table) name(r *Route, name string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if r.name != "" {
+		panic(f"routing: {r.pattern} ({r.source}) is already named {r.name:q}")
+	}
+	if other := t.byName[name]; other != nil {
+		panic(f"routing: two routes are named {name:q}: {other.pattern} ({other.source}) and {r.pattern} ({r.source})")
+	}
+	r.name = name
+	t.byName[name] = r
+}
+
+// caller returns the place, as file:line, of the call skip levels up the
+// stack from the function calling caller: caller(1) is where that function
+// was called.
+func caller(skip int) string {
+	_, file, line, ok := runtime.Caller(skip + 1)
+	return if ok { f"{file}:{line}" } else { "unknown place" }
+}

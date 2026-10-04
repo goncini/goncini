@@ -1,0 +1,81 @@
+package routing
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"text/tabwriter"
+)
+
+// Info describes a route.
+type Info struct {
+	Name    string       // empty for a route without a name
+	Method  string       // empty for a route of every method
+	Path    string       // with the prefixes of its groups: /api/articles/{slug}
+	Pattern string       // what the ServeMux matches: GET /api/articles/{slug}
+	Handler http.Handler // as registered, without the middleware
+	Source  string       // where it was registered, as file:line
+}
+
+// Info describes the route.
+func (r *Route) Info() Info {
+	r.t.mu.RLock()
+	defer r.t.mu.RUnlock()
+	return r.info()
+}
+
+func (r *Route) info() Info {
+	return Info{Name: r.name, Method: r.method, Path: r.path, Pattern: r.pattern, Handler: r.handler, Source: r.source}
+}
+
+// List returns the routes in the order they were registered.
+func (r *Router) List() []Info {
+	r.t.mu.RLock()
+	defer r.t.mu.RUnlock()
+	infos := make([]Info, len(r.t.routes))
+	for i, route := range r.t.routes {
+		infos[i] = route.info()
+	}
+	return infos
+}
+
+// Match returns the route that serves req, and reports whether there is
+// one. A request that ServeMux redirects to a cleaner path, such as one
+// with a double slash, gets the route of that path.
+func (r *Router) Match(req *http.Request) (Info, bool) {
+	_, pattern := r.t.mux.Handler(req)
+	r.t.mu.RLock()
+	defer r.t.mu.RUnlock()
+	route := r.t.byPattern[pattern]
+	if route == nil {
+		return Info{}, false
+	}
+	return route.info(), true
+}
+
+// WriteTable writes routes as a table, one route per line, the way
+// debug:router prints them:
+//
+//	NAME          METHOD  PATH              HANDLER
+//	article_list  GET     /articles         main.(*Articles).List
+//	article_show  GET     /articles/{slug}  main.(*Articles).Show
+//
+// A handler is named by its String method if it has one, as
+// httpkernel.Endpoint's handlers do, or else by its type.
+func WriteTable(w io.Writer, routes []Info) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tMETHOD\tPATH\tHANDLER")
+	for _, r := range routes {
+		method := if r.Method != "" { r.Method } else { "ANY" }
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Name, method, r.Path, describe(r.Handler))
+	}
+	return tw.Flush()
+}
+
+// describe names a handler.
+func describe(h http.Handler) string {
+	if s, ok := h.(fmt.Stringer); ok {
+		return s.String()
+	}
+	return f"{h:T}"
+}

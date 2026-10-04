@@ -1,35 +1,40 @@
-// Command articles is a small API built with httpkernel: an effect-go error
-// set mapped to responses, typed endpoints, validation, and a server that
-// shuts down gracefully.
+// Command articles is a small API built with goncini: an effect-go error
+// set mapped to responses, typed endpoints, validation, named routes, and a
+// server that shuts down gracefully.
 //
 //	go run ./examples/articles
 //	curl -i localhost:8080/articles -H 'Content-Type: application/json' -d '{"title":"Hello","body":"First post"}'
+//
+// go run ./examples/articles routes lists the routes.
 package main
 
 import (
 	"log/slog"
-	"net/http"
 	"os"
 	"time"
 
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/routing"
 )
 
 func main() {
 	slog.SetDefault(slog.New(trace.LogHandler(slog.NewTextHandler(os.Stderr, nil))))
+	router := routing.New(NewArticles(time.Now))
+	if len(os.Args) > 1 && os.Args[1] == "routes" {
+		must routing.WriteTable(os.Stdout, router.List())
+		return
+	}
 	srv := &httpkernel.Server{
 		Addr:    os.LookupEnv("ADDR") ?? ":8080",
-		Handler: NewKernel(NewArticles(time.Now), slog.Default()),
+		Handler: NewKernel(router, slog.Default()),
 	}
 	scope.Main(s => srv.ListenAndServe(s.Context()))
 }
 
-// NewKernel serves the articles API, logging each request.
-func NewKernel(a *Articles, logger *slog.Logger) *httpkernel.Kernel {
-	mux := http.NewServeMux()
-	a.Routes(mux)
+// NewKernel serves the router, logging each request.
+func NewKernel(router *routing.Router, logger *slog.Logger) *httpkernel.Kernel {
 	return &httpkernel.Kernel{
-		Handler:      mux,
+		Handler:      router,
 		Middleware:   []httpkernel.Middleware{httpkernel.AccessLog(logger)},
 		ErrorMappers: []httpkernel.ErrorMapper{Problems},
 		Logger:       logger,

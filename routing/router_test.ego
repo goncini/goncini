@@ -1,0 +1,365 @@
+package routing_test
+
+import (
+	"fmt"
+	"maps"
+	"net/http"
+	"net/http/httptest"
+	"runtime"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/routing"
+)
+
+// echo answers with the pattern that matched, then the named path values.
+func echo(names ...string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, r.Pattern)
+		for _, n := range names {
+			fmt.Fprintf(w, " %s=%s", n, r.PathValue(n))
+		}
+	})
+}
+
+// serve serves a request and returns the response.
+func serve(h http.Handler, method, target string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(method, target, nil))
+	return rec
+}
+
+// panics returns what f panics with, or fails the test if it doesn't.
+func panics(t *testing.T, f func()) (msg string) {
+	t.Helper()
+	defer func() {
+		v := recover()
+		if v == nil {
+			t.Fatal("no panic")
+		}
+		msg = fmt.Sprint(v)
+	}()
+	f()
+	return ""
+}
+
+// nextLine returns the place of the line after the call, as file:line: where
+// the test registers a route.
+func nextLine() string {
+	_, file, line, _ := runtime.Caller(1)
+	return f"{file}:{line + 1}"
+}
+
+func TestRoutesMatchTheirMethods(t *testing.T) {
+	r := routing.New()
+	r.Get("/things", echo())
+	r.Post("/things", echo())
+	r.Put("/things/{id}", echo("id"))
+	r.Patch("/things/{id}", echo("id"))
+	r.Delete("/things/{id}", echo("id"))
+	r.Method(http.MethodOptions, "/things", echo())
+	r.Handle("/any", echo())
+
+	tests := []struct {
+		method, target string
+		status         int
+		body           string
+	}{
+		{"GET", "/things", 200, "GET /things"},
+		{"HEAD", "/things", 200, "GET /things"},
+		{"POST", "/things", 200, "POST /things"},
+		{"PUT", "/things/7", 200, "PUT /things/{id} id=7"},
+		{"PATCH", "/things/7", 200, "PATCH /things/{id} id=7"},
+		{"DELETE", "/things/7", 200, "DELETE /things/{id} id=7"},
+		{"OPTIONS", "/things", 200, "OPTIONS /things"},
+		{"PROPFIND", "/any", 200, "/any"},
+		{"DELETE", "/things", 405, ""},
+		{"GET", "/nothing", 404, ""},
+	}
+	for _, tt := range tests {
+		rec := serve(r, tt.method, tt.target)
+		if rec.Code != tt.status || tt.body != "" && rec.Body.String() != tt.body {
+			t.Errorf("%s %s: %d %q, want %d %q", tt.method, tt.target, rec.Code, rec.Body, tt.status, tt.body)
+		}
+	}
+	if allow := serve(r, "DELETE", "/things").Header().Get("Allow"); allow != "GET, HEAD, OPTIONS, POST" {
+		t.Errorf("Allow = %q", allow)
+	}
+}
+
+func TestPathsMatchExactly(t *testing.T) {
+	r := routing.New()
+	r.Get("/", echo())
+	r.Get("/dir/", echo())
+	r.Get("/files/{path...}", echo("path"))
+	for target, want := range map[string]int{
+		"/":          200,
+		"/other":     404,
+		"/dir/":      200,
+		"/dir/file":  404,
+		"/files/":    200,
+		"/files/a/b": 200,
+	} {
+		if rec := serve(r, "GET", target); rec.Code != want {
+			t.Errorf("GET %s: %d, want %d", target, rec.Code, want)
+		}
+	}
+}
+
+func TestGroupsPrefixTheirPaths(t *testing.T) {
+	r := routing.New()
+	api := r.Group("/api")
+	api.Get("", echo())
+	api.Get("/", echo())
+	api.Get("/articles", echo())
+	api.Group("/users/{user}/").Get("/posts", echo("user"))
+	r.Group("/").Get("/root", echo())
+
+	for target, want := range map[string]string{
+		"/api":                 "GET /api",
+		"/api/":                "GET /api/{$}",
+		"/api/articles":        "GET /api/articles",
+		"/api/users/ann/posts": "GET /api/users/{user}/posts user=ann",
+		"/root":                "GET /root",
+	} {
+		if rec := serve(r, "GET", target); rec.Body.String() != want {
+			t.Errorf("GET %s: %d %q, want %q", target, rec.Code, rec.Body, want)
+		}
+	}
+}
+
+func TestPathsStartWithASlash(t *testing.T) {
+	r := routing.New()
+	line := nextLine()
+	msg := panics(t, func() { r.Get("articles", echo()) })
+	if want := `routing: path "articles" doesn't start with / (` + line + ")"; msg != want {
+		t.Errorf("panic: %s\nwant:  %s", msg, want)
+	}
+	line = nextLine()
+	msg = panics(t, func() { r.Group("api") })
+	if want := `routing: group prefix "api" doesn't start with / (` + line + ")"; msg != want {
+		t.Errorf("panic: %s\nwant:  %s", msg, want)
+	}
+}
+
+func TestWithWrapsTheRoutesItRegisters(t *testing.T) {
+	var calls []string
+	mark := func(name string) httpkernel.Middleware {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls = append(calls, name+" "+r.Pattern)
+				next.ServeHTTP(w, r)
+			})
+		}
+	}
+	r := routing.New()
+	outer := r.With(mark("outer"))
+	inner := outer.With(mark("inner1"), mark("inner2"))
+	r.Get("/plain", echo())
+	outer.Get("/outer", echo())
+	inner.Get("/inner", echo())
+	outer.Get("/outer2", echo())
+
+	for target, want := range map[string][]string{
+		"/plain":  nil,
+		"/outer":  {"outer GET /outer"},
+		"/inner":  {"outer GET /inner", "inner1 GET /inner", "inner2 GET /inner"},
+		"/outer2": {"outer GET /outer2"},
+	} {
+		calls = nil
+		serve(r, "GET", target)
+		if !slices.Equal(calls, want) {
+			t.Errorf("GET %s ran %q, want %q", target, calls, want)
+		}
+	}
+	line := nextLine()
+	if msg := panics(t, func() { r.With(nil) }); msg != "routing: nil middleware ("+line+")" {
+		t.Errorf("panic: %s", msg)
+	}
+}
+
+func TestPathsMustBeRoutable(t *testing.T) {
+	r := routing.New()
+	for path, want := range map[string]string{
+		"//evil.example/x": `routing: path "//evil.example/x" isn't clean`,
+		"/a/./b":           `routing: path "/a/./b" isn't clean`,
+		"/a/../b":          `routing: path "/a/../b" isn't clean`,
+		"/v/%2E/x":         `routing: path "/v/%2E/x" has a "." segment`,
+		"/w/%2e%2E/{id}":   `routing: path "/w/%2e%2E/{id}" has a ".." segment`,
+	} {
+		if msg := panics(t, func() { r.Handle(path, echo()) }); !strings.HasPrefix(msg, want) {
+			t.Errorf("Handle(%q) panics with %s", path, msg)
+		}
+		if msg := panics(t, func() { r.Get(path, echo()) }); !strings.HasPrefix(msg, want) {
+			t.Errorf("Get(%q) panics with %s", path, msg)
+		}
+	}
+	if msg := panics(t, func() { r.Group("/api//").Get("/x", echo()) }); !strings.HasPrefix(msg, `routing: path "/api//x" isn't clean`) {
+		t.Errorf("a group with a double slash: %s", msg)
+	}
+}
+
+func TestPathsCanHoldSpaces(t *testing.T) {
+	r := routing.New()
+	r.Get("/a b/{x}", echo("x")).Name("a")
+	r.Handle("/c d", echo()).Name("c")
+	for name, want := range map[string]string{"a": "/a%20b/1", "c": "/c%20d"} {
+		params := if name == "a" { routing.Params{"x": 1} } else { nil }
+		u := must r.URL(name, params)
+		if u != want {
+			t.Errorf("URL(%q) = %s, want %s", name, u, want)
+		}
+		if rec := serve(r, "GET", u); rec.Code != 200 {
+			t.Errorf("GET %s: %d", u, rec.Code)
+		}
+	}
+}
+
+func TestNilHandlersAreRefusedBehindMiddleware(t *testing.T) {
+	pass := func(next http.Handler) http.Handler { return next }
+	r := routing.New().With(pass)
+	line := nextLine()
+	msg := panics(t, func() { r.Get("/a", http.HandlerFunc(nil)) })
+	if want := "routing: nil handler for GET /a (" + line + ")"; msg != want {
+		t.Errorf("panic: %s\nwant:  %s", msg, want)
+	}
+}
+
+func TestNamePrefixes(t *testing.T) {
+	r := routing.New()
+	r.Get("/a", echo()).Name("a")
+	admin := r.Group("/admin").NamePrefix("admin_")
+	admin.Get("/b", echo()).Name("b")
+	admin.NamePrefix("x.").Get("/c", echo()).Name("c")
+	admin.Get("/d", echo())
+
+	got := map[string]string{}
+	for _, info := range r.List() {
+		got[info.Name] = info.Path
+	}
+	want := map[string]string{"a": "/a", "admin_b": "/admin/b", "admin_x.c": "/admin/c", "": "/admin/d"}
+	if !maps.Equal(got, want) {
+		t.Errorf("names = %v, want %v", got, want)
+	}
+}
+
+func TestNamesAreUnique(t *testing.T) {
+	r := routing.New()
+	first := nextLine()
+	r.Get("/a", echo()).Name("same")
+	second := nextLine()
+	b := r.Get("/b", echo())
+	msg := panics(t, func() { b.Name("same") })
+	if want := `routing: two routes are named "same": GET /a (` + first + ") and GET /b (" + second + ")"; msg != want {
+		t.Errorf("panic: %s\nwant:  %s", msg, want)
+	}
+
+	line := nextLine()
+	c := r.Get("/c", echo()).Name("one")
+	msg = panics(t, func() { c.Name("two") })
+	if want := "routing: GET /c (" + line + `) is already named "one"`; msg != want {
+		t.Errorf("panic: %s\nwant:  %s", msg, want)
+	}
+
+	d := r.Get("/d", echo())
+	for _, name := range []string{"", "with space", "a/b", "é"} {
+		if msg := panics(t, func() { d.Name(name) }); !strings.HasPrefix(msg, "routing: invalid route name") {
+			t.Errorf("Name(%q) panics with %s", name, msg)
+		}
+	}
+	d.Name("still-free_after.panics")
+}
+
+func TestConflictsSayWhereBothRoutesAre(t *testing.T) {
+	r := routing.New()
+	first := nextLine()
+	r.Get("/articles/{slug}", echo())
+	second := nextLine()
+	msg := panics(t, func() { r.Get("/articles/{id}", echo()) })
+	want := "routing: GET /articles/{id} (" + second + ") conflicts with GET /articles/{slug} (" + first + "): " +
+		"GET /articles/{id} matches the same requests as GET /articles/{slug}"
+	if msg != want {
+		t.Errorf("panic: %s\nwant:  %s", msg, want)
+	}
+
+	line := nextLine()
+	msg = panics(t, func() { r.Get("/b/{x}/{x}", echo()) })
+	if prefix := "routing: GET /b/{x}/{x} (" + line + "): "; !strings.HasPrefix(msg, prefix) || !strings.Contains(msg, `duplicate wildcard name "x"`) {
+		t.Errorf("panic: %s", msg)
+	}
+
+	line = nextLine()
+	msg = panics(t, func() { r.Get("/nil", nil) })
+	if want := "routing: nil handler for GET /nil (" + line + ")"; msg != want {
+		t.Errorf("panic: %s\nwant:  %s", msg, want)
+	}
+
+	// The router still works.
+	r.Get("/after", echo()).Name("after")
+	if rec := serve(r, "GET", "/after"); rec.Code != 200 {
+		t.Errorf("GET /after: %d", rec.Code)
+	}
+	if n := len(r.List()); n != 2 {
+		t.Errorf("%d routes, want 2", n)
+	}
+
+	// The message names the route that conflicts, not one whose pattern
+	// appears in ServeMux's explanation, here as an example path.
+	r = routing.New()
+	r.Handle("/a/b", echo())
+	conflicting := nextLine()
+	r.Handle("/{x}/b", echo())
+	msg = panics(t, func() { r.Handle("/a/{y}", echo()) })
+	if !strings.Contains(msg, "conflicts with /{x}/b ("+conflicting+")") {
+		t.Errorf("panic: %s", msg)
+	}
+}
+
+// articleRoutes and userRoutes are an app's parts, with their routes.
+type articleRoutes struct{}
+
+func (articleRoutes) Routes(r *routing.Router) {
+	r.Get("/articles", echo()).Name("article_list")
+}
+
+type userRoutes struct{}
+
+func (userRoutes) Routes(r *routing.Router) {
+	r.Get("/users", echo()).Name("user_list")
+}
+
+func TestIncludeRegistersRoutes(t *testing.T) {
+	r := routing.New(articleRoutes{})
+	r.Group("/api").NamePrefix("api_").Include(articleRoutes{}, userRoutes{})
+	var got []string
+	for _, info := range r.List() {
+		got = append(got, info.Name+" "+info.Pattern)
+	}
+	want := []string{"article_list GET /articles", "api_article_list GET /api/articles", "api_user_list GET /api/users"}
+	if !slices.Equal(got, want) {
+		t.Errorf("routes = %q, want %q", got, want)
+	}
+}
+
+func TestConcurrentUse(t *testing.T) {
+	r := routing.New()
+	r.Get("/base/{x}", echo("x")).Name("base")
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			r.Get(f"/r{i}", echo()).Name(f"r{i}")
+			for range 50 {
+				must r.URL("base", routing.Params{"x": i})
+				serve(r, "GET", "/base/1")
+				r.List()
+			}
+		})
+	}
+	wg.Wait()
+	if n := len(r.List()); n != 9 {
+		t.Errorf("%d routes, want 9", n)
+	}
+}

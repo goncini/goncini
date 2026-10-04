@@ -1,0 +1,57 @@
+// Package routing is goncini's router: Symfony's Routing component, on
+// net/http's ServeMux.
+//
+// Routes are registered in plain Go, and can be named, grouped under a
+// prefix, and wrapped in middleware:
+//
+//	r := routing.New()
+//	r.Get("/articles/{slug}", httpkernel.Endpoint(c.Show)).Name("article_show")
+//	admin := r.Group("/admin").NamePrefix("admin_").With(requireAdmin)
+//	admin.Delete("/articles/{slug}", httpkernel.Endpoint(c.Delete)).Name("article_delete")
+//
+// A Router is an http.Handler. Behind an httpkernel.Kernel, requests that
+// match no route get 404 and 405 problems.
+//
+// The parts of an app that have routes, such as controllers, implement
+// Routes, and New or Include registers them.
+//
+// # Paths
+//
+// Paths are ServeMux patterns without the method and host. A {name}
+// wildcard matches one segment, never empty, and a final {name...} wildcard
+// the rest of the path, possibly empty. Handlers read them with
+// r.PathValue, or with path tags in an httpkernel.Endpoint input. A GET
+// route also answers HEAD requests.
+//
+// One thing differs from ServeMux: a route matches its path exactly.
+// ServeMux takes a pattern ending in a slash, such as /articles/, to match
+// every path below it as well; a route with that path matches /articles/
+// only, though ServeMux still redirects /articles to it. To match a
+// subtree, end the path with a {name...} wildcard: /files/{path...}.
+//
+// Registering a route panics, saying where, if its path isn't one that
+// ServeMux can route: one with a double slash, or a . or .. segment. Two
+// routes that would match the same requests, with neither more specific
+// than the other, are a conflict: registering the second one panics, and
+// says where both were registered.
+//
+// # URLs
+//
+// URL builds the URL of a named route from its parameters, so that paths
+// are written once, in the routes:
+//
+//	u, err := r.URL("article_show", routing.Params{"slug": "hello-world"})
+//	// /articles/hello-world
+//
+// Parameters that aren't wildcards of the route go into the query string.
+// Each value is escaped, so that the route gets back exactly the value
+// given, and URL fails rather than return a URL that a more specific route
+// would serve. The URLError cases say what went wrong; they are mistakes in
+// the code that builds the URL, so a handler can panic on them with must.
+//
+// # Listing
+//
+// List returns the routes in the order they were registered, and
+// WriteTable prints them the way debug:router does. Match tells which route
+// serves a request.
+package routing

@@ -14,13 +14,14 @@ import (
 	"unicode"
 
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/routing"
 
 	"github.com/effect-go/effect-go/trace"
 )
 
 // Article is what the API serves.
 //
-//line articles.ego:14
+//line articles.ego:15
 type Article struct {
 	Slug      string    `json:"slug"`
 	Title     string    `json:"title"`
@@ -68,7 +69,7 @@ func (e Duplicate) As(target any) bool {
 // Problem says what each ArticleError looks like over HTTP. A new case
 // doesn't compile until it has an arm here.
 //
-//line articles.ego:29
+//line articles.ego:30
 func Problem(err error) httpkernel.Problem {
 	var v httpkernel.Problem
 	if err == nil {
@@ -85,7 +86,7 @@ func Problem(err error) httpkernel.Problem {
 
 // Problems is what a kernel registers to answer ArticleErrors.
 //
-//line articles.ego:39
+//line articles.ego:40
 var Problems = httpkernel.Map[ArticleError](Problem)
 
 // Articles keeps the articles in memory.
@@ -93,18 +94,21 @@ type Articles struct {
 	mu     sync.Mutex
 	bySlug map[string]Article
 	now    func() time.Time
+	urls   *routing.Router
 }
 
 func NewArticles(now func() time.Time) *Articles {
 	return &Articles{bySlug: map[string]Article{}, now: now}
 }
 
-// Routes registers the endpoints. Each effect method compiles to a
-// func(ctx, In) (Out, error), which httpkernel.Endpoint serves.
-func (a *Articles) Routes(mux *http.ServeMux) {
-	mux.Handle("GET /articles", httpkernel.Endpoint(a.List))
-	mux.Handle("GET /articles/{slug}", httpkernel.Endpoint(a.Show))
-	mux.Handle("POST /articles", httpkernel.Endpoint(a.Create))
+// Routes registers the endpoints, and keeps the router to build their URLs.
+// Each effect method compiles to a func(ctx, In) (Out, error), which
+// httpkernel.Endpoint serves.
+func (a *Articles) Routes(r *routing.Router) {
+	a.urls = r
+	r.Get("/articles", httpkernel.Endpoint(a.List)).Name("article_list")
+	r.Get("/articles/{slug}", httpkernel.Endpoint(a.Show)).Name("article_show")
+	r.Post("/articles", httpkernel.Endpoint(a.Create)).Name("article_create")
 }
 
 type ListInput struct {
@@ -128,7 +132,7 @@ type ListOutput struct {
 func (a *Articles) List(ctx context.Context, in ListInput) (_ ListOutput, err error) {
 	ctx, span := trace.Start(ctx, "main.Articles.List")
 	defer trace.End(span, &err)
-//line articles.ego:80
+//line articles.ego:84
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	var list []Article
@@ -148,7 +152,7 @@ type ShowInput struct {
 func (a *Articles) Show(ctx context.Context, in ShowInput) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "main.Articles.Show")
 	defer trace.End(span, &err)
-//line articles.ego:97
+//line articles.ego:101
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	art, ok := a.bySlug[in.Slug]
@@ -170,6 +174,8 @@ func (in *CreateInput) Validate() error {
 	var vs []httpkernel.Violation
 	if strings.TrimSpace(in.Body.Title) == "" {
 		vs = append(vs, httpkernel.Violation{Pointer: "#/title", Detail: "can't be blank"})
+	} else if slugify(in.Body.Title) == "" {
+		vs = append(vs, httpkernel.Violation{Pointer: "#/title", Detail: "needs a letter or a digit"})
 	}
 	if strings.TrimSpace(in.Body.Body) == "" {
 		vs = append(vs, httpkernel.Violation{Pointer: "#/body", Detail: "can't be blank"})
@@ -183,7 +189,7 @@ func (in *CreateInput) Validate() error {
 func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Created[Article], err error) {
 	ctx, span := trace.Start(ctx, "main.Articles.Create")
 	defer trace.End(span, &err)
-//line articles.ego:129
+//line articles.ego:135
 	slug := slugify(in.Body.Title)
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -192,7 +198,13 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 	}
 	art := Article{Slug: slug, Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: a.now()}
 	a.bySlug[slug] = art
-	return httpkernel.Created[Article]{Location: "/articles/" + slug, Body: art}, nil
+	// A URL that can't be built is a bug in this code, not in the request.
+	loc, err := a.urls.URL("article_show", routing.Params{"slug": slug})
+	if err != nil {
+		panic(err)
+	}
+//line articles.ego:145
+	return httpkernel.Created[Article]{Location: loc, Body: art}, nil
 }
 
 // slugify turns a title into a slug: "Hello, World!" becomes "hello-world".

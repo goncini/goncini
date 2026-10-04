@@ -11,11 +11,14 @@ its ecosystem, and [effect-go](https://github.com/effect-go/effect-go).
 - **Typed endpoints.** An `effect` method takes its input struct and returns
   its result; goncini binds the path, query, headers and JSON body, validates,
   and writes JSON or an RFC 9457 problem.
+- **Named routes on `ServeMux`.** Routes are registered in plain Go, in
+  groups with their own middleware, and URLs are built from route names.
 - **Structured concurrency.** Each request runs in its own effect-go scope,
   and the server shuts down gracefully.
 
-Status: early. [`httpkernel`](httpkernel) is implemented; routing comes next.
-The plan is in [docs/assessment.md](docs/assessment.md).
+Status: early. [`httpkernel`](httpkernel) and [`routing`](routing) are
+implemented; configuration and the console come next. The plan is in
+[docs/assessment.md](docs/assessment.md).
 
 ## A taste
 
@@ -49,10 +52,10 @@ effect (a *Articles) Show(in ShowInput) (Article, ArticleError) {
 
 func main() {
 	articles := &Articles{bySlug: map[string]Article{}}
-	mux := http.NewServeMux()
-	mux.Handle("GET /articles/{slug}", httpkernel.Endpoint(articles.Show))
+	router := routing.New()
+	router.Get("/articles/{slug}", httpkernel.Endpoint(articles.Show)).Name("article_show")
 	kernel := &httpkernel.Kernel{
-		Handler:      mux,
+		Handler:      router,
 		ErrorMappers: []httpkernel.ErrorMapper{Problems},
 	}
 	srv := &httpkernel.Server{Addr: ":8080", Handler: kernel}
@@ -65,7 +68,13 @@ $ curl localhost:8080/articles/nope
 {"title":"Not Found","status":404,"detail":"no article nope"}
 ```
 
-The full example is [examples/articles](examples/articles): `go run ./examples/articles`.
+Handlers build URLs from route names, escaped:
+`router.URL("article_show", routing.Params{"slug": "café"})` gives
+`/articles/caf%C3%A9`.
+
+The full example is [examples/articles](examples/articles):
+`go run ./examples/articles` serves it, and `go run ./examples/articles routes`
+lists its routes.
 
 ## Developing
 

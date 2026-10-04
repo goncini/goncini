@@ -1,0 +1,305 @@
+package routing
+
+import (
+	"encoding"
+	"math"
+	"net/http"
+	"net/url"
+	"reflect"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Params are the parameters of a URL by name: the values of the route's
+// wildcards, then query parameters.
+type Params map[string]any
+
+// URLError is everything building a URL can fail with. Each case is a
+// mistake in the code that builds the URL, not in a request.
+error URLError {
+	// UnknownRoute means that no route has the name.
+	UnknownRoute{ Name string } "no route is named {Name:q}"
+	// MissingParam means that a wildcard of the route has no value. Route
+	// is the route's name, or its pattern if it has none.
+	MissingParam {
+		Route string
+		Param string
+	} "route {Route:q} needs parameter {Param:q}"
+	// InvalidParam means that a value can't be part of the URL, for the
+	// Reason given, such as "is empty".
+	InvalidParam {
+		Route  string
+		Param  string
+		Reason string
+	} "route {Route:q}: parameter {Param:q} {Reason}"
+	// Shadowed means that another route, By, would serve the URL: a more
+	// specific one, such as /articles/feed for /articles/{slug} with the
+	// slug "feed".
+	Shadowed {
+		Route string
+		URL   string
+		By    string
+	} "route {Route:q}: {URL} would be served by {By}"
+}
+
+// URL returns the URL of the route named name, with params. See Route.URL.
+func (r *Router) URL(name string, params Params) (string, URLError) {
+	r.t.mu.RLock()
+	route := r.t.byName[name]
+	r.t.mu.RUnlock()
+	if route == nil {
+		fail UnknownRoute{Name: name}
+	}
+	return route.URL(params)
+}
+
+// URL returns the URL of the route with params, relative to the host: its
+// path, with each wildcard replaced by the parameter of that name, then the
+// other parameters as a query string, sorted by name:
+//
+//	/articles/{slug} with Params{"slug": "hello", "draft": true}
+//	gives /articles/hello?draft=true
+//
+// Values are escaped, so that the route gets each one back exactly. A
+// {name} value can hold any character, but can't be empty or "/", which
+// ServeMux can't route, nor "." or "..", which clients resolve away even
+// escaped. The slashes of a {name...} value separate its segments, which
+// can't be "." or "..", nor empty except the last.
+//
+// A value is a string, bool, integer, finite float, time.Duration, or an
+// encoding.TextMarshaler such as time.Time; a type whose underlying type is
+// a string, bool, integer or float; or a pointer to one. A query parameter
+// can also be a slice of them, for a repeated parameter. A nil value is
+// absent: a wildcard needs a value, but a query parameter that is nil or
+// empty is left out, since httpkernel reads an empty one as absent.
+//
+// URL fails with Shadowed rather than return a URL that another route
+// would serve. For a route of every method, registered with Handle, it only
+// checks the routes of every method.
+func (r *Route) URL(params Params) (string, URLError) {
+	var b strings.Builder
+	for _, s := range r.segments {
+		b.WriteByte('/')
+		match s.kind {
+			fixed               => b.WriteString(s.text)
+			trailing            => continue
+			wildcard, remainder => {
+				v := check r.param(s, params)
+				b.WriteString(v)
+			}
+		}
+	}
+	path := b.String()
+	if by := r.t.servedBy(r.method, path); by != r.pattern {
+		fail Shadowed{Route: r.label(), URL: path, By: r.t.label(by)}
+	}
+	q := check r.query(params)
+	if q != "" {
+		path += "?" + q
+	}
+	return path, nil
+}
+
+// param returns the value of a wildcard, escaped.
+func (r *Route) param(s segment, params Params) (string, URLError) {
+	v := params[s.text]
+	if absent(v) {
+		fail MissingParam{Route: r.label(), Param: s.text}
+	}
+	text, err := format(v)
+	if err != nil {
+		fail InvalidParam{Route: r.label(), Param: s.text, Reason: err.Error()}
+	}
+	if s.kind == wildcard {
+		if text == "" || text == "/" || text == "." || text == ".." {
+			reason := if text == "" { "is empty" } else { f"can't be {text:q}" }
+			fail InvalidParam{Route: r.label(), Param: s.text, Reason: reason}
+		}
+		return url.PathEscape(text), nil
+	}
+	parts := strings.Split(text, "/")
+	for i, p := range parts {
+		if p == "." || p == ".." || p == "" && i < len(parts)-1 {
+			// ServeMux would redirect to the path without the segment.
+			reason := if p == "" { "has an empty segment" } else { f"has a {p:q} segment" }
+			fail InvalidParam{Route: r.label(), Param: s.text, Reason: reason}
+		}
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+// query encodes the parameters that aren't wildcards of the route.
+func (r *Route) query(params Params) (string, URLError) {
+	var q url.Values
+	for name, v := range params {
+		if absent(v) || r.hasWildcard(name) {
+			continue
+		}
+		values, err := formatAll(v)
+		if err != nil {
+			fail InvalidParam{Route: r.label(), Param: name, Reason: err.Error()}
+		}
+		values = slices.DeleteFunc(values, s => s == "")
+		if len(values) == 0 {
+			continue
+		}
+		if q == nil {
+			q = url.Values{}
+		}
+		q[name] = values
+	}
+	return q.Encode(), nil
+}
+
+// anyMethod is a method that no route has, so that only the routes of
+// every method match it.
+const anyMethod = "ROUTING-ANY-METHOD"
+
+// servedBy returns the pattern of the route that serves the path, escaped,
+// for method: "" for every method.
+func (t *table) servedBy(method, path string) string {
+	if method == "" {
+		method = anyMethod
+	}
+	unescaped := url.PathUnescape(path) else path
+	_, pattern := t.mux.Handler(&http.Request{Method: method, URL: &url.URL{Path: unescaped, RawPath: path}})
+	return pattern
+}
+
+// label names the route with the pattern in errors.
+func (t *table) label(pattern string) string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if route := t.byPattern[pattern]; route != nil && route.name != "" {
+		return f"{route.name:q} ({pattern})"
+	}
+	return if pattern != "" { pattern } else { "no route" }
+}
+
+// hasWildcard reports whether the route has a wildcard with the name.
+func (r *Route) hasWildcard(name string) bool {
+	for _, s := range r.segments {
+		if (s.kind == wildcard || s.kind == remainder) && s.text == name {
+			return true
+		}
+	}
+	return false
+}
+
+// label names the route in errors: by its name if it has one, or else by
+// its pattern.
+func (r *Route) label() string {
+	r.t.mu.RLock()
+	defer r.t.mu.RUnlock()
+	return if r.name != "" { r.name } else { r.pattern }
+}
+
+// absent reports whether v is nil, or a nil pointer.
+func absent(v any) bool {
+	rv := reflect.ValueOf(v)
+	return !rv.IsValid() || rv.Kind() == reflect.Pointer && rv.IsNil()
+}
+
+// formatAll returns the text of a query parameter: of each element of a
+// slice or array, or else of the value.
+func formatAll(v any) ([]string, error) {
+	if _, ok := v.(encoding.TextMarshaler); !ok {
+		rv := reflect.ValueOf(v)
+		if rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
+			values := make([]string, rv.Len())
+			for i := range values {
+				values[i] = check format(rv.Index(i).Interface()) ""
+			}
+			return values, nil
+		}
+	}
+	text := check format(v) ""
+	return []string{text}, nil
+}
+
+// format returns the text of a value, as httpkernel.Endpoint parses it from
+// a path or query.
+func format(v any) (string, error) {
+	switch v := v.(type) {
+	case nil:
+		fail "is nil"
+	case string:
+		return v, nil
+	case time.Duration:
+		return v.String(), nil
+	case encoding.TextMarshaler:
+		if absent(v) {
+			fail "is nil"
+		}
+		b := check v.MarshalText() "can't be written as text"
+		return string(b), nil
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.String:
+		return rv.String(), nil
+	case reflect.Bool:
+		return strconv.FormatBool(rv.Bool()), nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(rv.Int(), 10), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return strconv.FormatUint(rv.Uint(), 10), nil
+	case reflect.Float32, reflect.Float64:
+		f := rv.Float()
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			fail "is not a finite number"
+		}
+		return strconv.FormatFloat(f, 'g', -1, rv.Type().Bits()), nil
+	case reflect.Pointer:
+		if rv.IsNil() {
+			fail "is nil"
+		}
+		return format(rv.Elem().Interface())
+	}
+	fail "is a {v:T}, which has no text form"
+}
+
+// segmentKind is what a segment of a route's path is.
+enum segmentKind {
+	fixed     // text
+	wildcard  // {name}
+	remainder // {name...}
+	trailing  // {$}, after a trailing slash
+}
+
+// segment is a part of a route's path, between slashes.
+type segment struct {
+	kind segmentKind
+	text string // fixed: the text, escaped; wildcards: the name
+}
+
+// segments splits the path of a pattern that ServeMux accepted.
+func segments(pattern string) []segment {
+	_, path, _ := strings.Cut(pattern, "/")
+	var segs []segment
+	for s := range strings.SplitSeq(path, "/") {
+		segs = append(segs, segmentOf(s))
+	}
+	return segs
+}
+
+// segmentOf parses a segment of a path.
+func segmentOf(s string) segment {
+	if s == "{$}" {
+		return segment{kind: trailing}
+	}
+	if name, ok := strings.CutPrefix(s, "{"); ok {
+		name = strings.TrimSuffix(name, "}")
+		if rest, ok := strings.CutSuffix(name, "..."); ok {
+			return segment{kind: remainder, text: rest}
+		}
+		return segment{kind: wildcard, text: name}
+	}
+	// ServeMux matches the text unescaped, whether the pattern escapes it or
+	// not; escape it the one way.
+	text := url.PathUnescape(s) else s
+	return segment{kind: fixed, text: url.PathEscape(text)}
+}
