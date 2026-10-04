@@ -6,7 +6,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/goncini/goncini/httpkernel"
@@ -15,7 +14,7 @@ import (
 
 // controller has a typed handler, as an app's controllers do.
 //
-//line list_test.ego:15
+//line list_test.ego:14
 type controller struct{}
 
 type showIn struct {
@@ -27,37 +26,24 @@ func (controller) Show(ctx context.Context, in showIn) (string, error) { return 
 func TestList(t *testing.T) {
 	r := routing.New()
 	first := nextLine()
-	r.Get("/articles/{slug}", httpkernel.Endpoint(controller{}.Show)).Name("article_show")
+	show := r.Get("/articles/{slug}", httpkernel.Endpoint(controller{}.Show))
 	second := nextLine()
 	r.Group("/admin").Handle("/", echo())
+	if info := show.Info(); info.Name != "" {
+		t.Errorf("before Name: %+v", info)
+	}
+	show.Name("article_show")
 
 	got := r.List()
 	if len(got) != 2 {
 		t.Fatalf("%d routes, want 2", len(got))
 	}
-	if a := got[0]; a.Name != "article_show" || a.Method != "GET" || a.Path != "/articles/{slug}" || a.Pattern != "GET /articles/{slug}" || a.Source != first {
+	if a := got[0]; a != show.Info() || a.Name != "article_show" || a.Method != "GET" || a.Path != "/articles/{slug}" ||
+		a.Pattern != "GET /articles/{slug}" || a.Source != first {
 		t.Errorf("first route = %+v", a)
 	}
 	if b := got[1]; b.Name != "" || b.Method != "" || b.Path != "/admin/" || b.Pattern != "/admin/{$}" || b.Source != second {
 		t.Errorf("second route = %+v", b)
-	}
-}
-
-func TestWriteTable(t *testing.T) {
-	r := routing.New()
-	r.Get("/articles/{slug}", httpkernel.Endpoint(controller{}.Show)).Name("article_show")
-	r.Group("/admin").Handle("/", echo())
-	var b strings.Builder
-	if err := routing.WriteTable(&b, r.List()); err != nil {
-		panic(err)
-	}
-//line list_test.ego:48
-	want := "" +
-		"NAME          METHOD  PATH              HANDLER\n" +
-		"article_show  GET     /articles/{slug}  routing_test.controller.Show\n" +
-		"              ANY     /admin/           http.HandlerFunc\n"
-	if b.String() != want {
-		t.Errorf("table:\n%s\nwant:\n%s", b.String(), want)
 	}
 }
 
@@ -80,17 +66,5 @@ func TestMatch(t *testing.T) {
 	}
 	if info, ok := r.Match(httptest.NewRequest(http.MethodPost, "/articles/x", nil)); ok {
 		t.Errorf("Match(POST /articles/x) = %q", info.Name)
-	}
-}
-
-func TestRouteInfo(t *testing.T) {
-	r := routing.New()
-	route := r.Post("/articles", echo())
-	if info := route.Info(); info.Name != "" || info.Pattern != "POST /articles" {
-		t.Errorf("before Name: %+v", info)
-	}
-	route.Name("article_create")
-	if info := route.Info(); info.Name != "article_create" {
-		t.Errorf("after Name: %+v", info)
 	}
 }

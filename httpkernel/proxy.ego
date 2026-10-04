@@ -209,28 +209,52 @@ type clientKey struct{}
 // by trusted proxies (see Proxies), or else the address r came from. It is
 // the zero Addr when that doesn't parse.
 func ClientIP(r *http.Request) netip.Addr {
-	c := clientOf(r)
+	c := clientOf(r.Context())
 	return if c.ip.IsValid() { c.ip } else { remoteAddr(r) }
 }
 
 // Scheme returns "https" or "http": as reported by trusted proxies, or else
 // depending on whether r came over TLS.
 func Scheme(r *http.Request) string {
-	c := clientOf(r)
-	return if c.scheme != "" { c.scheme } else if r.TLS != nil { "https" } else { "http" }
+	return schemeOf(clientOf(r.Context()), r)
 }
 
 // Host returns the host the client asked for, with its port if any: as
 // reported by trusted proxies, or else r.Host.
 func Host(r *http.Request) string {
-	c := clientOf(r)
+	return hostOf(clientOf(r.Context()), r)
+}
+
+// BaseURL returns the scheme and host that the client used for the request
+// ctx belongs to, as Scheme and Host give them: https://api.example.com.
+// It is for handlers that don't see the request, such as typed endpoints,
+// to make absolute URLs from the paths a router builds:
+//
+//	self := httpkernel.BaseURL(ctx) + must a.show.URL(routing.Params{"slug": art.Slug})
+//
+// It is "" outside a Kernel, which keeps the request for it.
+func BaseURL(ctx context.Context) string {
+	st := stateOf(ctx)
+	r := st?.request
+	if r == nil {
+		return ""
+	}
+	c := clientOf(ctx)
+	return schemeOf(c, r) + "://" + hostOf(c, r)
+}
+
+func schemeOf(c client, r *http.Request) string {
+	return if c.scheme != "" { c.scheme } else if r.TLS != nil { "https" } else { "http" }
+}
+
+func hostOf(c client, r *http.Request) string {
 	return if c.host != "" { c.host } else { r.Host }
 }
 
-// clientOf is what trusted proxies reported about r: nothing, outside
-// Proxies.Middleware.
-func clientOf(r *http.Request) client {
-	return r.Context().Value(clientKey{}).(client) ?? client{}
+// clientOf is what trusted proxies reported about the request ctx belongs
+// to: nothing, outside Proxies.Middleware.
+func clientOf(ctx context.Context) client {
+	return ctx.Value(clientKey{}).(client) ?? client{}
 }
 
 // remoteAddr is the address r came from, without the port.

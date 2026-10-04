@@ -1,6 +1,7 @@
 package httpkernel_test
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
@@ -94,6 +95,36 @@ func TestProxies(t *testing.T) {
 				t.Errorf("got %s %s %s, want %s %s %s", ip, scheme, host, tt.ip, tt.scheme, tt.host)
 			}
 		})
+	}
+}
+
+func TestBaseURL(t *testing.T) {
+	var got string
+	endpoint := httpkernel.Endpoint(func(ctx context.Context, in struct{}) (httpkernel.NoContent, error) {
+		got = httpkernel.BaseURL(ctx)
+		return httpkernel.NoContent{}, nil
+	})
+	proxies := must httpkernel.TrustProxies("10.0.0.0/8")
+	k := &httpkernel.Kernel{Handler: endpoint, Middleware: []httpkernel.Middleware{proxies.Middleware}}
+
+	proxied := httptest.NewRequest(http.MethodGet, "http://lb.internal/x", nil)
+	proxied.RemoteAddr = "10.0.0.5:80"
+	proxied.Header.Set("X-Forwarded-For", "198.51.100.9")
+	proxied.Header.Set("X-Forwarded-Proto", "https")
+	proxied.Header.Set("X-Forwarded-Host", "shop.example")
+	for want, r := range map[string]*http.Request{
+		"http://api.example.com":       httptest.NewRequest(http.MethodGet, "http://api.example.com/x", nil),
+		"https://api.example.com:8443": httptest.NewRequest(http.MethodGet, "https://api.example.com:8443/x", nil),
+		"https://shop.example":         proxied,
+	} {
+		got = ""
+		k.ServeHTTP(httptest.NewRecorder(), r)
+		if got != want {
+			t.Errorf("BaseURL = %q, want %q", got, want)
+		}
+	}
+	if base := httpkernel.BaseURL(context.Background()); base != "" {
+		t.Errorf("BaseURL outside a kernel = %q", base)
 	}
 }
 

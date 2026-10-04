@@ -94,20 +94,19 @@ type Articles struct {
 	mu     sync.Mutex
 	bySlug map[string]Article
 	now    func() time.Time
-	urls   *routing.Router
+	show   *routing.Route // builds the URL of an article
 }
 
 func NewArticles(now func() time.Time) *Articles {
 	return &Articles{bySlug: map[string]Article{}, now: now}
 }
 
-// Routes registers the endpoints, and keeps the router to build their URLs.
-// Each effect method compiles to a func(ctx, In) (Out, error), which
-// httpkernel.Endpoint serves.
+// Routes registers the endpoints, and keeps the route of an article to build
+// its URL. Each effect method compiles to a func(ctx, In) (Out, error),
+// which httpkernel.Endpoint serves.
 func (a *Articles) Routes(r *routing.Router) {
-	a.urls = r
 	r.Get("/articles", httpkernel.Endpoint(a.List)).Name("article_list")
-	r.Get("/articles/{slug}", httpkernel.Endpoint(a.Show)).Name("article_show")
+	a.show = r.Get("/articles/{slug}", httpkernel.Endpoint(a.Show)).Name("article_show")
 	r.Post("/articles", httpkernel.Endpoint(a.Create)).Name("article_create")
 }
 
@@ -132,7 +131,7 @@ type ListOutput struct {
 func (a *Articles) List(ctx context.Context, in ListInput) (_ ListOutput, err error) {
 	ctx, span := trace.Start(ctx, "main.Articles.List")
 	defer trace.End(span, &err)
-//line articles.ego:84
+//line articles.ego:83
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	var list []Article
@@ -152,7 +151,7 @@ type ShowInput struct {
 func (a *Articles) Show(ctx context.Context, in ShowInput) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "main.Articles.Show")
 	defer trace.End(span, &err)
-//line articles.ego:101
+//line articles.ego:100
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	art, ok := a.bySlug[in.Slug]
@@ -189,7 +188,7 @@ func (in *CreateInput) Validate() error {
 func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Created[Article], err error) {
 	ctx, span := trace.Start(ctx, "main.Articles.Create")
 	defer trace.End(span, &err)
-//line articles.ego:135
+//line articles.ego:134
 	slug := slugify(in.Body.Title)
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -199,11 +198,11 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 	art := Article{Slug: slug, Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: a.now()}
 	a.bySlug[slug] = art
 	// A URL that can't be built is a bug in this code, not in the request.
-	loc, err := a.urls.URL("article_show", routing.Params{"slug": slug})
+	loc, err := a.show.URL(routing.Params{"slug": slug})
 	if err != nil {
 		panic(err)
 	}
-//line articles.ego:145
+//line articles.ego:144
 	return httpkernel.Created[Article]{Location: loc, Body: art}, nil
 }
 

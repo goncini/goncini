@@ -17,8 +17,8 @@ its ecosystem, and [effect-go](https://github.com/effect-go/effect-go).
   and the server shuts down gracefully.
 
 Status: early. [`httpkernel`](httpkernel) and [`routing`](routing) are
-implemented; configuration and the console come next. The plan is in
-[docs/assessment.md](docs/assessment.md).
+implemented ([CHANGELOG.md](CHANGELOG.md)); configuration and the console
+come next. The plan is in [docs/assessment.md](docs/assessment.md).
 
 ## A taste
 

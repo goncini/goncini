@@ -43,10 +43,12 @@ func ExampleRouter_Group() {
 func ExampleWriteTable() {
 	r := routing.New()
 	r.Get("/articles/{slug}", http.NotFoundHandler()).Name("article_show")
+	r.Handle("/health", http.NotFoundHandler())
 	r.Delete("/articles/{slug}", http.NotFoundHandler()).Name("article_delete")
 	routing.WriteTable(os.Stdout, r.List())
 	// Output:
 	// NAME            METHOD  PATH              HANDLER
 	// article_show    GET     /articles/{slug}  http.HandlerFunc
+	//                 ANY     /health           http.HandlerFunc
 	// article_delete  DELETE  /articles/{slug}  http.HandlerFunc
 }

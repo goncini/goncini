@@ -90,24 +90,24 @@ func (e InvalidParam) As(target any) bool {
 	return false
 }
 
-// Shadowed means that another route, By, would serve the URL: a more
+// ShadowedURL means that another route would serve the URL: a more
 // specific one, such as /articles/feed for /articles/{slug} with the
-// slug "feed".
-type Shadowed struct {
+// slug "feed". By is that route's pattern.
+type ShadowedURL struct {
 	Route string
 	URL   string
 	By    string
 }
 
-func (Shadowed) isURLError() {}
+func (ShadowedURL) isURLError() {}
 
-func (e Shadowed) Error() string {
+func (e ShadowedURL) Error() string {
 	return fmt.Sprintf("route %q: %v would be served by %v", e.Route, e.URL, e.By)
 }
 
-// As lets pointers to Shadowed match as Shadowed.
-func (e Shadowed) As(target any) bool {
-	if t, ok := target.(*Shadowed); ok {
+// As lets pointers to ShadowedURL match as ShadowedURL.
+func (e ShadowedURL) As(target any) bool {
+	if t, ok := target.(*ShadowedURL); ok {
 		*t = e
 		return true
 	}
@@ -147,7 +147,7 @@ func (r *Router) URL(name string, params Params) (string, error) {
 // absent: a wildcard needs a value, but a query parameter that is nil or
 // empty is left out, since httpkernel reads an empty one as absent.
 //
-// URL fails with Shadowed rather than return a URL that another route
+// URL fails with ShadowedURL rather than return a URL that another route
 // would serve. For a route of every method, registered with Handle, it only
 // checks the routes of every method.
 func (r *Route) URL(params Params) (string, error) {
@@ -175,7 +175,7 @@ func (r *Route) URL(params Params) (string, error) {
 	}
 	path := b.String()
 	if by := r.t.servedBy(r.method, path); by != r.pattern {
-		return "", Shadowed{Route: r.label(), URL: path, By: r.t.label(by)}
+		return "", ShadowedURL{Route: r.label(), URL: path, By: by}
 	}
 	q, err := r.query(params)
 	if err != nil {
@@ -271,25 +271,7 @@ func (t *table) servedBy(method, path string) string {
 	return pattern
 }
 
-// label names the route with the pattern in errors.
-func (t *table) label(pattern string) string {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if route := t.byPattern[pattern]; route != nil && route.name != "" {
-		return fmt.Sprintf("%q (%s)", route.name, pattern)
-	}
-	var v string
-	if pattern != "" {
-		v = pattern
-	} else {
-		v = "no route"
-	}
-	return v
-}
-
 // hasWildcard reports whether the route has a wildcard with the name.
-//
-//line url.ego:183
 func (r *Route) hasWildcard(name string) bool {
 	for _, s := range r.segments {
 		if (s.kind == wildcard || s.kind == remainder) && s.text == name {
@@ -315,7 +297,7 @@ func (r *Route) label() string {
 
 // absent reports whether v is nil, or a nil pointer.
 //
-//line url.ego:201
+//line url.ego:191
 func absent(v any) bool {
 	rv := reflect.ValueOf(v)
 	return !rv.IsValid() || rv.Kind() == reflect.Pointer && rv.IsNil()
@@ -335,7 +317,7 @@ func formatAll(v any) ([]string, error) {
 				}
 				values[i] = v2
 			}
-//line url.ego:216
+//line url.ego:206
 			return values, nil
 		}
 	}
@@ -343,7 +325,7 @@ func formatAll(v any) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-//line url.ego:220
+//line url.ego:210
 	return []string{text}, nil
 }
 
@@ -365,7 +347,7 @@ func format(v any) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("can't be written as text: %w", err)
 		}
-//line url.ego:238
+//line url.ego:228
 		return string(b), nil
 	}
 	rv := reflect.ValueOf(v)
@@ -419,17 +401,16 @@ func (v segmentKind) String() string {
 
 // segment is a part of a route's path, between slashes.
 //
-//line url.ego:274
+//line url.ego:264
 type segment struct {
 	kind segmentKind
 	text string // fixed: the text, escaped; wildcards: the name
 }
 
-// segments splits the path of a pattern that ServeMux accepted.
-func segments(pattern string) []segment {
-	_, path, _ := strings.Cut(pattern, "/")
+// segments splits the path of a pattern.
+func segments(path string) []segment {
 	var segs []segment
-	for s := range strings.SplitSeq(path, "/") {
+	for s := range strings.SplitSeq(path[1:], "/") {
 		segs = append(segs, segmentOf(s))
 	}
 	return segs
@@ -453,6 +434,6 @@ func segmentOf(s string) segment {
 	if err != nil {
 		text = s
 	}
-//line url.ego:304
+//line url.ego:293
 	return segment{kind: fixed, text: url.PathEscape(text)}
 }

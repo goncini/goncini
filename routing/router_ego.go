@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-
-	"github.com/goncini/goncini/httpkernel"
 )
 
 // Router registers routes on an http.ServeMux, and serves them.
@@ -25,12 +23,12 @@ import (
 //
 // A Router is safe for concurrent use. Make one with New.
 //
-//line router.ego:25
+//line router.ego:23
 type Router struct {
 	t          *table
 	prefix     string
 	namePrefix string
-	middleware []httpkernel.Middleware
+	middleware []func(http.Handler) http.Handler
 }
 
 // table is what a router shares with the routers derived from it.
@@ -135,8 +133,8 @@ func (r *Router) NamePrefix(prefix string) *Router {
 // r's own middleware, the first one outermost. Middleware runs once the
 // route has matched, so r.Pattern and r.PathValue are set; middleware for
 // every request belongs on the httpkernel.Kernel.
-func (r *Router) With(mw ...httpkernel.Middleware) *Router {
-	if slices.ContainsFunc(mw, func(m httpkernel.Middleware) bool { return m == nil }) {
+func (r *Router) With(mw ...func(http.Handler) http.Handler) *Router {
+	if slices.ContainsFunc(mw, func(m func(http.Handler) http.Handler) bool { return m == nil }) {
 		panic(fmt.Sprintf("routing: nil middleware (%s)", caller(1)))
 	}
 	g := *r
@@ -184,15 +182,17 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 		path = "/"
 	}
 	checkPath(path, source)
-	// ServeMux reads what comes before a space as the method: escape spaces,
-	// which it unescapes again to match.
-	pattern := strings.NewReplacer(" ", "%20", "\t", "%09").Replace(path)
-	if strings.HasSuffix(pattern, "/") {
-		pattern += "{$}" // exactly this path, not the paths below it
+	muxPath := spaces.Replace(path)
+	if strings.HasSuffix(muxPath, "/") {
+		muxPath += "{$}" // exactly this path, not the paths below it
 	}
+	var pattern string
 	if method != "" {
-		pattern = method + " " + pattern
+		pattern = method + " " + muxPath
+	} else {
+		pattern = muxPath
 	}
+//line router.ego:186
 	if f, ok := h.(http.HandlerFunc); h == nil || ok && f == nil {
 		panic(fmt.Sprintf("routing: nil handler for %s (%s)", pattern, source))
 	}
@@ -200,10 +200,23 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 	for i := len(r.middleware) - 1; i >= 0; i-- {
 		served = r.middleware[i](served)
 	}
-	route := &Route{t: r.t, method: method, path: path, pattern: pattern, handler: h, source: source, namePrefix: r.namePrefix}
+	route := &Route{
+		t:          r.t,
+		method:     method,
+		path:       path,
+		pattern:    pattern,
+		handler:    h,
+		source:     source,
+		namePrefix: r.namePrefix,
+		segments:   segments(muxPath),
+	}
 	r.t.add(route, served)
 	return route
 }
+
+// spaces escapes the spaces of a path for a pattern: ServeMux reads what
+// comes before a space as the method, and unescapes the text to match.
+var spaces = strings.NewReplacer(" ", "%20", "\t", "%09")
 
 // checkPath panics if ServeMux can't route path as it is: if it would
 // redirect requests for it to a cleaner path, or if it has a . or ..
@@ -221,7 +234,7 @@ func checkPath(p, source string) {
 		if err != nil {
 			text = s
 		}
-//line router.ego:217
+//line router.ego:224
 		if text == "." || text == ".." {
 			panic(fmt.Sprintf("routing: path %q has a %q segment (%s), which clients resolve away", p, text, source))
 		}
@@ -238,7 +251,6 @@ func (t *table) add(route *Route, h http.Handler) {
 		}
 	}()
 	t.mux.Handle(route.pattern, h)
-	route.segments = segments(route.pattern)
 	t.routes = append(t.routes, route)
 	t.byPattern[route.pattern] = route
 }

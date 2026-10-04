@@ -39,11 +39,19 @@
 //
 // # URLs
 //
-// URL builds the URL of a named route from its parameters, so that paths
-// are written once, in the routes:
+// A Route builds its URLs from its parameters, so that paths are written
+// once, in the routes. A controller keeps the routes it links to as it
+// registers them, which no typo can break:
 //
-//	u, err := r.URL("article_show", routing.Params{"slug": "hello-world"})
-//	// /articles/hello-world
+//	func (c *Controller) Routes(r *routing.Router) {
+//		c.show = r.Get("/articles/{slug}", httpkernel.Endpoint(c.Show)).Name("article_show")
+//	}
+//
+//	loc := must c.show.URL(routing.Params{"slug": "hello-world"}) // /articles/hello-world
+//
+// Code that doesn't register the route finds it by name instead, with
+// Router.URL: r.URL("article_show", params). The URL is relative to the
+// host; httpkernel.BaseURL gives the scheme and host for an absolute one.
 //
 // Parameters that aren't wildcards of the route go into the query string.
 // Each value is escaped, so that the route gets back exactly the value

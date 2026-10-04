@@ -90,106 +90,60 @@ func TestURLsLeadBackToTheirValues(t *testing.T) {
 	}
 }
 
+// TestURLErrors checks each case of URLError, and its message. The
+// ShadowedURL rows are URLs that a more specific route serves, directly or
+// after ServeMux's trailing-slash redirect.
 func TestURLErrors(t *testing.T) {
 	r := routing.New()
-	r.Get("/articles/{slug}", echo()).Name("show")
-	r.Get("/files/{path...}", echo()).Name("file")
-	var nilInt *int
-	tests := []struct {
-		name   string
-		params routing.Params
-		want   string
-	}{
-		{"nope", nil, `no route is named "nope"`},
-		{"show", nil, `route "show" needs parameter "slug"`},
-		{"show", routing.Params{"slug": nilInt}, `route "show" needs parameter "slug"`},
-		{"show", routing.Params{"slug": ""}, `route "show": parameter "slug" is empty`},
-		{"show", routing.Params{"slug": "/"}, `route "show": parameter "slug" can't be "/"`},
-		{"show", routing.Params{"slug": "."}, `route "show": parameter "slug" can't be "."`},
-		{"show", routing.Params{"slug": ".."}, `route "show": parameter "slug" can't be ".."`},
-		{"show", routing.Params{"slug": math.NaN()}, `route "show": parameter "slug" is not a finite number`},
-		{"show", routing.Params{"slug": make(chan int)}, `route "show": parameter "slug" is a chan int, which has no text form`},
-		{"show", routing.Params{"slug": broken{}}, `route "show": parameter "slug" can't be written as text: broken`},
-		{"show", routing.Params{"slug": "x", "page": []any{1, nil}}, `route "show": parameter "page" is nil`},
-		{"file", routing.Params{"path": "a//b"}, `route "file": parameter "path" has an empty segment`},
-		{"file", routing.Params{"path": "/abs"}, `route "file": parameter "path" has an empty segment`},
-		{"file", routing.Params{"path": "a/../b"}, `route "file": parameter "path" has a ".." segment`},
-		{"file", routing.Params{"path": "./a"}, `route "file": parameter "path" has a "." segment`},
-	}
-	for _, tt := range tests {
-		got, err := r.URL(tt.name, tt.params)
-		if err == nil || err.Error() != tt.want {
-			t.Errorf("URL(%q, %v) = %q, %v; want the error %s", tt.name, tt.params, got, err, tt.want)
-		}
-	}
-}
-
-func TestURLErrorCases(t *testing.T) {
-	r := routing.New()
-	r.Get("/articles/{slug}", echo()).Name("show")
-	unnamed := r.Get("/unnamed/{x}", echo())
-
-	kind := func(err error) string {
-		return match err {
-			nil                     => "none"
-			routing.UnknownRoute(e) => "unknown " + e.Name
-			routing.MissingParam(e) => "missing " + e.Route + " " + e.Param
-			routing.InvalidParam(e) => "invalid " + e.Route + " " + e.Param
-			routing.Shadowed(e)     => "shadowed " + e.Route + " " + e.URL
-			_                       => "other"
-		}
-	}
-	_, err := r.URL("nope", nil)
-	if got := kind(err); got != "unknown nope" {
-		t.Errorf("unknown route: %s", got)
-	}
-	_, err = r.URL("show", routing.Params{"slug": ""})
-	if got := kind(err); got != "invalid show slug" {
-		t.Errorf("empty value: %s", got)
-	}
-	_, err = unnamed.URL(nil)
-	if got := kind(err); got != "missing GET /unnamed/{x} x" {
-		t.Errorf("unnamed route: %s", got)
-	}
-	u := must unnamed.URL(routing.Params{"x": 1})
-	if u != "/unnamed/1" {
-		t.Errorf("unnamed route: %s", u)
-	}
-	r.Get("/articles/feed", echo()).Name("feed")
-	_, err = r.URL("show", routing.Params{"slug": "feed"})
-	if got := kind(err); got != "shadowed show /articles/feed" {
-		t.Errorf("shadowed URL: %s", got)
-	}
-}
-
-// TestURLRefusesURLsThatOtherRoutesServe builds URLs that a more specific
-// route would serve, directly or after ServeMux's trailing-slash redirect.
-func TestURLRefusesURLsThatOtherRoutesServe(t *testing.T) {
-	r := routing.New()
 	api := r.Group("/api").NamePrefix("api_")
-	api.Get("/articles/feed", echo()).Name("feed")
 	api.Get("/articles/{slug}", echo()).Name("article")
+	api.Get("/articles/feed", echo()).Name("feed")
 	r.Get("/files/{path...}", echo()).Name("file")
 	r.Get("/files/{dir}/", echo()).Name("dir")
 	r.Handle("/any/{x}", echo()).Name("any")
 	r.Handle("/any/special", echo())
-
+	var nilInt *int
 	tests := []struct {
 		name   string
 		params routing.Params
+		kind   string
 		want   string
 	}{
-		{"api_article", routing.Params{"slug": "feed"}, `route "api_article": /api/articles/feed would be served by "api_feed" (GET /api/articles/feed)`},
-		{"file", routing.Params{"path": "docs"}, `route "file": /files/docs would be served by "dir" (GET /files/{dir}/{$})`},
-		{"file", routing.Params{"path": "docs/"}, `route "file": /files/docs/ would be served by "dir" (GET /files/{dir}/{$})`},
-		{"any", routing.Params{"x": "special"}, `route "any": /any/special would be served by /any/special`},
+		{"nope", nil, "UnknownRoute", `no route is named "nope"`},
+		{"api_article", nil, "MissingParam", `route "api_article" needs parameter "slug"`},
+		{"api_article", routing.Params{"slug": nilInt}, "MissingParam", `route "api_article" needs parameter "slug"`},
+		{"api_article", routing.Params{"slug": ""}, "InvalidParam", `route "api_article": parameter "slug" is empty`},
+		{"api_article", routing.Params{"slug": "/"}, "InvalidParam", `route "api_article": parameter "slug" can't be "/"`},
+		{"api_article", routing.Params{"slug": "."}, "InvalidParam", `route "api_article": parameter "slug" can't be "."`},
+		{"api_article", routing.Params{"slug": ".."}, "InvalidParam", `route "api_article": parameter "slug" can't be ".."`},
+		{"api_article", routing.Params{"slug": math.NaN()}, "InvalidParam", `route "api_article": parameter "slug" is not a finite number`},
+		{"api_article", routing.Params{"slug": make(chan int)}, "InvalidParam", `route "api_article": parameter "slug" is a chan int, which has no text form`},
+		{"api_article", routing.Params{"slug": broken{}}, "InvalidParam", `route "api_article": parameter "slug" can't be written as text: broken`},
+		{"api_article", routing.Params{"slug": "x", "page": []any{1, nil}}, "InvalidParam", `route "api_article": parameter "page" is nil`},
+		{"file", routing.Params{"path": "a//b"}, "InvalidParam", `route "file": parameter "path" has an empty segment`},
+		{"file", routing.Params{"path": "/abs"}, "InvalidParam", `route "file": parameter "path" has an empty segment`},
+		{"file", routing.Params{"path": "a/../b"}, "InvalidParam", `route "file": parameter "path" has a ".." segment`},
+		{"file", routing.Params{"path": "./a"}, "InvalidParam", `route "file": parameter "path" has a "." segment`},
+		{"api_article", routing.Params{"slug": "feed"}, "ShadowedURL", `route "api_article": /api/articles/feed would be served by GET /api/articles/feed`},
+		{"file", routing.Params{"path": "docs"}, "ShadowedURL", `route "file": /files/docs would be served by GET /files/{dir}/{$}`},
+		{"file", routing.Params{"path": "docs/"}, "ShadowedURL", `route "file": /files/docs/ would be served by GET /files/{dir}/{$}`},
+		{"any", routing.Params{"x": "special"}, "ShadowedURL", `route "any": /any/special would be served by /any/special`},
 	}
 	for _, tt := range tests {
 		got, err := r.URL(tt.name, tt.params)
-		if err == nil || err.Error() != tt.want {
-			t.Errorf("URL(%q, %v) = %q, %v; want the error %s", tt.name, tt.params, got, err, tt.want)
+		kind := match err {
+			nil                     => "none"
+			routing.UnknownRoute(_) => "UnknownRoute"
+			routing.MissingParam(_) => "MissingParam"
+			routing.InvalidParam(_) => "InvalidParam"
+			routing.ShadowedURL(_)  => "ShadowedURL"
+		}
+		if kind != tt.kind || err.Error() != tt.want {
+			t.Errorf("URL(%q, %v) = %q, %v (%s); want the %s %s", tt.name, tt.params, got, err, kind, tt.kind, tt.want)
 		}
 	}
+
+	// Next to those, URLs that their own route serves.
 	for name, params := range map[string]routing.Params{
 		"api_article": {"slug": "hello"},
 		"file":        {"path": "docs/a.md"},
@@ -199,6 +153,12 @@ func TestURLRefusesURLsThatOtherRoutesServe(t *testing.T) {
 		if u, err := r.URL(name, params); err != nil {
 			t.Errorf("URL(%q, %v) = %q, %v", name, params, u, err)
 		}
+	}
+
+	// A route without a name is named by its pattern.
+	unnamed := r.Get("/unnamed/{x}", echo())
+	if _, err := unnamed.URL(nil); err == nil || err.Error() != `route "GET /unnamed/{x}" needs parameter "x"` {
+		t.Errorf("unnamed route: %v", err)
 	}
 }
 

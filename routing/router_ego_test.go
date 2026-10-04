@@ -4,7 +4,6 @@ package routing_test
 
 import (
 	"fmt"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -13,13 +12,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
 )
 
 // echo answers with the pattern that matched, then the named path values.
 //
-//line router_test.ego:19
+//line router_test.ego:17
 func echo(names ...string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, r.Pattern)
@@ -151,7 +149,7 @@ func TestPathsStartWithASlash(t *testing.T) {
 
 func TestWithWrapsTheRoutesItRegisters(t *testing.T) {
 	var calls []string
-	mark := func(name string) httpkernel.Middleware {
+	mark := func(name string) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls = append(calls, name+" "+r.Pattern)
@@ -217,12 +215,12 @@ func TestPathsCanHoldSpaces(t *testing.T) {
 		} else {
 			params = nil
 		}
-//line router_test.ego:211
+//line router_test.ego:209
 		u, err := r.URL(name, params)
 		if err != nil {
 			panic(err)
 		}
-//line router_test.ego:212
+//line router_test.ego:210
 		if u != want {
 			t.Errorf("URL(%q) = %s, want %s", name, u, want)
 		}
@@ -239,24 +237,6 @@ func TestNilHandlersAreRefusedBehindMiddleware(t *testing.T) {
 	msg := panics(t, func() { r.Get("/a", http.HandlerFunc(nil)) })
 	if want := "routing: nil handler for GET /a (" + line + ")"; msg != want {
 		t.Errorf("panic: %s\nwant:  %s", msg, want)
-	}
-}
-
-func TestNamePrefixes(t *testing.T) {
-	r := routing.New()
-	r.Get("/a", echo()).Name("a")
-	admin := r.Group("/admin").NamePrefix("admin_")
-	admin.Get("/b", echo()).Name("b")
-	admin.NamePrefix("x.").Get("/c", echo()).Name("c")
-	admin.Get("/d", echo())
-
-	got := map[string]string{}
-	for _, info := range r.List() {
-		got[info.Name] = info.Path
-	}
-	want := map[string]string{"a": "/a", "admin_b": "/admin/b", "admin_x.c": "/admin/c", "": "/admin/d"}
-	if !maps.Equal(got, want) {
-		t.Errorf("names = %v, want %v", got, want)
 	}
 }
 
@@ -345,14 +325,23 @@ func (userRoutes) Routes(r *routing.Router) {
 	r.Get("/users", echo()).Name("user_list")
 }
 
-func TestIncludeRegistersRoutes(t *testing.T) {
+func TestNamePrefixesAndInclude(t *testing.T) {
 	r := routing.New(articleRoutes{})
-	r.Group("/api").NamePrefix("api_").Include(articleRoutes{}, userRoutes{})
+	api := r.Group("/api").NamePrefix("api_")
+	api.Include(articleRoutes{}, userRoutes{})
+	api.NamePrefix("v2.").Get("/feed", echo()).Name("feed")
+	api.Get("/health", echo())
 	var got []string
 	for _, info := range r.List() {
 		got = append(got, info.Name+" "+info.Pattern)
 	}
-	want := []string{"article_list GET /articles", "api_article_list GET /api/articles", "api_user_list GET /api/users"}
+	want := []string{
+		"article_list GET /articles",
+		"api_article_list GET /api/articles",
+		"api_user_list GET /api/users",
+		"api_v2.feed GET /api/feed",
+		" GET /api/health",
+	}
 	if !slices.Equal(got, want) {
 		t.Errorf("routes = %q, want %q", got, want)
 	}
@@ -369,7 +358,7 @@ func TestConcurrentUse(t *testing.T) {
 				if _, err := r.URL("base", routing.Params{"x": i}); err != nil {
 					panic(err)
 				}
-//line router_test.ego:356
+//line router_test.ego:345
 				serve(r, "GET", "/base/1")
 				r.List()
 			}

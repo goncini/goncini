@@ -224,7 +224,7 @@ type clientKey struct{}
 // by trusted proxies (see Proxies), or else the address r came from. It is
 // the zero Addr when that doesn't parse.
 func ClientIP(r *http.Request) netip.Addr {
-	c := clientOf(r)
+	c := clientOf(r.Context())
 	var v netip.Addr
 	if c.ip.IsValid() {
 		v = c.ip
@@ -239,7 +239,38 @@ func ClientIP(r *http.Request) netip.Addr {
 //
 //line proxy.ego:218
 func Scheme(r *http.Request) string {
-	c := clientOf(r)
+	return schemeOf(clientOf(r.Context()), r)
+}
+
+// Host returns the host the client asked for, with its port if any: as
+// reported by trusted proxies, or else r.Host.
+func Host(r *http.Request) string {
+	return hostOf(clientOf(r.Context()), r)
+}
+
+// BaseURL returns the scheme and host that the client used for the request
+// ctx belongs to, as Scheme and Host give them: https://api.example.com.
+// It is for handlers that don't see the request, such as typed endpoints,
+// to make absolute URLs from the paths a router builds:
+//
+//	self := httpkernel.BaseURL(ctx) + must a.show.URL(routing.Params{"slug": art.Slug})
+//
+// It is "" outside a Kernel, which keeps the request for it.
+func BaseURL(ctx context.Context) string {
+	st := stateOf(ctx)
+	var r *http.Request
+	if st != nil {
+		r = st.request
+	}
+//line proxy.ego:239
+	if r == nil {
+		return ""
+	}
+	c := clientOf(ctx)
+	return schemeOf(c, r) + "://" + hostOf(c, r)
+}
+
+func schemeOf(c client, r *http.Request) string {
 	var v string
 	if c.scheme != "" {
 		v = c.scheme
@@ -251,12 +282,8 @@ func Scheme(r *http.Request) string {
 	return v
 }
 
-// Host returns the host the client asked for, with its port if any: as
-// reported by trusted proxies, or else r.Host.
-//
-//line proxy.ego:225
-func Host(r *http.Request) string {
-	c := clientOf(r)
+//line proxy.ego:250
+func hostOf(c client, r *http.Request) string {
 	var v string
 	if c.host != "" {
 		v = c.host
@@ -266,12 +293,12 @@ func Host(r *http.Request) string {
 	return v
 }
 
-// clientOf is what trusted proxies reported about r: nothing, outside
-// Proxies.Middleware.
+// clientOf is what trusted proxies reported about the request ctx belongs
+// to: nothing, outside Proxies.Middleware.
 //
-//line proxy.ego:232
-func clientOf(r *http.Request) client {
-	v, ok := r.Context().Value(clientKey{}).(client)
+//line proxy.ego:256
+func clientOf(ctx context.Context) client {
+	v, ok := ctx.Value(clientKey{}).(client)
 	if !ok {
 		v = client{}
 	}
@@ -280,7 +307,7 @@ func clientOf(r *http.Request) client {
 
 // remoteAddr is the address r came from, without the port.
 //
-//line proxy.ego:237
+//line proxy.ego:261
 func remoteAddr(r *http.Request) netip.Addr {
 	return parseNode(r.RemoteAddr)
 }
@@ -315,7 +342,7 @@ func parseNode(node string) netip.Addr {
 	if err != nil {
 		ap = netip.AddrPort{}
 	}
-//line proxy.ego:268
+//line proxy.ego:292
 	if ap.IsValid() {
 		return ap.Addr().Unmap()
 	}
@@ -323,7 +350,7 @@ func parseNode(node string) netip.Addr {
 	if err != nil {
 		a = netip.Addr{}
 	}
-//line proxy.ego:272
+//line proxy.ego:296
 	return a.Unmap()
 }
 

@@ -34,10 +34,10 @@ error URLError {
 		Param  string
 		Reason string
 	} "route {Route:q}: parameter {Param:q} {Reason}"
-	// Shadowed means that another route, By, would serve the URL: a more
+	// ShadowedURL means that another route would serve the URL: a more
 	// specific one, such as /articles/feed for /articles/{slug} with the
-	// slug "feed".
-	Shadowed {
+	// slug "feed". By is that route's pattern.
+	ShadowedURL {
 		Route string
 		URL   string
 		By    string
@@ -75,7 +75,7 @@ func (r *Router) URL(name string, params Params) (string, URLError) {
 // absent: a wildcard needs a value, but a query parameter that is nil or
 // empty is left out, since httpkernel reads an empty one as absent.
 //
-// URL fails with Shadowed rather than return a URL that another route
+// URL fails with ShadowedURL rather than return a URL that another route
 // would serve. For a route of every method, registered with Handle, it only
 // checks the routes of every method.
 func (r *Route) URL(params Params) (string, URLError) {
@@ -93,7 +93,7 @@ func (r *Route) URL(params Params) (string, URLError) {
 	}
 	path := b.String()
 	if by := r.t.servedBy(r.method, path); by != r.pattern {
-		fail Shadowed{Route: r.label(), URL: path, By: r.t.label(by)}
+		fail ShadowedURL{Route: r.label(), URL: path, By: by}
 	}
 	q := check r.query(params)
 	if q != "" {
@@ -167,16 +167,6 @@ func (t *table) servedBy(method, path string) string {
 	unescaped := url.PathUnescape(path) else path
 	_, pattern := t.mux.Handler(&http.Request{Method: method, URL: &url.URL{Path: unescaped, RawPath: path}})
 	return pattern
-}
-
-// label names the route with the pattern in errors.
-func (t *table) label(pattern string) string {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if route := t.byPattern[pattern]; route != nil && route.name != "" {
-		return f"{route.name:q} ({pattern})"
-	}
-	return if pattern != "" { pattern } else { "no route" }
 }
 
 // hasWildcard reports whether the route has a wildcard with the name.
@@ -276,11 +266,10 @@ type segment struct {
 	text string // fixed: the text, escaped; wildcards: the name
 }
 
-// segments splits the path of a pattern that ServeMux accepted.
-func segments(pattern string) []segment {
-	_, path, _ := strings.Cut(pattern, "/")
+// segments splits the path of a pattern.
+func segments(path string) []segment {
 	var segs []segment
-	for s := range strings.SplitSeq(path, "/") {
+	for s := range strings.SplitSeq(path[1:], "/") {
 		segs = append(segs, segmentOf(s))
 	}
 	return segs

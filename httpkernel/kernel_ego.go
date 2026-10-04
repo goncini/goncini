@@ -129,7 +129,7 @@ func (k *Kernel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			attribute.String("url.path", r.URL.Path),
 		)
 	}
-	st := &state{kernel: k}
+	st := &state{kernel: k, request: r}
 	r = r.WithContext(context.WithValue(ctx, stateKey{}, st))
 	defer k.end(span, tw, r, st)
 	k.serve(tw, r, st)
@@ -247,8 +247,9 @@ func (k *Kernel) end(span trace.Span, w *ResponseTracker, r *http.Request, st *s
 type state struct {
 	kernel  *Kernel
 	scope   *scope.Scope
-	pattern string       // the route pattern that matched
-	panic   *scope.Panic // the panic that ended the request, if any
+	request *http.Request // for BaseURL: as the kernel got it, then as Endpoint did
+	pattern string        // the route pattern that matched
+	panic   *scope.Panic  // the panic that ended the request, if any
 }
 
 type stateKey struct{}
@@ -265,7 +266,7 @@ func stateOf(ctx context.Context) *state {
 
 // kernelOf returns the kernel serving the request ctx belongs to, or nil.
 //
-//line kernel.ego:259
+//line kernel.ego:260
 func kernelOf(ctx context.Context) *Kernel {
 	st := stateOf(ctx)
 	var v *Kernel
@@ -284,7 +285,7 @@ func kernelOf(ctx context.Context) *Kernel {
 // goroutine that outlives the handler can't use it: work that must go on
 // after the response belongs in a longer-lived scope.
 //
-//line kernel.ego:272
+//line kernel.ego:273
 func RequestScope(ctx context.Context) *scope.Scope {
 	st := stateOf(ctx)
 	var v *scope.Scope
@@ -303,7 +304,7 @@ func RequestScope(ctx context.Context) *scope.Scope {
 // done) gets no response. If the response has already started, the problem
 // can only be logged.
 //
-//line kernel.ego:285
+//line kernel.ego:286
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	k := kernelOf(r.Context())
 	if clientGone(r.Context(), err) {
@@ -324,7 +325,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 		v2 = k.Renderer
 	}
 	debug, render := v, v2
-//line kernel.ego:297
+//line kernel.ego:298
 	if debug && p.status() >= 500 {
 		p = debugProblem(p, err)
 	}
@@ -354,7 +355,7 @@ func (k *Kernel) problemFor(err error) Problem {
 	if k != nil {
 		mappers = k.ErrorMappers
 	}
-//line kernel.ego:323
+//line kernel.ego:324
 	for _, m := range mappers {
 		if p, ok := m(err); ok {
 			return p
@@ -377,7 +378,7 @@ func (k *Kernel) logger() *slog.Logger {
 // log logs a failed request: 5xx problems as errors, with err (and a panic's
 // stack), and the others at debug level.
 //
-//line kernel.ego:338
+//line kernel.ego:339
 func (k *Kernel) log(r *http.Request, err error, p Problem) {
 	attrs := []slog.Attr{slog.Int("status", p.status())}
 	if pe, ok := errors.AsType[*scope.Panic](err); ok {
@@ -422,7 +423,7 @@ func routeOf(r *http.Request) string {
 
 // debugProblem adds what went wrong to a 5xx problem, for development.
 //
-//line kernel.ego:371
+//line kernel.ego:372
 func debugProblem(p Problem, err error) Problem {
 	if pe, ok := errors.AsType[*scope.Panic](err); ok {
 		p.Detail = fmt.Sprintf("panic: %v", pe.Value)
@@ -430,7 +431,7 @@ func debugProblem(p Problem, err error) Problem {
 		if ext == nil {
 			ext = map[string]any{}
 		}
-//line kernel.ego:375
+//line kernel.ego:376
 		ext["stack"] = strings.Split(strings.TrimSpace(string(pe.Stack)), "\n")
 		p.Extensions = ext
 	} else if p.Detail == "" {
@@ -467,18 +468,18 @@ func (u unmatched) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.ServeHTTP(probe, r)
 	switch probe.status {
 	case http.StatusNotFound:
-//line kernel.ego:410
+//line kernel.ego:411
 		notFound(w, r)
 	case http.StatusMethodNotAllowed:
 
-//line kernel.ego:412
+//line kernel.ego:413
 		if allow := probe.header.Get("Allow"); allow != "" {
 			w.Header().Set("Allow", allow)
 		}
 		WriteError(w, r, Problem{Status: http.StatusMethodNotAllowed, Detail: fmt.Sprintf("%s isn't allowed on %s", r.Method, r.URL.EscapedPath())})
 
 	default:
-//line kernel.ego:417
+//line kernel.ego:418
 		u.m.ServeHTTP(w, r)
 	}
 }

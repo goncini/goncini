@@ -15,7 +15,7 @@
 //   - JSON and RFC 9457 problem responses: WriteJSON, WriteProblem;
 //   - content negotiation: Negotiate, NegotiateLanguage;
 //   - the client address, scheme and host behind trusted proxies: Proxies,
-//     ClientIP, Scheme, Host;
+//     ClientIP, Scheme, Host, and BaseURL for absolute URLs;
 //   - HTTP caching: CacheControl, ETag, NotModified, Precondition,
 //     WriteCachedJSON;
 //   - a response wrapper that lets middleware see the status: TrackResponse.

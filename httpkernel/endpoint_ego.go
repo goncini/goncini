@@ -52,9 +52,12 @@ type endpoint[In, Out any] struct {
 }
 
 func (e *endpoint[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	st := stateOf(r.Context())
-	if st != nil && r.Pattern != "" {
-		st.pattern = r.Pattern
+	if st := stateOf(r.Context()); st != nil {
+		// Middleware may have changed the request, such as its Host.
+		st.request = r
+		if r.Pattern != "" {
+			st.pattern = r.Pattern
+		}
 	}
 	var in In
 	if err := e.b.bind(w, r, reflect.ValueOf(&in).Elem(), kernelOf(r.Context()).bodyLimit()); err != nil {

@@ -18,25 +18,12 @@ import (
 	"github.com/goncini/goncini/routing"
 )
 
-//line kernel_test.ego:19
-func TestKernelAnswersUnmatchedRequestsWithProblems(t *testing.T) {
-	r := routing.New()
-	r.Get("/articles/{slug}", echo())
-	k := &httpkernel.Kernel{Handler: r, Logger: slog.New(slog.DiscardHandler)}
-
-	rec := serve(k, "GET", "/nope")
-	if rec.Code != 404 || rec.Header().Get("Content-Type") != "application/problem+json" ||
-		!strings.Contains(rec.Body.String(), `"detail":"no route matches GET /nope"`) {
-		t.Errorf("GET /nope: %d %s", rec.Code, rec.Body)
-	}
-	rec = serve(k, "POST", "/articles/x")
-	if rec.Code != 405 || rec.Header().Get("Allow") != "GET, HEAD" ||
-		!strings.Contains(rec.Body.String(), `"detail":"POST isn't allowed on /articles/x"`) {
-		t.Errorf("POST /articles/x: %d %v %s", rec.Code, rec.Header(), rec.Body)
-	}
-}
-
-func TestKernelServesEndpointsInGroups(t *testing.T) {
+// TestBehindAKernel serves a router from an httpkernel.Kernel: requests
+// that match no route get problems, and an endpoint in a group with
+// middleware gets its path value and names the request's span.
+//
+//line kernel_test.ego:22
+func TestBehindAKernel(t *testing.T) {
 	spans := tracetest.NewSpanRecorder()
 	prev := otel.GetTracerProvider()
 	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans)))
@@ -50,7 +37,18 @@ func TestKernelServesEndpointsInGroups(t *testing.T) {
 	}
 	r := routing.New()
 	r.Group("/api").With(copying).Get("/articles/{slug}", httpkernel.Endpoint(controller{}.Show))
-	k := &httpkernel.Kernel{Handler: r}
+	k := &httpkernel.Kernel{Handler: r, Logger: slog.New(slog.DiscardHandler)}
+
+	rec := serve(k, "GET", "/nope")
+	if rec.Code != 404 || rec.Header().Get("Content-Type") != "application/problem+json" ||
+		!strings.Contains(rec.Body.String(), `"detail":"no route matches GET /nope"`) {
+		t.Errorf("GET /nope: %d %s", rec.Code, rec.Body)
+	}
+	rec = serve(k, "POST", "/api/articles/x")
+	if rec.Code != 405 || rec.Header().Get("Allow") != "GET, HEAD" ||
+		!strings.Contains(rec.Body.String(), `"detail":"POST isn't allowed on /api/articles/x"`) {
+		t.Errorf("POST /api/articles/x: %d %v %s", rec.Code, rec.Header(), rec.Body)
+	}
 
 	if rec := serve(k, "GET", "/api/articles/hello"); rec.Code != 200 || rec.Body.String() != `"hello"` {
 		t.Errorf("GET /api/articles/hello: %d %s", rec.Code, rec.Body)
@@ -58,7 +56,7 @@ func TestKernelServesEndpointsInGroups(t *testing.T) {
 	var server sdktrace.ReadOnlySpan
 	for _, s := range spans.Ended() {
 		if s.SpanKind() == trace.SpanKindServer {
-			server = s
+			server = s // the last request's
 		}
 	}
 	if server == nil {

@@ -3,6 +3,7 @@
 package httpkernel_test
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,7 @@ import (
 	"github.com/goncini/goncini/httpkernel"
 )
 
-//line proxy_test.ego:13
+//line proxy_test.ego:14
 func TestTrustProxiesRejectsGarbage(t *testing.T) {
 	if _, err := httpkernel.TrustProxies("10.0.0.0/8", "lb.internal"); err == nil {
 		t.Error("TrustProxies accepted a host name")
@@ -85,7 +86,7 @@ func TestProxies(t *testing.T) {
 			if err != nil {
 				panic(err)
 			}
-//line proxy_test.ego:82
+//line proxy_test.ego:83
 			proxies.Forwarded = tt.forwarded
 			r := httptest.NewRequest(http.MethodGet, "http://api.example.com/articles", nil)
 			r.RemoteAddr = tt.remote
@@ -104,12 +105,46 @@ func TestProxies(t *testing.T) {
 	}
 }
 
+func TestBaseURL(t *testing.T) {
+	var got string
+	endpoint := httpkernel.Endpoint(func(ctx context.Context, in struct{}) (httpkernel.NoContent, error) {
+		got = httpkernel.BaseURL(ctx)
+		return httpkernel.NoContent{}, nil
+	})
+	proxies, err := httpkernel.TrustProxies("10.0.0.0/8")
+	if err != nil {
+		panic(err)
+	}
+//line proxy_test.ego:108
+	k := &httpkernel.Kernel{Handler: endpoint, Middleware: []httpkernel.Middleware{proxies.Middleware}}
+
+	proxied := httptest.NewRequest(http.MethodGet, "http://lb.internal/x", nil)
+	proxied.RemoteAddr = "10.0.0.5:80"
+	proxied.Header.Set("X-Forwarded-For", "198.51.100.9")
+	proxied.Header.Set("X-Forwarded-Proto", "https")
+	proxied.Header.Set("X-Forwarded-Host", "shop.example")
+	for want, r := range map[string]*http.Request{
+		"http://api.example.com":       httptest.NewRequest(http.MethodGet, "http://api.example.com/x", nil),
+		"https://api.example.com:8443": httptest.NewRequest(http.MethodGet, "https://api.example.com:8443/x", nil),
+		"https://shop.example":         proxied,
+	} {
+		got = ""
+		k.ServeHTTP(httptest.NewRecorder(), r)
+		if got != want {
+			t.Errorf("BaseURL = %q, want %q", got, want)
+		}
+	}
+	if base := httpkernel.BaseURL(context.Background()); base != "" {
+		t.Errorf("BaseURL outside a kernel = %q", base)
+	}
+}
+
 func TestProxiesIPv4MappedRange(t *testing.T) {
 	proxies, err := httpkernel.TrustProxies("::ffff:10.0.0.0/104")
 	if err != nil {
 		panic(err)
 	}
-//line proxy_test.ego:102
+//line proxy_test.ego:133
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "[::ffff:10.0.0.5]:80"
 	r.Header.Set("X-Forwarded-For", "198.51.100.9")
@@ -127,7 +162,7 @@ func TestPrivateProxies(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line proxy_test.ego:116
+//line proxy_test.ego:147
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "[::ffff:172.17.0.2]:5000" // Docker's bridge, as IPv4-mapped IPv6
 	r.Header.Set("X-Forwarded-For", "198.51.100.9")

@@ -45,20 +45,19 @@ type Articles struct {
 	mu     sync.Mutex
 	bySlug map[string]Article
 	now    func() time.Time
-	urls   *routing.Router
+	show   *routing.Route // builds the URL of an article
 }
 
 func NewArticles(now func() time.Time) *Articles {
 	return &Articles{bySlug: map[string]Article{}, now: now}
 }
 
-// Routes registers the endpoints, and keeps the router to build their URLs.
-// Each effect method compiles to a func(ctx, In) (Out, error), which
-// httpkernel.Endpoint serves.
+// Routes registers the endpoints, and keeps the route of an article to build
+// its URL. Each effect method compiles to a func(ctx, In) (Out, error),
+// which httpkernel.Endpoint serves.
 func (a *Articles) Routes(r *routing.Router) {
-	a.urls = r
 	r.Get("/articles", httpkernel.Endpoint(a.List)).Name("article_list")
-	r.Get("/articles/{slug}", httpkernel.Endpoint(a.Show)).Name("article_show")
+	a.show = r.Get("/articles/{slug}", httpkernel.Endpoint(a.Show)).Name("article_show")
 	r.Post("/articles", httpkernel.Endpoint(a.Create)).Name("article_create")
 }
 
@@ -141,7 +140,7 @@ effect (a *Articles) Create(in CreateInput) (httpkernel.Created[Article], Articl
 	art := Article{Slug: slug, Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: a.now()}
 	a.bySlug[slug] = art
 	// A URL that can't be built is a bug in this code, not in the request.
-	loc := must a.urls.URL("article_show", routing.Params{"slug": slug})
+	loc := must a.show.URL(routing.Params{"slug": slug})
 	return httpkernel.Created[Article]{Location: loc, Body: art}, nil
 }
 

@@ -125,7 +125,7 @@ func (k *Kernel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			attribute.String("url.path", r.URL.Path),
 		)
 	}
-	st := &state{kernel: k}
+	st := &state{kernel: k, request: r}
 	r = r.WithContext(context.WithValue(ctx, stateKey{}, st))
 	defer k.end(span, tw, r, st)
 	k.serve(tw, r, st)
@@ -243,8 +243,9 @@ func (k *Kernel) end(span trace.Span, w *ResponseTracker, r *http.Request, st *s
 type state struct {
 	kernel  *Kernel
 	scope   *scope.Scope
-	pattern string       // the route pattern that matched
-	panic   *scope.Panic // the panic that ended the request, if any
+	request *http.Request // for BaseURL: as the kernel got it, then as Endpoint did
+	pattern string        // the route pattern that matched
+	panic   *scope.Panic  // the panic that ended the request, if any
 }
 
 type stateKey struct{}

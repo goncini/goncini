@@ -17,7 +17,7 @@
 | Decision | Choice |
 |---|---|
 | Container | **Build on effect-go's `layer`** (decided). goncini generates what `layer` lacks, as ordinary providers: one that collects every service of a kind into a slice (Symfony's tags), and one per config section. What proves general moves into `layer`. |
-| Routing | **Plain Go** (decided): `r.Get(pattern, handler).Name(name)`. URLs are built by route name at run time, so `debug:router` and tests catch typos. No route directives. |
+| Routing | **Plain Go** (decided): `r.Get(pattern, handler).Name(name)`. URLs are built by route name at run time, so `debug:router` and tests catch typos. No route directives. Routes match their path exactly, and `URL` refuses a URL that a more specific route would serve (both decided). |
 | Scope | **APIs only** (decided). No Twig equivalent, no templating, no forms. JSON first; other formats only if an API needs them. |
 | Reference app | **RealWorld "Conduit"** (proposed). Its [spec](https://github.com/gothinkster/realworld/tree/main/specs/api) ships an OpenAPI file and a Hurl suite of 13 files, error cases included: 401, 403, 404, 409 and 422, with exact bodies. Passing it is an objective gate, and the app exists in dozens of frameworks to compare with. |
 | Packages | **`httpkernel` merges Symfony's HttpFoundation and HttpKernel** (decided): the request and response helpers `net/http` lacks, typed handlers with argument binding, error-to-problem mapping, and the kernel. `routing`, `validator`, `config`, `console`, `db`, `security` and `webtest` are separate packages, as in Symfony. |
@@ -171,36 +171,7 @@ func dbConfig(c Config) db.Config                                       { return
 
 ### 3.4 Order of work (components first)
 
-> **Status (2026-10-04):** steps 1 and 4 are built: `httpkernel` has both halves, with tests and [examples/articles](../examples/articles). Differences from the plan:
-> - `Kernel` answers unmatched requests with 404 and 405 problems itself when its handler is an `*http.ServeMux`, so a plain mux is enough before `routing` exists.
-> - Binding errors on path, query and header values are 400s; validation errors (`Invalid`) are 422s.
-> - encoding/json/v2 has no default form for `time.Duration`, so APIs need a string field or their own encoding for durations.
-> - Cost per request (`httpkernel/bench_test.ego`, Apple M4 Pro): a hand-written handler takes 570 ns; with `Endpoint` binding, 665 ns; inside a `Kernel` (span, request scope, error boundary), 1.13 µs.
-> - An independent review found 15 defects, each reproduced, and all are fixed with regression tests. Among them: problems that failed to encode (invalid UTF-8, clashing extension names) were sent as an empty 200; a request whose deadline passed got an empty 200 instead of a 504; and clients could spoof their address through a Forwarded header that the proxy passed on. Proxies now read one header family, X-Forwarded-* by default.
-> - Building the kernel found four effect-go issues, all fixed in effect-go v0.2.0:
->   - `scope.Run` lost the handler's panic when an unjoined fiber had panicked too (39b59b4);
->   - `StopTimeout` cost a goroutine and a timer per call (0fa09fc);
->   - a pointer to an error case didn't match as the case (337b365);
->   - external test packages written in `.ego` loaded the standard library twice, so they failed to generate (43a81b8).
->
->   goncini requires v0.2.1, which pins the library and the `ego` tool together.
-> - Everything is written in `.ego`, tests included (decided). The generated Go is committed next to each file, and stack traces point at the `.ego` lines.
->
-> **Status (2026-10-04, later):** step 2 is built: [`routing`](../routing), used by examples/articles. Choices made while building it:
-> - **A `Router` registers on a `ServeMux`** with `Get`, `Post`, `Put`, `Patch`, `Delete`, `Method` and `Handle` (any method), each returning a `*Route` that `Name` names. `Group(prefix)`, `NamePrefix(p)` and `With(middleware…)` return derived routers sharing the mux and the names, so nothing depends on call order. Controllers implement `routing.Routes`; `New(routes…)` and `Include(routes…)` register them, under a group's prefixes when included in one.
-> - **Routes match exactly.** ServeMux reads `/articles/` as "everything below"; the router registers it as `/articles/{$}`, and a subtree is spelled `/files/{path...}`. A catch-all can't swallow unknown URLs that should be 404s.
-> - **`URL(name, params)` returns the path and query**, relative to the host: wildcards are filled and escaped, other parameters become the query string, sorted, and empty ones are left out, since binding reads them as absent. Values format the way `Endpoint` parses them. Failures are an error set, `URLError`; they are bugs, so handlers use `must`. What URL refuses rather than build a URL that goes astray:
->   - a value of `/`, which ServeMux can't route to a `{name}` wildcard;
->   - `.` and `..` segments, even escaped: RFC 3986 and browsers treat `%2E` as a dot and resolve them away;
->   - a URL that a more specific route would serve, such as `/articles/feed` for `/articles/{slug}` with the slug `feed` (the `Shadowed` case). It costs a ServeMux lookup per URL.
->
->   A test serves the URLs built for awkward values and checks the route gets each value back; the review ran it on 800,000 random values.
-> - **Registration mistakes panic at startup, saying where both sides were registered:** conflicting patterns (ServeMux's own message names routing's code, so the router rewrites it), duplicate names, paths without a leading slash, and paths ServeMux would redirect (double slashes, dot segments).
-> - **The listing:** `List`, `Match` and `WriteTable` are what `debug:router` and `router:match` will print, and `Endpoint` handlers now name their function there: `main.(*Articles).Show`.
-> - **Cost:** serving through a `Router` costs what the ServeMux does (125 ns and 2 allocations for 10 routes); a middleware adds a few ns. Building a URL takes 490 ns.
-> - **An independent review found 9 defects,** all fixed with regression tests. The two that mattered: a `{name}` value of `/` gave a URL no route served, and URL could return a URL that a more specific route served. The others: conflict messages that could name the wrong route, unclean paths and spaces accepted or refused depending on whether the route had a method, a typed-nil handler that slipped through when wrapped in middleware, empty query values that didn't come back, a panic without its location, and docs promising more than the formatting did.
-> - **Not built yet:** host routes; requirements (ServeMux has no regexes, so `/articles/abc` for an integer id is a 400 from binding rather than a 404); absolute URLs, which need the request's scheme and host where a typed endpoint can't see the request; and redirects between `/x` and `/x/`, beyond the one ServeMux makes.
-> - **What it found:** the example's `Location` header held raw UTF-8 for a slug like `café`, and a title without letters or digits made an empty slug; the first is escaped now and the second is a 422. In effect-go, comments on error-set cases didn't reach the generated Go, so `go doc` showed the cases undocumented; looking into it, the effect-go session also found that documented declarations after an error set got wrong //line positions, so stack traces pointed up to 16 lines off in 23 of goncini's files. Both are fixed in v0.2.1.
+> **Status (2026-10-04):** steps 1, 2 and 4 are built: [`httpkernel`](../httpkernel) and [`routing`](../routing), used by [examples/articles](../examples/articles). [CHANGELOG.md](../CHANGELOG.md) says what they do, what building them found, and where they differ from this plan.
 
 Each step is a package that works in any `net/http` app, the way Laravel uses Symfony's HttpFoundation. effect-go matters most from step 4.
 
@@ -237,6 +208,7 @@ Each step is a package that works in any `net/http` app, the way Laravel uses Sy
 - Are error mappers registered on the kernel (proposed) or provided as services?
 - Validation: struct tags plus `Validate()` (proposed), or rules in Go code only?
 - Default error body: RFC 9457 problem+json (proposed)?
+- Routing: host routes, and requirements on wildcards? Without them, `/articles/abc` for an integer id is a 400 from binding rather than a 404. Redirects between `/x` and `/x/` are ServeMux's alone.
 
 ## Prior art
 
