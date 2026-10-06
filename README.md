@@ -13,6 +13,9 @@ its ecosystem, and [effect-go](https://github.com/effect-go/effect-go).
   and writes JSON or an RFC 9457 problem.
 - **Named routes on `ServeMux`.** Routes are registered in plain Go, in
   groups with their own middleware, and URLs are built from route names.
+- **Every setting has a default, and every default can be changed.** A new
+  app works without writing any config; an app that needs another error body
+  or request size limit changes that one default, in Go, and keeps the others.
 - **Structured concurrency.** Each request runs in its own effect-go scope,
   and the server shuts down gracefully.
 
