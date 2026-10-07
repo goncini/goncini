@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
 
 	"github.com/effect-go/effect-go/scope"
@@ -29,43 +30,55 @@ import (
 // files of ProjectDir, then the config with load, and fails with every
 // missing secret at once. It then builds the app with build, in a scope
 // that SIGINT and SIGTERM cancel, and runs the command that the arguments
-// name, as Run does. If anything fails, Main reports it and exits with
+// name, as Run does.
+//
+// A mistake in the command line, such as an unknown command, is printed and
+// exits with status 2. Anything else that fails is logged, and exits with
 // status 1.
 //
-//line main.ego:30
+//line main.ego:34
 func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C) (*App, error)) {
 	env, cfg, err := Load(ProjectDir(), "", load)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	var usage error
 	scope.Main(func(s *scope.Scope) error {
-		app, err := build(s.Context(), s, cfg)
-		if err != nil {
-			return err
+		app, err2 := build(s.Context(), s, cfg)
+		if err2 != nil {
+			return err2
 		}
 		slog.SetDefault(app.Logger)
-		return Run(s.Context(), os.Stdout, env, cfg, app, os.Args[1:])
+		err := Run(s.Context(), os.Stdout, env, cfg, app, os.Args[1:])
+		if console.IsUsage(err) {
+			usage = err
+			return nil
+		}
+		return err
 	})
+//line main.ego:51
+	if usage != nil {
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
+	}
 }
 
 // Load returns the environment named name, loaded from dir as LoadEnv does,
 // and the config that load makes for it. It fails with the reasons of
 // Env.Err: an unknown environment and every missing secret.
-//
-//line main.ego:46
 func Load[C any](dir, name string, load func(*Env) C) (*Env, C, error) {
 	var cfg C
 	env, err := LoadEnv(dir, name)
 	if err != nil {
 		return nil, *new(C), err
 	}
-//line main.ego:49
+//line main.ego:63
 	cfg = load(env)
 	if err := env.Err(); err != nil {
 		return nil, *new(C), err
 	}
-//line main.ego:51
+//line main.ego:65
 	return env, cfg, nil
 }
 
@@ -78,7 +91,7 @@ func ProjectDir() string {
 	if err != nil {
 		wd = "."
 	}
-//line main.ego:60
+//line main.ego:74
 	for dir := wd; ; dir = filepath.Dir(dir) {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
@@ -98,10 +111,10 @@ func ProjectDir() string {
 //   - debug:router, which lists the routes;
 //   - debug:config, which prints cfg as JSON, with the values of env's
 //     secrets masked;
-//   - list, which lists the commands.
+//   - list and help, which describe the commands.
 func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, args []string) error {
 	commands := []console.Command{
-		console.New("serve", "Serves the app over HTTP", func(ctx context.Context, out io.Writer, args []string) error { return serve(ctx, out, app, args) }),
+		serveCommand{app.Server},
 		console.New("debug:router", "Lists the routes", func(ctx context.Context, out io.Writer, args []string) error {
 			return routing.WriteTable(out, app.Router.List())
 		}),
@@ -110,17 +123,21 @@ func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, a
 	return console.Run(ctx, out, append(commands, app.Commands...), "serve", args)
 }
 
-// serve serves app until ctx is done.
-func serve(ctx context.Context, out io.Writer, app *App, args []string) error {
-	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	flags.SetOutput(out)
-	addr := flags.String("addr", app.Server.Addr, "the TCP address to listen on")
-	if err := flags.Parse(args); err != nil {
-		return err
+// serveCommand serves the app until ctx is done.
+type serveCommand struct{ server *httpkernel.Server }
+
+func (serveCommand) Name() string    { return "serve" }
+func (serveCommand) Summary() string { return "Serves the app over HTTP" }
+
+func (c serveCommand) Flags(fs *flag.FlagSet) {
+	fs.StringVar(&c.server.Addr, "addr", c.server.Addr, "the TCP address to listen on, instead of the config's")
+}
+
+func (c serveCommand) Run(ctx context.Context, out io.Writer, args []string) error {
+	if len(args) > 0 {
+		return console.Usage{Command: "serve", Reason: fmt.Sprintf("unexpected argument %q", args[0])}
 	}
-//line main.ego:95
-	app.Server.Addr = *addr
-	return app.Server.ListenAndServe(ctx)
+	return c.server.ListenAndServe(ctx)
 }
 
 // writeConfig writes cfg as indented JSON, with the values of env's secrets
@@ -131,14 +148,14 @@ func writeConfig(out io.Writer, env *Env, cfg any) error {
 	if err2 != nil {
 		return err2
 	}
-//line main.ego:104
+//line main.ego:125
 	text := string(b)
 	for _, secret := range env.read {
 		quoted, err := json.Marshal(secret)
 		if err != nil {
 			panic(err)
 		}
-//line main.ego:107
+//line main.ego:128
 		text = strings.ReplaceAll(text, string(quoted[1:len(quoted)-1]), "******")
 	}
 	_, err := fmt.Fprintln(out, text)

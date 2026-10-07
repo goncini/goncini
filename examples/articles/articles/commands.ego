@@ -1,0 +1,48 @@
+package articles
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io"
+
+	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/routing"
+)
+
+// SlugCommand prints the slug that each title gets, or the URL of its
+// article.
+type SlugCommand struct {
+	articles *Articles
+	url      bool
+}
+
+func NewSlugCommand(a *Articles) *SlugCommand {
+	return &SlugCommand{articles: a}
+}
+
+func (*SlugCommand) Name() string    { return "articles:slug" }
+func (*SlugCommand) Summary() string { return "Prints the slug of each title given" }
+
+func (c *SlugCommand) Flags(fs *flag.FlagSet) {
+	fs.BoolVar(&c.url, "url", false, "print the URL of the article instead")
+}
+
+func (c *SlugCommand) Run(ctx context.Context, out io.Writer, titles []string) error {
+	if len(titles) == 0 {
+		return console.Usage{Command: c.Name(), Reason: "no title given"}
+	}
+	for _, title := range titles {
+		slug := slugify(title)
+		if slug == "" {
+			return console.Usage{Command: c.Name(), Reason: f"{title:q} needs a letter or a digit"}
+		}
+		if c.url {
+			slug = must c.articles.show.URL(routing.Params{"slug": slug})
+		}
+		if _, err := fmt.Fprintln(out, slug); err != nil {
+			return err
+		}
+	}
+	return nil
+}

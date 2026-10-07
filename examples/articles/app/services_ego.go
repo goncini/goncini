@@ -15,7 +15,7 @@ import (
 // Services is the app's own services.
 //
 //line services.ego:12
-var Services = layer.Set(articles.NewArticles, clock)
+var Services = layer.Set(articles.NewArticles, articles.NewSlugCommand, clock)
 
 // clock is the app's clock: the system's.
 func clock() func() time.Time { return time.Now }

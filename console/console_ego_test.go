@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -15,7 +17,7 @@ import (
 
 // echo writes its name and arguments.
 //
-//line console_test.ego:15
+//line console_test.ego:17
 func echo(name string) console.Command {
 	return console.New(name, "Echoes "+name, func(ctx context.Context, out io.Writer, args []string) error {
 		_, err := io.WriteString(out, name+" "+strings.Join(args, " "))
@@ -23,13 +25,45 @@ func echo(name string) console.Command {
 	})
 }
 
+// migrate is a command with flags.
+type migrate struct{ steps int }
+
+func (*migrate) Name() string    { return "db:migrate" }
+func (*migrate) Summary() string { return "Migrates" }
+
+func (m *migrate) Flags(fs *flag.FlagSet) {
+	fs.IntVar(&m.steps, "n", 0, "the number of `steps`, or 0 for all")
+}
+
+func (m *migrate) Run(ctx context.Context, out io.Writer, args []string) error {
+	_, err := fmt.Fprintf(out, "%d steps, args %q", m.steps, args)
+	return err
+}
+
 func TestRun(t *testing.T) {
-	commands := []console.Command{echo("serve"), echo("db:migrate")}
+	commands := []console.Command{echo("serve"), &migrate{}}
+	list := "" +
+		"help        Describes a command: help <command>\n" +
+		"list        Lists the commands\n" +
+		"db:migrate  Migrates\n" +
+		"serve       Echoes serve\n"
+	help := "" +
+		"db:migrate: Migrates\n\n" +
+		"Flags:\n" +
+		"  -n steps\n" +
+		"    \tthe number of steps, or 0 for all\n"
 	for args, want := range map[string]string{
-		"":                "serve ",
-		"serve":           "serve ",
-		"db:migrate -n 1": "db:migrate -n 1",
-		"--help":          "list        Lists the commands\ndb:migrate  Echoes db:migrate\nserve       Echoes serve\n",
+		"":                       "serve ",
+		"serve a b":              "serve a b",
+		"db:migrate -n 2 latest": `2 steps, args ["latest"]`,
+		"db:migrate":             `0 steps, args []`,
+		"list":                   list,
+		"--help":                 list,
+		"help":                   list,
+		"help db:migrate":        help,
+		"db:migrate -h":          help,
+		"help serve":             "serve: Echoes serve\n",
+		"serve --help":           "serve: Echoes serve\n",
 	} {
 		var out bytes.Buffer
 		if err := console.Run(context.Background(), &out, commands, "serve", strings.Fields(args)); err != nil || out.String() != want {
@@ -46,13 +80,29 @@ func TestRunErrors(t *testing.T) {
 	}{
 		{[]console.Command{echo("serve")}, "nope", console.UnknownCommand{Name: "nope"}},
 		{[]console.Command{echo("serve"), echo("serve")}, "serve", console.Duplicate{Name: "serve"}},
+		{[]console.Command{echo("serve")}, "help nope", console.UnknownCommand{Name: "nope"}},
+		{[]console.Command{&migrate{}}, "db:migrate -n x", console.Usage{Command: "db:migrate", Reason: `invalid value "x" for flag -n: parse error`}},
 		{[]console.Command{echo("list")}, "list", console.Duplicate{Name: "list"}},
+		{[]console.Command{echo("help")}, "list", console.Duplicate{Name: "help"}},
 		{[]console.Command{echo("db migrate")}, "list", console.InvalidName{Name: "db migrate"}},
 		{[]console.Command{echo("")}, "list", console.InvalidName{Name: ""}},
 	} {
 		err := console.Run(context.Background(), io.Discard, tt.commands, "serve", strings.Fields(tt.args))
 		if !errors.Is(err, tt.want) {
 			t.Errorf("%s: %v, want %v", tt.args, err, tt.want)
+		}
+	}
+}
+
+func TestIsUsage(t *testing.T) {
+	for err, want := range map[error]bool{
+		console.UnknownCommand{Name: "x"}:          true,
+		fmt.Errorf("wrapped: %w", console.Usage{}): true,
+		console.Duplicate{Name: "x"}:               false,
+		errors.New("failed"):                       false,
+	} {
+		if got := console.IsUsage(err); got != want {
+			t.Errorf("IsUsage(%v) = %v", err, got)
 		}
 	}
 }

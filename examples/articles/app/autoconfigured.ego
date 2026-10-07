@@ -18,7 +18,7 @@ func routes(a *articles.Articles) []routing.Routes { return []routing.Routes{a} 
 
 func problems() []httpkernel.ErrorMapper { return []httpkernel.ErrorMapper{articles.Problems} }
 
-func commands() []console.Command { return nil }
+func commands(slug *articles.SlugCommand) []console.Command { return []console.Command{slug} }
 
 func httpConfig(c config.Config) goncini.HTTP { return c.HTTP }
 

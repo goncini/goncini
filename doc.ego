@@ -33,5 +33,7 @@
 // # Commands
 //
 // The app's binary is its console. Run lists the commands goncini adds to
-// the app's own: serve, the default, debug:router, debug:config and list.
+// the app's own: serve, the default, debug:router, debug:config, list and
+// help. A mistake in the command line is printed, and Main exits with status
+// 2.
 package goncini

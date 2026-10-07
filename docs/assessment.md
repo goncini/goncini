@@ -40,7 +40,7 @@ What effect-go provides and doesn't, per its maintainer session:
 | Routing | Plain-Go registration on `http.ServeMux`: names, groups, prefixes, URL generation, `debug:router`. | M1 |
 | DependencyInjection | effect-go `layer`, plus `goncini generate` for autoconfiguration (tag collections) and config sections. As in Symfony, the container is compiled: generated Go, no reflection. | M1 |
 | Dotenv, Config, environments | Config as `.ego` code in `config/`: the shared values, then one function per environment, picked by `APP_ENV` (decided). Environment variables only for secrets, read through `env.Secret`, with Symfony's `.env` file precedence. No YAML, TOML or JSON config files, and no loader for them (decided). | M1 |
-| Console | The app binary is the console: `console`, a small package on the standard library, since a command parses its own flags with `flag`. Commands are services, collected by autoconfiguration. | M1 |
+| Console | The app binary is the console: `console`, a small package on the standard library's `flag`. Commands are services, collected by autoconfiguration. | M1 |
 | ErrorHandler, `HttpException` | Error sets mapped to RFC 9457 problems by exhaustive `match`; a panic becomes a 500 at the boundary; the renderer can be swapped. | M1 |
 | Serializer, `#[MapRequestPayload]`, `#[MapQueryString]` | Typed handlers in `httpkernel`, `func(ctx, In) (Out, error)`. `In` is bound from the path, query, headers and JSON body; `Out` is encoded as JSON. | M1 |
 | Validator | `validate` struct tags (go-playground/validator) and an optional `Validate()` method; violations become a 422. | M1 |

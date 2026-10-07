@@ -9,7 +9,7 @@ import (
 )
 
 // Services is the app's own services.
-var Services = layer.Set(articles.NewArticles, clock)
+var Services = layer.Set(articles.NewArticles, articles.NewSlugCommand, clock)
 
 // clock is the app's clock: the system's.
 func clock() func() time.Time { return time.Now }

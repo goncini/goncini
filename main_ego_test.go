@@ -101,6 +101,7 @@ func TestRun(t *testing.T) {
 
 	for args, want := range map[string]string{
 		"list": "" +
+			"help          Describes a command: help <command>\n" +
 			"list          Lists the commands\n" +
 			"debug:config  Prints the config, with secrets masked\n" +
 			"debug:router  Lists the routes\n" +
@@ -152,8 +153,10 @@ func TestServe(t *testing.T) {
 	if err := goncini.Run(ctx, &out, goncini.NewEnv("dev", nil), config{}, app, []string{"serve", "-addr", "127.0.0.1:0"}); err != nil {
 		t.Errorf("serve -addr: %v", err)
 	}
-	if err := goncini.Run(ctx, &out, goncini.NewEnv("dev", nil), config{}, app, []string{"serve", "-port", "1"}); err == nil {
-		t.Error("serve -port: no error")
+	for _, args := range [][]string{{"serve", "-port", "1"}, {"serve", "now"}} {
+		if err := goncini.Run(ctx, &out, goncini.NewEnv("dev", nil), config{}, app, args); !console.IsUsage(err) {
+			t.Errorf("%q: %v", args, err)
+		}
 	}
 }
 

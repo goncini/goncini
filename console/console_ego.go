@@ -6,14 +6,17 @@
 //
 //	conduit                  # runs the default command, usually serve
 //	conduit list             # lists the commands
-//	conduit db:migrate -n 1  # runs one, with its own flags
+//	conduit help db:migrate  # describes one, with its flags
+//	conduit db:migrate -n 1  # runs one
 //
-// A command parses its arguments itself, usually with a flag.FlagSet named
-// after it.
+// A command with flags declares them in a Flags method, and console parses
+// them.
 package console
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"slices"
@@ -24,16 +27,24 @@ import (
 // Command is a console command. Commands are services: an app collects them
 // into a []Command, as it does its routes.
 //
-//line console.ego:24
+//line console.ego:27
 type Command interface {
 	// Name is what calls the command: letters, digits, '-' and ':', such
 	// as db:migrate.
 	Name() string
 	// Summary says in a line what the command does, for the list.
 	Summary() string
-	// Run runs the command with args, the arguments after its name, and
-	// writes its output to out.
+	// Run runs the command with args, the arguments after its name and its
+	// flags, and writes its output to out. Wrong arguments are a Usage
+	// error.
 	Run(ctx context.Context, out io.Writer, args []string) error
+}
+
+// Flagger is a Command with flags. Flags declares them on fs, usually bound
+// to the command's fields; console parses them before Run, and help lists
+// them.
+type Flagger interface {
+	Flags(fs *flag.FlagSet)
 }
 
 // Error is everything Run fails with, besides the errors of the commands.
@@ -54,6 +65,28 @@ func (e UnknownCommand) Error() string {
 // As lets pointers to UnknownCommand match as UnknownCommand.
 func (e UnknownCommand) As(target any) bool {
 	if t, ok := target.(*UnknownCommand); ok {
+		*t = e
+		return true
+	}
+	return false
+}
+
+// Usage means that a command was called with flags or arguments it
+// doesn't take, for Reason.
+type Usage struct {
+	Command string
+	Reason  string
+}
+
+func (Usage) isError() {}
+
+func (e Usage) Error() string {
+	return fmt.Sprintf("%v: %v (help %v describes it)", e.Command, e.Reason, e.Command)
+}
+
+// As lets pointers to Usage match as Usage.
+func (e Usage) As(target any) bool {
+	if t, ok := target.(*Usage); ok {
 		*t = e
 		return true
 	}
@@ -95,14 +128,26 @@ func (e InvalidName) As(target any) bool {
 	return false
 }
 
+// IsUsage reports whether err is a mistake in the command line, not in the
+// program: an UnknownCommand or a Usage error. A program prints it, and
+// exits with status 2.
+//
+//line console.ego:66
+func IsUsage(err error) bool {
+	_, unknown := errors.AsType[UnknownCommand](err)
+	_, usage := errors.AsType[Usage](err)
+	return unknown || usage
+}
+
 // Run runs the command that args[0] names with the rest of args, or def
-// when args is empty. list, which writes the commands and their summaries
-// to out, is always there; -h and --help call it too.
+// when args is empty. Two commands are always there:
+//   - list, which lists the commands with their summaries, as -h and --help
+//     do;
+//   - help, which describes the command named after it, with its flags, as
+//     -h after a command's name does.
 //
-// Run fails with an Error when the commands or the name are wrong, and
-// otherwise with what the command fails with.
-//
-//line console.ego:52
+// Run fails with an Error when the commands or the command line are wrong,
+// and otherwise with what the command fails with.
 func Run(ctx context.Context, out io.Writer, commands []Command, def string, args []string) error {
 	byName := map[string]Command{}
 	for _, c := range commands {
@@ -110,7 +155,7 @@ func Run(ctx context.Context, out io.Writer, commands []Command, def string, arg
 		if name == "" || strings.ContainsFunc(name, func(r rune) bool { return !nameChar(r) }) {
 			return InvalidName{Name: name}
 		}
-		if _, dup := byName[name]; dup || name == "list" {
+		if _, dup := byName[name]; dup || name == "list" || name == "help" {
 			return Duplicate{Name: name}
 		}
 		byName[name] = c
@@ -119,14 +164,40 @@ func Run(ctx context.Context, out io.Writer, commands []Command, def string, arg
 	if len(args) > 0 {
 		name, args = args[0], args[1:]
 	}
-	if name == "list" || name == "-h" || name == "-help" || name == "--help" {
+	if name == "list" || isHelpFlag(name) || name == "help" && len(args) == 0 {
 		return writeList(out, commands)
+	}
+	if name == "help" {
+		name, args = args[0], []string{"-h"}
 	}
 	c, ok := byName[name]
 	if !ok {
 		return UnknownCommand{Name: name}
 	}
+	if len(args) > 0 && isHelpFlag(args[0]) {
+		return writeHelp(out, c)
+	}
+	if f, ok := c.(Flagger); ok {
+		fs := flagSet(c, f)
+		if err := fs.Parse(args); err != nil {
+			return Usage{Command: name, Reason: err.Error()}
+		}
+		args = fs.Args()
+	}
 	return c.Run(ctx, out, args)
+}
+
+// isHelpFlag reports whether arg asks for help.
+func isHelpFlag(arg string) bool {
+	return arg == "-h" || arg == "-help" || arg == "--help"
+}
+
+// flagSet returns the flags of c.
+func flagSet(c Command, f Flagger) *flag.FlagSet {
+	fs := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	f.Flags(fs)
+	return fs
 }
 
 // nameChar reports whether r can be part of a command name.
@@ -138,11 +209,26 @@ func nameChar(r rune) bool {
 func writeList(out io.Writer, commands []Command) error {
 	sorted := slices.SortedFunc(slices.Values(commands), func(a, b Command) int { return strings.Compare(a.Name(), b.Name()) })
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "help\tDescribes a command: help <command>")
 	fmt.Fprintln(tw, "list\tLists the commands")
 	for _, c := range sorted {
 		fmt.Fprintf(tw, "%s\t%s\n", c.Name(), c.Summary())
 	}
 	return tw.Flush()
+}
+
+// writeHelp writes c's name and summary, and its flags.
+func writeHelp(out io.Writer, c Command) error {
+	if _, err := fmt.Fprintf(out, "%s: %s\n", c.Name(), c.Summary()); err != nil {
+		return err
+	}
+	if f, ok := c.(Flagger); ok {
+		fs := flagSet(c, f)
+		fmt.Fprintln(out, "\nFlags:")
+		fs.SetOutput(out)
+		fs.PrintDefaults()
+	}
+	return nil
 }
 
 // New returns a command with the name and summary that runs run.

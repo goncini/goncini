@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
 )
 
@@ -25,7 +26,10 @@ import (
 // files of ProjectDir, then the config with load, and fails with every
 // missing secret at once. It then builds the app with build, in a scope
 // that SIGINT and SIGTERM cancel, and runs the command that the arguments
-// name, as Run does. If anything fails, Main reports it and exits with
+// name, as Run does.
+//
+// A mistake in the command line, such as an unknown command, is printed and
+// exits with status 2. Anything else that fails is logged, and exits with
 // status 1.
 func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C) (*App, error)) {
 	env, cfg, err := Load(ProjectDir(), "", load)
@@ -33,11 +37,21 @@ func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C)
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	var usage error
 	scope.Main(s => {
 		app := check build(s.Context(), s, cfg) ""
 		slog.SetDefault(app.Logger)
-		return Run(s.Context(), os.Stdout, env, cfg, app, os.Args[1:])
+		err := Run(s.Context(), os.Stdout, env, cfg, app, os.Args[1:])
+		if console.IsUsage(err) {
+			usage = err
+			return nil
+		}
+		return err
 	})
+	if usage != nil {
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
+	}
 }
 
 // Load returns the environment named name, loaded from dir as LoadEnv does,
@@ -76,24 +90,31 @@ func ProjectDir() string {
 //   - debug:router, which lists the routes;
 //   - debug:config, which prints cfg as JSON, with the values of env's
 //     secrets masked;
-//   - list, which lists the commands.
+//   - list and help, which describe the commands.
 func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, args []string) error {
 	commands := []console.Command{
-		console.New("serve", "Serves the app over HTTP", (ctx context.Context, out io.Writer, args []string) => serve(ctx, out, app, args)),
+		serveCommand{app.Server},
 		console.New("debug:router", "Lists the routes", (ctx context.Context, out io.Writer, args []string) => routing.WriteTable(out, app.Router.List())),
 		console.New("debug:config", "Prints the config, with secrets masked", (ctx context.Context, out io.Writer, args []string) => writeConfig(out, env, cfg)),
 	}
 	return console.Run(ctx, out, append(commands, app.Commands...), "serve", args)
 }
 
-// serve serves app until ctx is done.
-func serve(ctx context.Context, out io.Writer, app *App, args []string) error {
-	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	flags.SetOutput(out)
-	addr := flags.String("addr", app.Server.Addr, "the TCP address to listen on")
-	check flags.Parse(args) ""
-	app.Server.Addr = *addr
-	return app.Server.ListenAndServe(ctx)
+// serveCommand serves the app until ctx is done.
+type serveCommand struct{ server *httpkernel.Server }
+
+func (serveCommand) Name() string    { return "serve" }
+func (serveCommand) Summary() string { return "Serves the app over HTTP" }
+
+func (c serveCommand) Flags(fs *flag.FlagSet) {
+	fs.StringVar(&c.server.Addr, "addr", c.server.Addr, "the TCP address to listen on, instead of the config's")
+}
+
+func (c serveCommand) Run(ctx context.Context, out io.Writer, args []string) error {
+	if len(args) > 0 {
+		return console.Usage{Command: "serve", Reason: f"unexpected argument {args[0]:q}"}
+	}
+	return c.server.ListenAndServe(ctx)
 }
 
 // writeConfig writes cfg as indented JSON, with the values of env's secrets

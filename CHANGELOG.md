@@ -82,9 +82,12 @@ Running an app, in the [layout](docs/layout.md) of goncini apps:
   `NewKernel`, `NewServer` and `NewApp`, configured by the `HTTP` and `Log` sections, whose zero values
   are the defaults. Logs carry trace IDs; the kernel sits behind the trusted
   proxies and hosts, with an access log.
-- **Commands:** `console` runs an app's commands, which are services. goncini
-  adds `serve` (the default, with `-addr` for a busy port), `debug:router`,
-  `debug:config`, which masks secrets, and `list`.
+- **Commands:** `console` runs an app's commands, which are services. A
+  command with flags declares them in a `Flags` method, and console parses
+  them. goncini adds `serve` (the default, with `-addr` for a busy port),
+  `debug:router`, `debug:config`, which masks secrets, `list` and
+  `help <command>`. A mistake in the command line, such as an unknown
+  command or flag, is printed plainly and exits with status 2.
 - **`webtest.Boot`** builds an app for a test, in the test environment, and
   closes its scope when the test ends.
 - **`httpkernel.TrustHosts`** answers 400 to requests for other hosts, so

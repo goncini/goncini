@@ -30,7 +30,8 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
 	server := goncini.NewServer(http, kernel, logger)
-	v4 := commands()
+	slugCommand := articles.NewSlugCommand(articles2)
+	v4 := commands(slugCommand)
 	app := goncini.NewApp(kernel, server, router, v4, logger)
 	return app, nil
 }
@@ -49,7 +50,8 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
 	server := goncini.NewServer(http, kernel, logger)
-	v3 := commands()
+	slugCommand := articles.NewSlugCommand(articles2)
+	v3 := commands(slugCommand)
 	app := goncini.NewApp(kernel, server, router, v3, logger)
 	return app, nil
 }
