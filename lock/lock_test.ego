@@ -1,0 +1,120 @@
+package lock_test
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+
+	_ "modernc.org/sqlite"
+
+	"github.com/goncini/goncini/lock"
+)
+
+// stores are the stores to test, made new for each test.
+var stores = map[string]func(t *testing.T) lock.Store{
+	"memory": func(t *testing.T) lock.Store { return &lock.MemoryStore{} },
+	"sqlite": func(t *testing.T) lock.Store {
+		pool := must sql.Open("sqlite", "file::memory:")
+		pool.SetMaxOpenConns(1) // one database: each connection to :memory: has its own
+		t.Cleanup(() => { pool.Close() })
+		s := must lock.NewSQLStore(pool)
+		return s
+	},
+}
+
+func TestStores(t *testing.T) {
+	for name, newStore := range stores {
+		t.Run(name, (t *testing.T) => {
+			ctx := context.Background()
+			f := &lock.Factory{Store: newStore(t), TTL: 100 * time.Millisecond}
+			a, b := f.New("report"), f.New("report")
+			gotA := must a.Acquire(ctx)
+			gotB := must b.Acquire(ctx)
+			again := must a.Acquire(ctx) // its owner may take it again
+			other := must f.New("other").Acquire(ctx)
+			if !gotA || gotB || !again || !other {
+				t.Fatalf("a %v, b %v, a again %v, another key %v", gotA, gotB, again, other)
+			}
+			must b.Release(ctx) // not b's: nothing happens
+			afterB := must b.Acquire(ctx)
+			if afterB {
+				t.Error("b released a's lock")
+			}
+			must a.Release(ctx)
+			released := must b.Acquire(ctx)
+			if !released {
+				t.Error("b can't take a released lock")
+			}
+			time.Sleep(150 * time.Millisecond) // b's hold expires
+			expired := must a.Acquire(ctx)
+			if !expired {
+				t.Error("a can't take an expired lock")
+			}
+			refreshed := must b.Refresh(ctx)
+			if refreshed {
+				t.Error("b refreshed a lock it lost")
+			}
+		})
+	}
+}
+
+// TestRun checks that Run keeps the lock while its function runs, beyond
+// the TTL, and that one of two concurrent runs gets it.
+func TestRun(t *testing.T) {
+	for name, newStore := range stores {
+		t.Run(name, (t *testing.T) => {
+			f := &lock.Factory{Store: newStore(t), TTL: 60 * time.Millisecond}
+			ctx := context.Background()
+			var mu sync.Mutex
+			ran := 0
+			var wg sync.WaitGroup
+			for range 2 {
+				wg.Go(() => {
+					must f.New("job").Run(ctx, func(ctx context.Context) error {
+						mu.Lock()
+						ran++
+						mu.Unlock()
+						time.Sleep(200 * time.Millisecond) // over three TTLs: refreshed
+						return ctx.Err()
+					})
+				})
+			}
+			wg.Wait()
+			if ran != 1 {
+				t.Errorf("%d runs, want 1", ran)
+			}
+			held := must f.New("job").Acquire(ctx)
+			if !held {
+				t.Error("Run didn't release the lock")
+			}
+		})
+	}
+}
+
+// lossy is a store that loses every lock after its first acquisition, as
+// if it had expired and another owner took it.
+type lossy struct{ acquired bool }
+
+func (l *lossy) Acquire(ctx context.Context, key, owner string, ttl time.Duration) (bool, error) {
+	first := !l.acquired
+	l.acquired = true
+	return first, nil
+}
+
+func (l *lossy) Release(ctx context.Context, key, owner string) error { return nil }
+
+// TestRunLosesTheLock checks that Run cancels its function when a refresh
+// finds the lock lost.
+func TestRunLosesTheLock(t *testing.T) {
+	f := &lock.Factory{Store: &lossy{}, TTL: 30 * time.Millisecond}
+	ok, err := f.New("job").Run(context.Background(), func(ctx context.Context) error {
+		<-ctx.Done()
+		return context.Cause(ctx)
+	})
+	if !ok || !errors.Is(err, lock.ErrLost) {
+		t.Errorf("ok %v, err %v", ok, err)
+	}
+}

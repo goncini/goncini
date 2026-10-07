@@ -1,0 +1,25 @@
+package db_test
+
+import (
+	"database/sql"
+	"testing"
+
+	_ "modernc.org/sqlite"
+
+	"github.com/goncini/goncini/db"
+)
+
+func TestDialect(t *testing.T) {
+	sqlite := must sql.Open("sqlite", ":memory:")
+	words := must sql.Open("words", "")
+	if db.DialectOf(sqlite) != db.SQLite || db.DialectOf(words) != db.Unknown {
+		t.Errorf("dialects %v, %v", db.DialectOf(sqlite), db.DialectOf(words))
+	}
+	query := `SELECT '?' FROM "a?b" WHERE x = ? AND y = ?`
+	if got := db.PostgreSQL.Rebind(query); got != `SELECT '?' FROM "a?b" WHERE x = $1 AND y = $2` {
+		t.Errorf("PostgreSQL: %s", got)
+	}
+	if got := db.SQLite.Rebind(query); got != query {
+		t.Errorf("SQLite: %s", got)
+	}
+}

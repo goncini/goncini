@@ -1,0 +1,76 @@
+package lock
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/goncini/goncini/db"
+)
+
+// SQLStore keeps locks in a table of a SQLite or PostgreSQL database: the
+// locks of the processes that share it. It creates its table the first
+// time it needs it, unless told not to.
+type SQLStore struct {
+	pool    *sql.DB
+	dialect db.Dialect
+	// Table is the table's name; empty means goncini_locks.
+	Table string
+	// NoSetup leaves creating the table to the app's migrations, with
+	// Schema.
+	NoSetup bool
+
+	setup sync.Once
+	err   error
+}
+
+// NewSQLStore returns the store of the pool, a SQLite or PostgreSQL
+// database.
+func NewSQLStore(pool *sql.DB) (*SQLStore, error) {
+	d := db.DialectOf(pool)
+	if d == db.Unknown {
+		return nil, fmt.Errorf("lock: the SQL store works with SQLite and PostgreSQL, not the %T driver", pool.Driver())
+	}
+	return &SQLStore{pool: pool, dialect: d}, nil
+}
+
+// Schema returns the statement that creates the store's table, for an
+// app's migrations.
+func (s *SQLStore) Schema() string {
+	return f"CREATE TABLE IF NOT EXISTS {s.table()} (name VARCHAR(255) PRIMARY KEY, owner VARCHAR(64) NOT NULL, expires_at BIGINT NOT NULL)"
+}
+
+func (s *SQLStore) table() string {
+	return if s.Table != "" { s.Table } else { "goncini_locks" }
+}
+
+// ready creates the table once, unless NoSetup says not to.
+func (s *SQLStore) ready(ctx context.Context) error {
+	if s.NoSetup {
+		return nil
+	}
+	s.setup.Do(() => {
+		_, s.err = s.pool.ExecContext(ctx, s.Schema())
+	})
+	return s.err
+}
+
+func (s *SQLStore) Acquire(ctx context.Context, key, owner string, ttl time.Duration) (bool, error) {
+	check s.ready(ctx) ""
+	now := time.Now()
+	t := s.table()
+	// Insert the lock, or take it over if its owner is this one or its
+	// hold has expired: one statement, which no other can interleave with.
+	query := s.dialect.Rebind(f"INSERT INTO {t} (name, owner, expires_at) VALUES (?, ?, ?) ON CONFLICT (name) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at WHERE {t}.owner = excluded.owner OR {t}.expires_at <= ?")
+	res := check s.pool.ExecContext(ctx, query, key, owner, now.Add(ttl).UnixMilli(), now.UnixMilli())
+	n := check res.RowsAffected()
+	return n == 1, nil
+}
+
+func (s *SQLStore) Release(ctx context.Context, key, owner string) error {
+	check s.ready(ctx) ""
+	check s.pool.ExecContext(ctx, s.dialect.Rebind(f"DELETE FROM {s.table()} WHERE name = ? AND owner = ?"), key, owner)
+	return nil
+}

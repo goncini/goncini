@@ -1,0 +1,66 @@
+package db
+
+import (
+	"database/sql"
+	"reflect"
+	"strconv"
+	"strings"
+)
+
+// Dialect is the SQL of a database, for the queries that goncini's own
+// stores write, such as lock's and messenger's: they work on SQLite and
+// PostgreSQL.
+enum Dialect {
+	// Unknown is a database whose driver goncini doesn't know.
+	Unknown
+	SQLite
+	PostgreSQL
+}
+
+// DialectOf returns the dialect of pool's driver, which it recognizes by
+// the Go package that implements it: modernc.org/sqlite and
+// github.com/mattn/go-sqlite3 are SQLite, github.com/jackc/pgx and
+// github.com/lib/pq are PostgreSQL.
+func DialectOf(pool *sql.DB) Dialect {
+	t := reflect.TypeOf(pool.Driver())
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	pkg := t.PkgPath()
+	switch {
+	case strings.Contains(pkg, "sqlite"):
+		return SQLite
+	case strings.Contains(pkg, "jackc/pgx"), strings.Contains(pkg, "lib/pq"):
+		return PostgreSQL
+	}
+	return Unknown
+}
+
+// Rebind writes query's ? placeholders as the dialect needs them: $1, $2
+// and so on for PostgreSQL. Question marks in quoted strings and
+// identifiers are left alone.
+func (d Dialect) Rebind(query string) string {
+	if d != PostgreSQL {
+		return query
+	}
+	var b strings.Builder
+	n := 0
+	var quote byte
+	for i := 0; i < len(query); i++ {
+		c := query[i]
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '?':
+			n++
+			b.WriteString("$" + strconv.Itoa(n))
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}

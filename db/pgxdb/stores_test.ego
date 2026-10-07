@@ -1,0 +1,45 @@
+package pgxdb_test
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/db/pgxdb"
+	"github.com/goncini/goncini/lock"
+)
+
+// TestLockStore checks goncini's SQL lock store on PostgreSQL, through
+// pgx's database/sql driver.
+func TestLockStore(t *testing.T) {
+	url := os.Getenv("PGXDB_TEST_URL")
+	if url == "" {
+		t.Skip("PGXDB_TEST_URL names no PostgreSQL database to test with")
+	}
+	ctx := context.Background()
+	pool, closePool := must pgxdb.Open(ctx, db.Config{URL: url, MaxOpenConns: 4})
+	t.Cleanup(closePool)
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	store := must lock.NewSQLStore(sqlDB)
+	store.Table = "pgxdb_test_locks"
+	t.Cleanup(() => { sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_locks") })
+
+	f := &lock.Factory{Store: store, TTL: 200 * time.Millisecond}
+	a, b := f.New("report"), f.New("report")
+	gotA := must a.Acquire(ctx)
+	gotB := must b.Acquire(ctx)
+	if !gotA || gotB {
+		t.Fatalf("a %v, b %v", gotA, gotB)
+	}
+	time.Sleep(300 * time.Millisecond)
+	expired := must b.Acquire(ctx)
+	must b.Release(ctx)
+	released := must a.Acquire(ctx)
+	if !expired || !released {
+		t.Errorf("after expiry %v, after release %v", expired, released)
+	}
+}
