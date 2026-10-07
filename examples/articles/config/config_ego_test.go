@@ -15,13 +15,16 @@ import (
 	"github.com/effect-go/effect-go/scope"
 )
 
-// TestEnvironments builds the app in each environment, which checks that
-// their configs have no missing secret and are values goncini accepts.
+// secrets are the environment variables that every environment needs.
 //
-//line config_test.ego:16
+//line config_test.ego:15
+var secrets = map[string]string{"DATABASE_URL": ":memory:"}
+
+// TestEnvironments builds the app in each environment, which checks that
+// their configs need no secret but secrets, and are values goncini accepts.
 func TestEnvironments(t *testing.T) {
 	for _, name := range []string{"dev", "test", "prod"} {
-		env := goncini.NewEnv(name, nil)
+		env := goncini.NewEnv(name, secrets)
 		cfg := config.Load(env)
 		if err := env.Err(); err != nil {
 			t.Errorf("%s: %v", name, err)

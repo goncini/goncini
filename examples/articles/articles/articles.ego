@@ -5,7 +5,6 @@ package articles
 import (
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -26,31 +25,33 @@ type Article struct {
 error ArticleError {
 	NotFound{ Slug string } "no article {Slug}"
 	Duplicate{ Slug string } "an article {Slug} already exists"
+	// Unavailable means that the store failed.
+	Unavailable{ Cause error } "the articles are unavailable"
 }
 
 // Problem says what each ArticleError looks like over HTTP. A new case
 // doesn't compile until it has an arm here.
 func Problem(err ArticleError) httpkernel.Problem {
 	return match err {
-		nil          => httpkernel.Problem{}
-		NotFound(e)  => httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
-		Duplicate(e) => httpkernel.Problem{Status: http.StatusConflict, Detail: e.Error()}
+		nil            => httpkernel.Problem{}
+		NotFound(e)    => httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
+		Duplicate(e)   => httpkernel.Problem{Status: http.StatusConflict, Detail: e.Error()}
+		Unavailable(_) => httpkernel.Problem{Status: http.StatusServiceUnavailable}
 	}
 }
 
 // Problems is what a kernel registers to answer ArticleErrors.
 var Problems = httpkernel.Map[ArticleError](Problem)
 
-// Articles keeps the articles in memory, and serves them.
+// Articles serves the articles of its store.
 type Articles struct {
-	mu     sync.Mutex
-	bySlug map[string]Article
-	now    func() time.Time
-	show   *routing.Route // the route of an article, for its URL: set by Routes
+	store *Store
+	now   func() time.Time
+	show  *routing.Route // the route of an article, for its URL: set by Routes
 }
 
-func NewArticles(now func() time.Time) *Articles {
-	return &Articles{bySlug: map[string]Article{}, now: now}
+func NewArticles(store *Store, now func() time.Time) *Articles {
+	return &Articles{store: store, now: now}
 }
 
 // slugify turns a title into a slug: "Hello, World!" becomes "hello-world".

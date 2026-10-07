@@ -1,0 +1,163 @@
+package db_test
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"io"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/db"
+)
+
+// fake is a database/sql driver that logs what happens to its
+// transactions, and fails to connect when the URL says "down".
+type fake struct {
+	mu  sync.Mutex
+	log []string
+}
+
+func (f *fake) record(s string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.log = append(f.log, s)
+}
+
+func (f *fake) logged() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return strings.Join(f.log, " ")
+}
+
+func (f *fake) Open(name string) (driver.Conn, error) {
+	if name == "down" {
+		return nil, errors.New("connection refused")
+	}
+	return &conn{f}, nil
+}
+
+type conn struct{ f *fake }
+
+func (c *conn) Prepare(query string) (driver.Stmt, error) { return &stmt{c.f, query}, nil }
+func (c *conn) Close() error                              { return nil }
+func (c *conn) Begin() (driver.Tx, error) {
+	c.f.record("begin")
+	return &tx{c.f}, nil
+}
+
+type tx struct{ f *fake }
+
+func (t *tx) Commit() error   { t.f.record("commit"); return nil }
+func (t *tx) Rollback() error { t.f.record("rollback"); return nil }
+
+type stmt struct {
+	f     *fake
+	query string
+}
+
+func (s *stmt) Close() error  { return nil }
+func (s *stmt) NumInput() int { return -1 }
+func (s *stmt) Exec(args []driver.Value) (driver.Result, error) {
+	s.f.record(s.query)
+	return driver.RowsAffected(1), nil
+}
+func (s *stmt) Query(args []driver.Value) (driver.Rows, error) { return nil, errors.New("no rows") }
+
+var driverLog = &fake{}
+
+func init() { sql.Register("fake", driverLog) }
+
+func open(t *testing.T) *db.SQL {
+	pool, closePool := must db.Open(context.Background(), db.Config{Driver: "fake", URL: "up", MaxOpenConns: 1})
+	t.Cleanup(() => { closePool() })
+	driverLog.mu.Lock()
+	driverLog.log = nil
+	driverLog.mu.Unlock()
+	return db.NewSQL(pool)
+}
+
+func TestOpenFailsAtBoot(t *testing.T) {
+	for c, want := range map[db.Config]string{
+		{}:                            "db: Config.Driver is empty",
+		{Driver: "nope"}:              `db: sql: unknown driver "nope"`,
+		{Driver: "fake", URL: "down"}: "db: the fake database doesn't answer: connection refused",
+	} {
+		if _, _, err := db.Open(context.Background(), c); err == nil || !strings.HasPrefix(err.Error(), want) {
+			t.Errorf("Open(%+v) = %v, want %s", c, err, want)
+		}
+	}
+}
+
+func TestInTx(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	exec := func(ctx context.Context, q string) error {
+		_, err := s.Conn(ctx).ExecContext(ctx, q)
+		return err
+	}
+	failed := errors.New("failed")
+
+	for _, tt := range []struct {
+		name string
+		fn   func(ctx context.Context) error
+		err  error
+		log  string
+	}{
+		{"commit", (ctx context.Context) => exec(ctx, "insert"), nil, "begin insert commit"},
+		{"rollback", func(ctx context.Context) error { exec(ctx, "insert"); return failed }, failed, "begin insert rollback"},
+		{"nested", (ctx context.Context) => s.InTx(ctx, ctx => exec(ctx, "inner")), nil, "begin inner commit"},
+		{"nested failure", (ctx context.Context) => s.InTx(ctx, _ => failed), failed, "begin rollback"},
+	} {
+		driverLog.log = nil
+		if err := s.InTx(ctx, tt.fn); !errors.Is(err, tt.err) || driverLog.logged() != tt.log {
+			t.Errorf("%s: %v, log %q; want %v, %q", tt.name, err, driverLog.logged(), tt.err, tt.log)
+		}
+	}
+
+	driverLog.log = nil
+	func() {
+		defer func() { recover() }()
+		s.InTx(ctx, func(ctx context.Context) error { exec(ctx, "insert"); panic("boom") })
+	}()
+	if driverLog.logged() != "begin insert rollback" {
+		t.Errorf("panic: log %q", driverLog.logged())
+	}
+
+	if _, ok := s.Tx(ctx); ok {
+		t.Error("a transaction outside InTx")
+	}
+	if s.Conn(ctx) != s.DB {
+		t.Error("Conn outside InTx isn't the pool")
+	}
+}
+
+// migrator records its calls.
+type migrator struct{ calls []string }
+
+func (m *migrator) Up(ctx context.Context, out io.Writer) error {
+	m.calls = append(m.calls, "up")
+	return nil
+}
+func (m *migrator) Down(ctx context.Context, out io.Writer) error {
+	m.calls = append(m.calls, "down")
+	return nil
+}
+func (m *migrator) Status(ctx context.Context, out io.Writer) error {
+	m.calls = append(m.calls, "status")
+	return nil
+}
+
+func TestCommands(t *testing.T) {
+	m := &migrator{}
+	for _, name := range []string{"db:migrate", "db:migrate:status", "db:rollback"} {
+		must console.Run(context.Background(), &bytes.Buffer{}, db.Commands(m), "", []string{name})
+	}
+	if got := strings.Join(m.calls, " "); got != "up status down" {
+		t.Errorf("calls: %s", got)
+	}
+}

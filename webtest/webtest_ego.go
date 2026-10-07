@@ -4,10 +4,13 @@
 package webtest
 
 import (
+	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/console"
 
 	"github.com/effect-go/effect-go/scope"
 )
@@ -20,7 +23,7 @@ import (
 //	app := webtest.Boot(t, config.Load, app.Build)
 //	app.Kernel.ServeHTTP(rec, req)
 //
-//line webtest.ego:18
+//line webtest.ego:21
 func Boot[C any](t testing.TB, load func(*goncini.Env) C, build func(context.Context, *scope.Scope, C) (*goncini.App, error)) *goncini.App {
 	t.Helper()
 	_, cfg, err := goncini.Load(goncini.ProjectDir(), "test", load)
@@ -36,7 +39,7 @@ func Boot[C any](t testing.TB, load func(*goncini.Env) C, build func(context.Con
 			if err != nil {
 				return struct{}{}, err
 			}
-//line webtest.ego:30
+//line webtest.ego:33
 			built <- app
 			<-stop
 			return struct{}{}, nil
@@ -56,4 +59,18 @@ func Boot[C any](t testing.TB, load func(*goncini.Env) C, build func(context.Con
 		t.Fatalf("building the app: %v", err)
 		return nil
 	}
+}
+
+// Run runs one of app's own commands with args, such as db:migrate to
+// create a test database's tables, and returns its output. The test fails
+// if the command does.
+//
+//	webtest.Run(t, app, "db:migrate")
+func Run(t testing.TB, app *goncini.App, args ...string) string {
+	t.Helper()
+	var out bytes.Buffer
+	if err := console.Run(t.Context(), &out, app.Commands, "", args); err != nil {
+		t.Fatalf("%s: %v", strings.Join(args, " "), err)
+	}
+	return out.String()
 }

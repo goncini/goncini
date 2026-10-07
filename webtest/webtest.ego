@@ -2,10 +2,13 @@
 package webtest
 
 import (
+	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/console"
 )
 
 // Boot builds an app for a test, as goncini.Main does in the test
@@ -46,4 +49,18 @@ func Boot[C any](t testing.TB, load func(*goncini.Env) C, build func(context.Con
 		t.Fatalf("building the app: %v", err)
 		return nil
 	}
+}
+
+// Run runs one of app's own commands with args, such as db:migrate to
+// create a test database's tables, and returns its output. The test fails
+// if the command does.
+//
+//	webtest.Run(t, app, "db:migrate")
+func Run(t testing.TB, app *goncini.App, args ...string) string {
+	t.Helper()
+	var out bytes.Buffer
+	if err := console.Run(t.Context(), &out, app.Commands, "", args); err != nil {
+		t.Fatalf("%s: %v", strings.Join(args, " "), err)
+	}
+	return out.String()
 }

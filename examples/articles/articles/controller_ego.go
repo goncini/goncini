@@ -4,7 +4,6 @@ package articles
 
 import (
 	"context"
-	"slices"
 	"strings"
 
 	"github.com/goncini/goncini/httpkernel"
@@ -17,7 +16,7 @@ import (
 // its URL. Each effect method compiles to a func(ctx, In) (Out, error),
 // which httpkernel.Endpoint serves.
 //
-//line controller.ego:14
+//line controller.ego:13
 func (a *Articles) Routes(r *routing.Router) {
 	r.Get("/articles", httpkernel.Endpoint(a.List)).Name("article_list")
 	a.show = r.Get("/articles/{slug}", httpkernel.Endpoint(a.Show)).Name("article_show")
@@ -38,17 +37,13 @@ type ListOutput struct {
 func (a *Articles) List(ctx context.Context, in ListInput) (_ ListOutput, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.List")
 	defer trace.End(span, &err)
-//line controller.ego:32
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	var list []Article
-	for _, art := range a.bySlug {
-		if in.Tag == "" || slices.Contains(art.Tags, in.Tag) {
-			list = append(list, art)
-		}
+//line controller.ego:31
+	list, count, err := a.store.List(ctx, in.Tag, in.Limit)
+	if err != nil {
+		return ListOutput{}, Unavailable{Cause: err}
 	}
-	slices.SortFunc(list, func(x, y Article) int { return y.CreatedAt.Compare(x.CreatedAt) })
-	return ListOutput{Articles: list[:min(in.Limit, len(list))], Count: len(list)}, nil
+//line controller.ego:32
+	return ListOutput{Articles: list, Count: count}, nil
 }
 
 type ShowInput struct {
@@ -58,10 +53,12 @@ type ShowInput struct {
 func (a *Articles) Show(ctx context.Context, in ShowInput) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Show")
 	defer trace.End(span, &err)
-//line controller.ego:49
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	art, ok := a.bySlug[in.Slug]
+//line controller.ego:40
+	art, ok, err := a.store.Get(ctx, in.Slug)
+	if err != nil {
+		return Article{}, Unavailable{Cause: err}
+	}
+//line controller.ego:41
 	if !ok {
 		return Article{}, NotFound{Slug: in.Slug}
 	}
@@ -96,20 +93,21 @@ func (in *CreateInput) Validate() error {
 func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Created[Article], err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Create")
 	defer trace.End(span, &err)
-//line controller.ego:84
-	slug := slugify(in.Body.Title)
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if _, taken := a.bySlug[slug]; taken {
-		return httpkernel.Created[Article]{}, Duplicate{Slug: slug}
+//line controller.ego:73
+	art := Article{Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: a.now()}
+	added, err := a.store.Add(ctx, art)
+	if err != nil {
+		return httpkernel.Created[Article]{}, Unavailable{Cause: err}
 	}
-	art := Article{Slug: slug, Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: a.now()}
-	a.bySlug[slug] = art
+//line controller.ego:75
+	if !added {
+		return httpkernel.Created[Article]{}, Duplicate{Slug: art.Slug}
+	}
 	// A URL that can't be built is a bug in this code, not in the request.
-	loc, err := a.show.URL(routing.Params{"slug": slug})
+	loc, err := a.show.URL(routing.Params{"slug": art.Slug})
 	if err != nil {
 		panic(err)
 	}
-//line controller.ego:94
+//line controller.ego:80
 	return httpkernel.Created[Article]{Location: loc, Body: art}, nil
 }

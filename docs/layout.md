@@ -26,7 +26,7 @@ conduit/
 ├── articles/               # one package per feature
 │   ├── articles.ego        # types, the ArticleError set and its problems
 │   ├── controller.ego      # Routes, and the endpoints
-│   ├── store.ego           # storage, on db
+│   ├── store.ego           # storage, through db.SQL.Conn and its transactions
 │   ├── commands.ego        # the feature's console commands, if any
 │   └── controller_test.ego # API tests through webtest, on the kernel booted with APP_ENV=test
 ├── users/

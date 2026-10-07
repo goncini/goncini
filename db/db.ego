@@ -1,0 +1,153 @@
+// Package db connects goncini apps to their databases, whatever library
+// they query them with: it opens the connection pool and closes it with
+// the app, runs functions in transactions, and gives the migration
+// commands. It builds on database/sql, which sqlc, sqlx, bun, ent, GORM and
+// most other libraries take a *sql.DB from; adapters in modules of their
+// own add pgx's native pool (pgxdb), GORM's transactions (gormdb), and
+// migrations with goose (goosedb) or golang-migrate (migratedb).
+//
+// An app provides Open and NewSQL, with its Config section:
+//
+//	var Services = layer.Set(db.Open, db.NewSQL, articles.NewStore, …)
+//
+// and repositories query through SQL.Conn, so that a service can run
+// several of their calls in one transaction:
+//
+//	err := s.sql.InTx(ctx, func(ctx context.Context) error {
+//		check s.articles.Insert(ctx, art)
+//		return s.tags.Add(ctx, art.Slug, art.Tags)
+//	})
+package db
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+)
+
+// Config configures a database/sql connection pool. Each field's zero value
+// is database/sql's default.
+type Config struct {
+	// Driver is the name of the database/sql driver, such as "pgx" or
+	// "sqlite"; the app imports the driver's package.
+	Driver string
+	// URL is the data source name, which usually holds a password: read it
+	// with env.Secret("DATABASE_URL").
+	URL string
+	// MaxOpenConns limits the open connections; zero means no limit.
+	MaxOpenConns int
+	// MaxIdleConns is how many idle connections are kept; zero means 2.
+	MaxIdleConns int
+	// ConnMaxLifetime and ConnMaxIdleTime bound how long a connection is
+	// reused, and kept idle; zero means forever.
+	ConnMaxLifetime time.Duration
+	ConnMaxIdleTime time.Duration
+}
+
+// Open opens the pool that c configures and checks that the database
+// answers, so that an app whose database is down fails at boot. The
+// returned function closes the pool: as a provider, Open's pool is closed
+// with the app's scope.
+func Open(ctx context.Context, c Config) (*sql.DB, func() error, error) {
+	if c.Driver == "" {
+		return nil, nil, errors.New("db: Config.Driver is empty: name the database/sql driver, such as pgx or sqlite")
+	}
+	pool, err := sql.Open(c.Driver, c.URL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("db: %w", err)
+	}
+	pool.SetMaxOpenConns(c.MaxOpenConns)
+	if c.MaxIdleConns != 0 {
+		pool.SetMaxIdleConns(c.MaxIdleConns)
+	}
+	pool.SetConnMaxLifetime(c.ConnMaxLifetime)
+	pool.SetConnMaxIdleTime(c.ConnMaxIdleTime)
+	if err := pool.PingContext(ctx); err != nil {
+		pool.Close()
+		return nil, nil, fmt.Errorf("db: the %s database doesn't answer: %w", c.Driver, err)
+	}
+	return pool, pool.Close, nil
+}
+
+// Transactor runs functions in transactions. Each adapter has one for its
+// library; the function finds the transaction in its ctx.
+type Transactor interface {
+	// InTx runs fn in a transaction, committed if fn returns nil and rolled
+	// back if it fails or panics. Inside another InTx of the same
+	// database, fn runs in that transaction instead, which commits or rolls
+	// back with it.
+	InTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// Querier is what database/sql's pools and transactions have in common: the
+// DBTX interface that sqlc's generated code takes.
+type Querier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// SQL is the Transactor of a database/sql pool, and gives repositories the
+// connection to query with.
+type SQL struct {
+	// DB is the pool.
+	DB *sql.DB
+	// TxOptions sets the isolation level and read-only mode of the
+	// transactions; nil means the driver's defaults.
+	TxOptions *sql.TxOptions
+}
+
+// NewSQL returns the Transactor of pool.
+func NewSQL(pool *sql.DB) *SQL {
+	return &SQL{DB: pool}
+}
+
+// txKey is the context key of a pool's transaction.
+type txKey struct{ db *sql.DB }
+
+// Conn returns what to query with: the transaction that ctx is in, or else
+// the pool.
+//
+//	queries := sqlcgen.New(s.sql.Conn(ctx))
+func (s *SQL) Conn(ctx context.Context) Querier {
+	if tx, ok := ctx.Value(txKey{s.DB}).(*sql.Tx); ok {
+		return tx
+	}
+	return s.DB
+}
+
+// Tx returns the transaction that ctx is in, if any.
+func (s *SQL) Tx(ctx context.Context) (*sql.Tx, bool) {
+	tx, ok := ctx.Value(txKey{s.DB}).(*sql.Tx)
+	return tx, ok
+}
+
+// InTx runs fn in a transaction of the pool, as Transactor says.
+func (s *SQL) InTx(ctx context.Context, fn func(ctx context.Context) error) (err error) {
+	if _, ok := s.Tx(ctx); ok {
+		return fn(ctx)
+	}
+	tx, err := s.DB.BeginTx(ctx, s.TxOptions)
+	if err != nil {
+		return fmt.Errorf("db: beginning a transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if rerr := tx.Rollback(); rerr != nil && !errors.Is(rerr, sql.ErrTxDone) && err != nil {
+				err = errors.Join(err, fmt.Errorf("db: rolling back: %w", rerr))
+			}
+		}
+	}()
+	if err := fn(context.WithValue(ctx, txKey{s.DB}, tx)); err != nil {
+		return err
+	}
+	committed = true
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("db: committing: %w", err)
+	}
+	return nil
+}

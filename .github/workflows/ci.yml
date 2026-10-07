@@ -8,21 +8,36 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # goncini, then the modules of its adapters and of the example.
+        module: [., db/goosedb, db/migratedb, db/pgxdb, db/gormdb, examples/articles]
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 2s --health-timeout 5s --health-retries 20
+    env:
+      PGXDB_TEST_URL: postgres://postgres:postgres@localhost:5432/postgres
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
+          cache-dependency-path: ${{ matrix.module }}/go.sum
       - run: go vet ./...
       - run: go test -race ./...
       - name: generated code is up to date
         run: go tool ego generate -check ./...
-      - name: .ego files are formatted
-        run: test -z "$(go tool ego fmt -l .)"
-      - run: test -z "$(gofmt -l .)"
-      - name: example
-        working-directory: examples/articles
+      - name: .ego and Go files are formatted
+        if: matrix.module == '.'
         run: |
-          go vet ./...
-          go test -race ./...
-          go tool ego generate -check ./...
+          test -z "$(go tool ego fmt -l .)"
+          test -z "$(gofmt -l .)"

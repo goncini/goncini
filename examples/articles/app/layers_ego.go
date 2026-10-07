@@ -11,6 +11,7 @@ import (
 
 	"github.com/effect-go/effect-go/scope"
 	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/examples/articles/articles"
 	"github.com/goncini/goncini/examples/articles/config"
 )
@@ -18,8 +19,16 @@ import (
 // Build builds the app for cfg.
 func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
 	http := httpConfig(cfg)
+	config2 := dbConfig(cfg)
+	db2, cleanup, err := db.Open(ctx, config2)
+	if err != nil {
+		return nil, fmt.Errorf("db.Open: %w", err)
+	}
+	s.Defer(func(context.Context) error { return cleanup() })
+	sql2 := db.NewSQL(db2)
+	store := articles.NewStore(sql2)
 	v := clock()
-	articles2 := articles.NewArticles(v)
+	articles2 := articles.NewArticles(store, v)
 	v2 := routes(articles2)
 	router := goncini.NewRouter(v2)
 	v3 := goncini.NewMiddleware()
@@ -34,7 +43,11 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	}
 	server := goncini.NewServer(http, kernel, logger)
 	slugCommand := articles.NewSlugCommand(articles2)
-	v5 := commands(slugCommand)
+	migrator2, err := migrator(db2)
+	if err != nil {
+		return nil, fmt.Errorf("migrator: %w", err)
+	}
+	v5 := commands(slugCommand, migrator2)
 	app := goncini.NewApp(kernel, server, router, v5, logger)
 	return app, nil
 }
@@ -42,7 +55,15 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 // BuildTest builds the app with a test's clock.
 func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func() time.Time) (*goncini.App, error) {
 	http := httpConfig(cfg)
-	articles2 := articles.NewArticles(now)
+	config2 := dbConfig(cfg)
+	db2, cleanup, err := db.Open(ctx, config2)
+	if err != nil {
+		return nil, fmt.Errorf("db.Open: %w", err)
+	}
+	s.Defer(func(context.Context) error { return cleanup() })
+	sql2 := db.NewSQL(db2)
+	store := articles.NewStore(sql2)
+	articles2 := articles.NewArticles(store, now)
 	v := routes(articles2)
 	router := goncini.NewRouter(v)
 	v2 := goncini.NewMiddleware()
@@ -57,7 +78,11 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	}
 	server := goncini.NewServer(http, kernel, logger)
 	slugCommand := articles.NewSlugCommand(articles2)
-	v4 := commands(slugCommand)
+	migrator2, err := migrator(db2)
+	if err != nil {
+		return nil, fmt.Errorf("migrator: %w", err)
+	}
+	v4 := commands(slugCommand, migrator2)
 	app := goncini.NewApp(kernel, server, router, v4, logger)
 	return app, nil
 }

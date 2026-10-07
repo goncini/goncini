@@ -1,0 +1,128 @@
+// Package migratedb runs golang-migrate migrations from goncini's
+// db:migrate commands.
+//
+//	func migrator(pool *sql.DB) (db.Migrator, error) {
+//		src := check iofs.New(migrations.FS, ".") ""
+//		drv := check postgres.WithInstance(pool, &postgres.Config{}) ""
+//		return migratedb.New(src, "postgres", drv)
+//	}
+package migratedb
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"text/tabwriter"
+
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
+	"github.com/golang-migrate/migrate/v4/source"
+
+	"github.com/goncini/goncini/db"
+)
+
+// Migrator runs the golang-migrate migrations of a source on a database.
+// golang-migrate takes no context, so a migration runs to its end even
+// when the command is interrupted.
+type Migrator struct {
+	m   *migrate.Migrate
+	src source.Driver
+}
+
+var _ db.Migrator = (*Migrator)(nil)
+
+// New returns the migrator of the migrations in src, such as iofs.New of an
+// embedded directory, on a database driver of golang-migrate named name,
+// such as postgres.WithInstance of the app's pool.
+func New(src source.Driver, name string, driver database.Driver) (*Migrator, error) {
+	m, err := migrate.NewWithInstance("goncini", src, name, driver)
+	if err != nil {
+		return nil, fmt.Errorf("migratedb: %w", err)
+	}
+	return &Migrator{m: m, src: src}, nil
+}
+
+// Up applies the migrations not applied yet.
+func (m *Migrator) Up(ctx context.Context, out io.Writer) error {
+	before := check m.version() ""
+	err := m.m.Up()
+	if errors.Is(err, migrate.ErrNoChange) {
+		fmt.Fprintln(out, "nothing to apply: the database is up to date")
+		return nil
+	}
+	after, verr := m.version()
+	for _, v := range m.versions() {
+		if v > before && v <= after {
+			fmt.Fprintf(out, "applied %s\n", m.name(v))
+		}
+	}
+	if err := errors.Join(err, verr); err != nil {
+		return fmt.Errorf("migratedb: %w", err)
+	}
+	return nil
+}
+
+// Down reverts the last migration applied.
+func (m *Migrator) Down(ctx context.Context, out io.Writer) error {
+	before := check m.version() ""
+	if before == 0 {
+		fmt.Fprintln(out, "nothing to revert: no migration is applied")
+		return nil
+	}
+	if err := m.m.Steps(-1); err != nil {
+		return fmt.Errorf("migratedb: %w", err)
+	}
+	fmt.Fprintf(out, "reverted %s\n", m.name(before))
+	return nil
+}
+
+// Status lists the migrations, applied or not.
+func (m *Migrator) Status(ctx context.Context, out io.Writer) error {
+	current := check m.version() ""
+	_, dirty, _ := m.m.Version()
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "MIGRATION\tAPPLIED")
+	for _, v := range m.versions() {
+		state := if v > current { "pending" } else if v == current && dirty { "failed: fix the database, then force the version with migrate" } else { "yes" }
+		fmt.Fprintf(tw, "%s\t%s\n", m.name(v), state)
+	}
+	return tw.Flush()
+}
+
+// version returns the version of the database: 0 when none is applied.
+func (m *Migrator) version() (uint, error) {
+	v, _, err := m.m.Version()
+	if errors.Is(err, migrate.ErrNilVersion) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("migratedb: %w", err)
+	}
+	return v, nil
+}
+
+// versions returns the versions of the source's migrations, in order.
+func (m *Migrator) versions() []uint {
+	var vs []uint
+	v, err := m.src.First()
+	for err == nil {
+		vs = append(vs, v)
+		v, err = m.src.Next(v)
+	}
+	return vs
+}
+
+// name is the name of a migration: its version and identifier.
+func (m *Migrator) name(v uint) string {
+	r, id, err := m.src.ReadUp(v)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return f"{v}"
+		}
+		return f"{v} ({err})"
+	}
+	r.Close()
+	return f"{v}_{id}"
+}

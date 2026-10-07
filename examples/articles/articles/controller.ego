@@ -1,7 +1,6 @@
 package articles
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/goncini/goncini/httpkernel"
@@ -28,17 +27,9 @@ type ListOutput struct {
 }
 
 // List returns the newest articles first, with the tag if one is given.
-effect (a *Articles) List(in ListInput) (ListOutput, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	var list []Article
-	for _, art := range a.bySlug {
-		if in.Tag == "" || slices.Contains(art.Tags, in.Tag) {
-			list = append(list, art)
-		}
-	}
-	slices.SortFunc(list, (x, y) => y.CreatedAt.Compare(x.CreatedAt))
-	return ListOutput{Articles: list[:min(in.Limit, len(list))], Count: len(list)}, nil
+effect (a *Articles) List(in ListInput) (ListOutput, ArticleError) {
+	list, count := check a.store.List(in.Tag, in.Limit) as Unavailable
+	return ListOutput{Articles: list, Count: count}, nil
 }
 
 type ShowInput struct {
@@ -46,9 +37,7 @@ type ShowInput struct {
 }
 
 effect (a *Articles) Show(in ShowInput) (Article, ArticleError) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	art, ok := a.bySlug[in.Slug]
+	art, ok := check a.store.Get(in.Slug) as Unavailable
 	if !ok {
 		fail NotFound{Slug: in.Slug}
 	}
@@ -81,15 +70,12 @@ func (in *CreateInput) Validate() error {
 }
 
 effect (a *Articles) Create(in CreateInput) (httpkernel.Created[Article], ArticleError) {
-	slug := slugify(in.Body.Title)
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if _, taken := a.bySlug[slug]; taken {
-		fail Duplicate{Slug: slug}
+	art := Article{Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: a.now()}
+	added := check a.store.Add(art) as Unavailable
+	if !added {
+		fail Duplicate{Slug: art.Slug}
 	}
-	art := Article{Slug: slug, Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: a.now()}
-	a.bySlug[slug] = art
 	// A URL that can't be built is a bug in this code, not in the request.
-	loc := must a.show.URL(routing.Params{"slug": slug})
+	loc := must a.show.URL(routing.Params{"slug": art.Slug})
 	return httpkernel.Created[Article]{Location: loc, Body: art}, nil
 }

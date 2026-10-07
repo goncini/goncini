@@ -3,6 +3,7 @@ package app
 import (
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
 
@@ -12,14 +13,18 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses, and
 // each part of goncini its config section. goncini generate will write it.
-var Autoconfigured = layer.Set(routes, problems, commands, httpConfig, logConfig)
+var Autoconfigured = layer.Set(routes, problems, commands, httpConfig, logConfig, dbConfig)
 
 func routes(a *articles.Articles) []routing.Routes { return []routing.Routes{a} }
 
 func problems() []httpkernel.ErrorMapper { return []httpkernel.ErrorMapper{articles.Problems} }
 
-func commands(slug *articles.SlugCommand) []console.Command { return []console.Command{slug} }
+func commands(slug *articles.SlugCommand, m db.Migrator) []console.Command {
+	return append(db.Commands(m), slug)
+}
 
 func httpConfig(c config.Config) goncini.HTTP { return c.HTTP }
 
 func logConfig(c config.Config) goncini.Log { return c.Log }
+
+func dbConfig(c config.Config) db.Config { return c.DB }

@@ -7,4 +7,5 @@ import "log/slog"
 //line test.ego:5
 func test(c *Config) {
 	c.Log.Level = slog.LevelWarn // no access log
+	c.DB.MaxOpenConns = 1        // each connection to :memory: is a database of its own
 }

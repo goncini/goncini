@@ -2,18 +2,24 @@
 // environment, then what each environment changes.
 package config
 
-import "github.com/goncini/goncini"
+import (
+	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/db"
+)
 
 // Config is the articles API's config, one section per part of the app.
 type Config struct {
 	HTTP goncini.HTTP
 	Log  goncini.Log
+	DB   db.Config
 }
 
-// Load returns the config of env. goncini's defaults suit every
-// environment, so only the environments change it.
+// Load returns the config of env: what every environment shares, then what
+// env changes.
 func Load(env *goncini.Env) Config {
-	var c Config
+	c := Config{
+		DB: db.Config{Driver: "sqlite", URL: env.Secret("DATABASE_URL")},
+	}
 	switch env.Name {
 	case "dev":
 		dev(&c)

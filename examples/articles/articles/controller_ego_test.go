@@ -22,15 +22,18 @@ import (
 )
 
 // boot builds the app as main does, in the test environment, with a clock
-// that ticks a minute at each call.
+// that ticks a minute at each call, and migrates its database: a new one
+// in memory.
 //
-//line controller_test.ego:22
+//line controller_test.ego:23
 func boot(t *testing.T) *goncini.App {
 	now := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
 	clock := func() time.Time { now = now.Add(time.Minute); return now }
-	return webtest.Boot(t, config.Load, func(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
+	a := webtest.Boot(t, config.Load, func(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
 		return app.BuildTest(ctx, s, cfg, clock)
 	})
+	webtest.Run(t, a, "db:migrate")
+	return a
 }
 
 // serve sends a request to the app, with a JSON body if there is one.
@@ -99,7 +102,7 @@ func TestRoutes(t *testing.T) {
 	if err := routing.WriteTable(&b, boot(t).Router.List()); err != nil {
 		panic(err)
 	}
-//line controller_test.ego:92
+//line controller_test.ego:95
 	want := "" +
 		"NAME            METHOD  PATH              HANDLER\n" +
 		"article_list    GET     /articles         articles.(*Articles).List\n" +

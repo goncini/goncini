@@ -1,0 +1,60 @@
+package goosedb_test
+
+import (
+	"bytes"
+	"context"
+	"regexp"
+	"testing"
+	"testing/fstest"
+
+	"github.com/pressly/goose/v3"
+	_ "modernc.org/sqlite"
+
+	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/db/goosedb"
+)
+
+var migrations = fstest.MapFS{
+	"00001_create_articles.sql": {Data: []byte("-- +goose Up\nCREATE TABLE articles (slug TEXT PRIMARY KEY);\n-- +goose Down\nDROP TABLE articles;\n")},
+	"00002_add_title.sql":       {Data: []byte("-- +goose Up\nALTER TABLE articles ADD COLUMN title TEXT;\n-- +goose Down\nALTER TABLE articles DROP COLUMN title;\n")},
+}
+
+func TestMigrator(t *testing.T) {
+	ctx := context.Background()
+	pool, closePool := must db.Open(ctx, db.Config{Driver: "sqlite", URL: ":memory:", MaxOpenConns: 1})
+	defer closePool()
+	m := must goosedb.New(pool, goose.DialectSQLite3, migrations)
+
+	durations := regexp.MustCompile(`in [0-9.]+[µnm]?s`)
+	dates := regexp.MustCompile(`[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8}`)
+	run := func(f func(context.Context, *bytes.Buffer) error) string {
+		var out bytes.Buffer
+		must f(ctx, &out)
+		return dates.ReplaceAllString(durations.ReplaceAllString(out.String(), "in T"), "DATE")
+	}
+	up := (ctx context.Context, out *bytes.Buffer) => m.Up(ctx, out)
+	down := (ctx context.Context, out *bytes.Buffer) => m.Down(ctx, out)
+	status := (ctx context.Context, out *bytes.Buffer) => m.Status(ctx, out)
+
+	for i, tt := range []struct {
+		f    func(context.Context, *bytes.Buffer) error
+		want string
+	}{
+		{status, "MIGRATION                  APPLIED\n00001_create_articles.sql  pending\n00002_add_title.sql        pending\n"},
+		{up, "applied 00001_create_articles.sql in T\napplied 00002_add_title.sql in T\n"},
+		{up, "nothing to apply: the database is up to date\n"},
+		{status, "MIGRATION                  APPLIED\n00001_create_articles.sql  DATE\n00002_add_title.sql        DATE\n"},
+		{down, "reverted 00002_add_title.sql in T\n"},
+		{down, "reverted 00001_create_articles.sql in T\n"},
+		{down, "nothing to revert: no migration is applied\n"},
+	} {
+		if got := run(tt.f); got != tt.want {
+			t.Errorf("step %d:\n%s\nwant:\n%s", i, got, tt.want)
+		}
+	}
+	var n int
+	must pool.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE name = 'articles'").Scan(&n)
+	if n != 0 {
+		t.Error("the articles table is still there")
+	}
+}

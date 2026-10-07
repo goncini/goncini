@@ -107,6 +107,28 @@ Running an app, in the [layout](docs/layout.md) of goncini apps:
 - `examples/articles` is now its own module, laid out as `goncini new` will
   write apps.
 
+### db
+
+Databases, whatever library an app queries them with:
+
+- **`db`** (standard library only): `Open` opens a `database/sql` pool from
+  the `db.Config` section, checks it at boot, and closes it with the app.
+  `SQL.InTx` runs a function in a transaction that `SQL.Conn` finds in its
+  `ctx`, joining an outer one; `Conn` is sqlc's `DBTX`. `Migrator` is behind
+  `db:migrate`, `db:migrate:status` and `db:rollback`.
+- **Adapters,** each a module of its own so that goncini doesn't require
+  their libraries:
+  - `pgxdb`: pgx's native pool, with transactions in `ctx` and sqlc's pgx
+    `DBTX`, tested against PostgreSQL;
+  - `gormdb`: GORM on goncini's pool, with transactions in `ctx`, and
+    `AutoMigrate` behind `db:migrate`;
+  - `goosedb` and `migratedb`: goose and golang-migrate migrations, from
+    embedded files.
+- **`webtest.Run`** runs a command in a test, such as `db:migrate` on a new
+  in-memory database.
+- `examples/articles` keeps its articles in SQLite, with goose migrations;
+  its tests each get a database of their own.
+
 ### Found while building
 
 - **Reviews:** independent reviews found 15 defects in `httpkernel` and 9 in

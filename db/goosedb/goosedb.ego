@@ -1,0 +1,88 @@
+// Package goosedb runs goose migrations from goncini's db:migrate commands.
+//
+//	//go:embed *.sql
+//	var FS embed.FS // migrations/00001_create_articles.sql, …
+//
+//	func migrator(pool *sql.DB) (db.Migrator, error) {
+//		return goosedb.New(pool, goose.DialectPostgres, migrations.FS)
+//	}
+package goosedb
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"path"
+	"text/tabwriter"
+	"time"
+
+	"github.com/pressly/goose/v3"
+
+	"github.com/goncini/goncini/db"
+)
+
+// Migrator runs the goose migrations of a filesystem: SQL files whose names
+// start with their version, such as 00001_create_articles.sql, with
+// -- +goose Up and -- +goose Down sections.
+type Migrator struct {
+	provider *goose.Provider
+}
+
+var _ db.Migrator = (*Migrator)(nil)
+
+// New returns the migrator of the migrations in fsys, for pool, whose SQL
+// dialect goose needs: goose.DialectPostgres, goose.DialectSQLite3, …
+func New(pool *sql.DB, dialect goose.Dialect, fsys fs.FS) (*Migrator, error) {
+	p, err := goose.NewProvider(dialect, pool, fsys)
+	if err != nil {
+		return nil, fmt.Errorf("goosedb: %w", err)
+	}
+	return &Migrator{provider: p}, nil
+}
+
+// Up applies the migrations not applied yet.
+func (m *Migrator) Up(ctx context.Context, out io.Writer) error {
+	results, err := m.provider.Up(ctx)
+	for _, r := range results {
+		fmt.Fprintf(out, "applied %s in %v\n", path.Base(r.Source.Path), r.Duration.Round(time.Millisecond))
+	}
+	if err != nil {
+		return fmt.Errorf("goosedb: %w", err)
+	}
+	if len(results) == 0 {
+		fmt.Fprintln(out, "nothing to apply: the database is up to date")
+	}
+	return nil
+}
+
+// Down reverts the last migration applied.
+func (m *Migrator) Down(ctx context.Context, out io.Writer) error {
+	r, err := m.provider.Down(ctx)
+	if errors.Is(err, goose.ErrNoNextVersion) {
+		fmt.Fprintln(out, "nothing to revert: no migration is applied")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("goosedb: %w", err)
+	}
+	fmt.Fprintf(out, "reverted %s in %v\n", path.Base(r.Source.Path), r.Duration.Round(time.Millisecond))
+	return nil
+}
+
+// Status lists the migrations, with when they were applied.
+func (m *Migrator) Status(ctx context.Context, out io.Writer) error {
+	statuses, err := m.provider.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("goosedb: %w", err)
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "MIGRATION\tAPPLIED")
+	for _, s := range statuses {
+		applied := if s.State == goose.StateApplied { s.AppliedAt.UTC().Format(time.DateTime) } else { "pending" }
+		fmt.Fprintf(tw, "%s\t%s\n", path.Base(s.Source.Path), applied)
+	}
+	return tw.Flush()
+}

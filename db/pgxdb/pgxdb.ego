@@ -1,0 +1,129 @@
+// Package pgxdb connects goncini apps to PostgreSQL through pgx's native
+// pool, which is faster than database/sql and speaks PostgreSQL's types:
+// it opens the pool with goncini's db.Config, closes it with the app, and
+// runs functions in transactions that repositories find in their ctx.
+//
+// sqlc's pgx code takes a Conn:
+//
+//	queries := sqlcgen.New(s.pgx.Conn(ctx))
+//
+// Tools that need a *sql.DB, such as goose, get one on the pool with pgx's
+// stdlib.OpenDBFromPool.
+package pgxdb
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/goncini/goncini/db"
+)
+
+// Open opens the pool of c.URL and checks that the database answers, so
+// that an app whose database is down fails at boot. c.MaxOpenConns,
+// c.ConnMaxLifetime and c.ConnMaxIdleTime set the pool's MaxConns,
+// MaxConnLifetime and MaxConnIdleTime when they aren't zero; c.Driver is
+// unused. The returned function closes the pool: as a provider, Open's
+// pool is closed with the app's scope.
+func Open(ctx context.Context, c db.Config) (*pgxpool.Pool, func(), error) {
+	cfg, err := pgxpool.ParseConfig(c.URL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pgxdb: %w", err)
+	}
+	if c.MaxOpenConns > 0 {
+		cfg.MaxConns = int32(c.MaxOpenConns)
+	}
+	if c.ConnMaxLifetime > 0 {
+		cfg.MaxConnLifetime = c.ConnMaxLifetime
+	}
+	if c.ConnMaxIdleTime > 0 {
+		cfg.MaxConnIdleTime = c.ConnMaxIdleTime
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pgxdb: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, nil, fmt.Errorf("pgxdb: the database doesn't answer: %w", err)
+	}
+	return pool, pool.Close, nil
+}
+
+// Conn is what pgx's pools and transactions have in common: the DBTX
+// interface that sqlc's pgx code takes.
+type Conn interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	CopyFrom(ctx context.Context, table pgx.Identifier, columns []string, rows pgx.CopyFromSource) (int64, error)
+	SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults
+}
+
+// Transactor is the db.Transactor of a pgx pool, and gives repositories the
+// connection to query with.
+type Transactor struct {
+	// Pool is the pool.
+	Pool *pgxpool.Pool
+	// TxOptions sets the isolation level and access mode of the
+	// transactions.
+	TxOptions pgx.TxOptions
+}
+
+var _ db.Transactor = (*Transactor)(nil)
+
+// New returns the Transactor of pool.
+func New(pool *pgxpool.Pool) *Transactor {
+	return &Transactor{Pool: pool}
+}
+
+// txKey is the context key of a pool's transaction.
+type txKey struct{ pool *pgxpool.Pool }
+
+// Conn returns what to query with: the transaction that ctx is in, or else
+// the pool.
+func (t *Transactor) Conn(ctx context.Context) Conn {
+	if tx, ok := t.Tx(ctx); ok {
+		return tx
+	}
+	return t.Pool
+}
+
+// Tx returns the transaction that ctx is in, if any.
+func (t *Transactor) Tx(ctx context.Context) (pgx.Tx, bool) {
+	tx, ok := ctx.Value(txKey{t.Pool}).(pgx.Tx)
+	return tx, ok
+}
+
+// InTx runs fn in a transaction of the pool, as db.Transactor says.
+func (t *Transactor) InTx(ctx context.Context, fn func(ctx context.Context) error) (err error) {
+	if _, ok := t.Tx(ctx); ok {
+		return fn(ctx)
+	}
+	tx, err := t.Pool.BeginTx(ctx, t.TxOptions)
+	if err != nil {
+		return fmt.Errorf("pgxdb: beginning a transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			// Roll back even when ctx is done, which would stop Rollback.
+			rerr := tx.Rollback(context.WithoutCancel(ctx))
+			if rerr != nil && !errors.Is(rerr, pgx.ErrTxClosed) && err != nil {
+				err = errors.Join(err, fmt.Errorf("pgxdb: rolling back: %w", rerr))
+			}
+		}
+	}()
+	if err := fn(context.WithValue(ctx, txKey{t.Pool}, tx)); err != nil {
+		return err
+	}
+	committed = true
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("pgxdb: committing: %w", err)
+	}
+	return nil
+}

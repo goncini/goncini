@@ -1,0 +1,29 @@
+package db
+
+import (
+	"context"
+	"io"
+
+	"github.com/goncini/goncini/console"
+)
+
+// Migrator migrates a database's schema. goosedb and migratedb adapt goose
+// and golang-migrate; any tool can be adapted.
+type Migrator interface {
+	// Up applies the migrations that aren't yet, and says which on out.
+	Up(ctx context.Context, out io.Writer) error
+	// Down reverts the last migration applied, and says which on out.
+	Down(ctx context.Context, out io.Writer) error
+	// Status writes the migrations to out, applied or not.
+	Status(ctx context.Context, out io.Writer) error
+}
+
+// Commands returns the console commands of m: db:migrate, db:migrate:status
+// and db:rollback.
+func Commands(m Migrator) []console.Command {
+	return []console.Command{
+		console.New("db:migrate", "Applies the migrations not applied yet", (ctx context.Context, out io.Writer, args []string) => m.Up(ctx, out)),
+		console.New("db:migrate:status", "Lists the migrations, applied or not", (ctx context.Context, out io.Writer, args []string) => m.Status(ctx, out)),
+		console.New("db:rollback", "Reverts the last migration applied", (ctx context.Context, out io.Writer, args []string) => m.Down(ctx, out)),
+	}
+}

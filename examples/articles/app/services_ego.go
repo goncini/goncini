@@ -5,17 +5,30 @@
 package app
 
 import (
+	"database/sql"
 	"time"
 
+	"github.com/pressly/goose/v3"
+	_ "modernc.org/sqlite" // the "sqlite" database/sql driver
+
+	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/db/goosedb"
+
 	"github.com/goncini/goncini/examples/articles/articles"
+	"github.com/goncini/goncini/examples/articles/migrations"
 
 	"github.com/effect-go/effect-go/layer"
 )
 
 // Services is the app's own services.
 //
-//line services.ego:12
-var Services = layer.Set(articles.NewArticles, articles.NewSlugCommand, clock)
+//line services.ego:20
+var Services = layer.Set(db.Open, db.NewSQL, migrator, articles.NewStore, articles.NewArticles, articles.NewSlugCommand, clock)
+
+// migrator runs the migrations with goose.
+func migrator(pool *sql.DB) (db.Migrator, error) {
+	return goosedb.New(pool, goose.DialectSQLite3, migrations.FS)
+}
 
 // clock is the app's clock: the system's.
 func clock() func() time.Time { return time.Now }

@@ -19,11 +19,13 @@ its ecosystem, and [effect-go](https://github.com/effect-go/effect-go).
 - **Structured concurrency.** Each request runs in its own effect-go scope,
   and the server shuts down gracefully.
 
-Status: early. [`httpkernel`](httpkernel), [`routing`](routing), config as
-code, the [`console`](console) and `goncini.Main` are implemented
-([CHANGELOG.md](CHANGELOG.md)); `db`, `security` and the rest of `webtest` come next. The
-plan is in [docs/assessment.md](docs/assessment.md), and the layout of an app
-in [docs/layout.md](docs/layout.md).
+Status: early. [`httpkernel`](httpkernel), [`routing`](routing),
+[`validator`](validator), config as code, the [`console`](console),
+`goncini.Main` and [`db`](db), with adapters for pgx, GORM, goose and
+golang-migrate, are implemented ([CHANGELOG.md](CHANGELOG.md)); `security`
+and the rest of `webtest` come next. The plan is in
+[docs/assessment.md](docs/assessment.md), and the layout of an app in
+[docs/layout.md](docs/layout.md).
 
 ## A taste
 

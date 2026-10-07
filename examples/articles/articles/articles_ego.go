@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -19,7 +18,7 @@ import (
 
 // Article is what the API serves.
 //
-//line articles.ego:17
+//line articles.ego:16
 type Article struct {
 	Slug      string    `json:"slug"`
 	Title     string    `json:"title"`
@@ -64,10 +63,28 @@ func (e Duplicate) As(target any) bool {
 	return false
 }
 
+// Unavailable means that the store failed.
+type Unavailable struct{ Cause error }
+
+func (Unavailable) isArticleError() {}
+
+func (e Unavailable) Error() string { return "the articles are unavailable" }
+
+func (e Unavailable) Unwrap() error { return e.Cause }
+
+// As lets pointers to Unavailable match as Unavailable.
+func (e Unavailable) As(target any) bool {
+	if t, ok := target.(*Unavailable); ok {
+		*t = e
+		return true
+	}
+	return false
+}
+
 // Problem says what each ArticleError looks like over HTTP. A new case
 // doesn't compile until it has an arm here.
 //
-//line articles.ego:33
+//line articles.ego:34
 func Problem(err error) httpkernel.Problem {
 	var v httpkernel.Problem
 	if err == nil {
@@ -76,6 +93,8 @@ func Problem(err error) httpkernel.Problem {
 		v = httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
 	} else if e, ok := errors.AsType[Duplicate](err); ok {
 		v = httpkernel.Problem{Status: http.StatusConflict, Detail: e.Error()}
+	} else if _, ok := errors.AsType[Unavailable](err); ok {
+		v = httpkernel.Problem{Status: http.StatusServiceUnavailable}
 	} else {
 		panic(err)
 	}
@@ -84,19 +103,18 @@ func Problem(err error) httpkernel.Problem {
 
 // Problems is what a kernel registers to answer ArticleErrors.
 //
-//line articles.ego:42
+//line articles.ego:44
 var Problems = httpkernel.Map[ArticleError](Problem)
 
-// Articles keeps the articles in memory, and serves them.
+// Articles serves the articles of its store.
 type Articles struct {
-	mu     sync.Mutex
-	bySlug map[string]Article
-	now    func() time.Time
-	show   *routing.Route // the route of an article, for its URL: set by Routes
+	store *Store
+	now   func() time.Time
+	show  *routing.Route // the route of an article, for its URL: set by Routes
 }
 
-func NewArticles(now func() time.Time) *Articles {
-	return &Articles{bySlug: map[string]Article{}, now: now}
+func NewArticles(store *Store, now func() time.Time) *Articles {
+	return &Articles{store: store, now: now}
 }
 
 // slugify turns a title into a slug: "Hello, World!" becomes "hello-world".

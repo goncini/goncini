@@ -4,16 +4,19 @@ package webtest_test
 
 import (
 	"context"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/webtest"
 
 	"github.com/effect-go/effect-go/scope"
 )
 
-//line webtest_test.ego:12
+//line webtest_test.ego:15
 func TestBoot(t *testing.T) {
 	var name string
 	closed := false
@@ -21,11 +24,19 @@ func TestBoot(t *testing.T) {
 	build := func(ctx context.Context, s *scope.Scope, cfg string) (*goncini.App, error) {
 		name = cfg
 		s.Defer(func(context.Context) error { closed = true; return nil })
-		return &goncini.App{Router: routing.New()}, nil
+		hello := console.New("hello", "Greets", func(ctx context.Context, out io.Writer, args []string) error {
+			_, err := io.WriteString(out, "hello "+strings.Join(args, " "))
+			return err
+		})
+		return &goncini.App{Router: routing.New(), Commands: []console.Command{hello}}, nil
 	}
 	t.Run("boot", func(t *testing.T) {
-		if app := webtest.Boot(t, load, build); app.Router == nil || name != "test" {
+		app := webtest.Boot(t, load, build)
+		if app.Router == nil || name != "test" {
 			t.Errorf("booted %+v in %q", app, name)
+		}
+		if out := webtest.Run(t, app, "hello", "you"); out != "hello you" {
+			t.Errorf("Run: %q", out)
 		}
 		if closed {
 			t.Error("closed before the test ended")

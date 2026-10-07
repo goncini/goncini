@@ -1,0 +1,74 @@
+package pgxdb_test
+
+import (
+	"context"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/db/pgxdb"
+)
+
+// open opens a pool on the database of PGXDB_TEST_URL, with an empty
+// articles table, or skips the test without one.
+func open(t *testing.T) *pgxdb.Transactor {
+	url := os.Getenv("PGXDB_TEST_URL")
+	if url == "" {
+		t.Skip("PGXDB_TEST_URL names no PostgreSQL database to test with")
+	}
+	ctx := context.Background()
+	pool, closePool := must pgxdb.Open(ctx, db.Config{URL: url, MaxOpenConns: 4})
+	t.Cleanup(closePool)
+	must pool.Exec(ctx, "DROP TABLE IF EXISTS pgxdb_articles; CREATE TABLE pgxdb_articles (slug text PRIMARY KEY)")
+	t.Cleanup(() => { pool.Exec(context.Background(), "DROP TABLE pgxdb_articles") })
+	return pgxdb.New(pool)
+}
+
+func TestInTx(t *testing.T) {
+	tr := open(t)
+	ctx := context.Background()
+	insert := func(ctx context.Context, slug string) error {
+		_, err := tr.Conn(ctx).Exec(ctx, "INSERT INTO pgxdb_articles VALUES ($1)", slug)
+		return err
+	}
+	slugs := func() string {
+		rows := must tr.Pool.Query(ctx, "SELECT slug FROM pgxdb_articles ORDER BY slug")
+		var all []string
+		for rows.Next() {
+			var s string
+			must rows.Scan(&s)
+			all = append(all, s)
+		}
+		return strings.Join(all, " ")
+	}
+	failed := errors.New("failed")
+
+	must tr.InTx(ctx, ctx => insert(ctx, "a"))
+	if err := tr.InTx(ctx, func(ctx context.Context) error { insert(ctx, "b"); return failed }); !errors.Is(err, failed) {
+		t.Errorf("failure: %v", err)
+	}
+	must tr.InTx(ctx, ctx => tr.InTx(ctx, ctx => insert(ctx, "c"))) // nested: one transaction
+	err := tr.InTx(ctx, func(ctx context.Context) error {
+		insert(ctx, "d")
+		return tr.InTx(ctx, _ => failed) // the inner failure rolls back the outer insert
+	})
+	if !errors.Is(err, failed) {
+		t.Errorf("nested failure: %v", err)
+	}
+	func() {
+		defer func() { recover() }()
+		tr.InTx(ctx, func(ctx context.Context) error { insert(ctx, "e"); panic("boom") })
+	}()
+	if got := slugs(); got != "a c" {
+		t.Errorf("slugs: %q, want %q", got, "a c")
+	}
+}
+
+func TestOpenFailsAtBoot(t *testing.T) {
+	_, _, err := pgxdb.Open(context.Background(), db.Config{URL: "postgres://nobody@127.0.0.1:1/none?connect_timeout=1"})
+	if err == nil || !strings.HasPrefix(err.Error(), "pgxdb: the database doesn't answer") {
+		t.Errorf("Open = %v", err)
+	}
+}
