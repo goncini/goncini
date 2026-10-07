@@ -152,9 +152,9 @@ func (f *Firewall[U]) authenticate(ctx context.Context, scheme, header string) (
 		return *new(U), err
 	}
 //line firewall.ego:115
-	user, ok, err := f.Load(ctx, subject)
-	if err != nil {
-		return *new(U), err
+	user, ok, err2 := f.Load(ctx, subject)
+	if err2 != nil {
+		return *new(U), err2
 	}
 //line firewall.ego:116
 	if !ok {

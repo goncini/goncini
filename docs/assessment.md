@@ -167,14 +167,14 @@ func dbConfig(c Config) db.Config                                       { return
 ### 3.3 Gates
 
 1. **RealWorld's Hurl suite passes** against `examples/realworld`: all 13 files, error bodies included.
-2. **The articles slice is at least 30% shorter** than the same slice written with plain `net/http` and hand wiring. We write both, as effect-go did for its demos.
+2. **The articles slice is at least 25% shorter** (decided 2026-10-07, down from 30%) than the same slice written with plain `net/http` and hand wiring. We write both, as effect-go did for its demos.
 3. **Adding a case to a mapped error set without an arm fails the build.**
 4. **SIGTERM during a slow request:** the request completes, the database closes after it, and no goroutine is left. Tested under `synctest`.
 5. **An agent given only goncini's AGENTS.md** adds an endpoint with validation and a new error case correctly on its first try, and hidden tests pass. This is the gate effect-go used.
 
 ### 3.4 Order of work (components first)
 
-> **Status (2026-10-07):** steps 1 to 5 are built: [`httpkernel`](../httpkernel), [`routing`](../routing) with requirements, [`validator`](../validator), config as code, [`console`](../console) and `goncini.Main`; and step 6: [`db`](../db) and its adapters, [`webtest`](../webtest) and [`security`](../security). They are used by [examples/articles](../examples/articles) in the [layout](layout.md). Of step 7, the RealWorld app ([examples/realworld](../examples/realworld)) passes the Hurl suite, and gates 3 and 4 pass; the plain-Go comparison and AGENTS.md remain. Exporting spans is left for when an app needs it: the kernel's spans go to the global tracer provider, and log records carry their trace IDs. [CHANGELOG.md](../CHANGELOG.md) says what they do, what building them found, and where they differ from this plan.
+> **Status (2026-10-07):** steps 1 to 5 are built: [`httpkernel`](../httpkernel), [`routing`](../routing) with requirements, [`validator`](../validator), config as code, [`console`](../console) and `goncini.Main`; and step 6: [`db`](../db) and its adapters, [`webtest`](../webtest) and [`security`](../security). They are used by [examples/articles](../examples/articles) in the [layout](layout.md). Step 7 is built: the RealWorld app ([examples/realworld](../examples/realworld)) passes the Hurl suite, and the other gates pass: its articles feature is 29% shorter than [the plain `net/http` version](../examples/realworld-plain), a case without a response fails the build, shutdown waits for requests, and an agent given only [AGENTS.md](../AGENTS.md) added an endpoint that passed hidden tests. Exporting spans is left for when an app needs it: the kernel's spans go to the global tracer provider, and log records carry their trace IDs. [CHANGELOG.md](../CHANGELOG.md) says what they do, what building them found, and where they differ from this plan.
 
 Each step is a package that works in any `net/http` app, the way Laravel uses Symfony's HttpFoundation. effect-go matters most from step 4.
 

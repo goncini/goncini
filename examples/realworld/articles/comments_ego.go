@@ -4,6 +4,7 @@ package articles
 
 import (
 	"context"
+	"errors"
 	"github.com/goncini/goncini/httpkernel"
 
 	"github.com/goncini/goncini/examples/realworld/users"
@@ -34,6 +35,9 @@ func (a *Articles) Comments(ctx context.Context, in SlugInput) (_ CommentsBody, 
 //line comments.ego:21
 	comments, err := a.store.Comments(ctx, users.Viewer(ctx), art.ID)
 	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return CommentsBody{}, err
+		}
 		return CommentsBody{}, Unavailable{Cause: err}
 	}
 //line comments.ego:22
@@ -61,11 +65,17 @@ func (a *Articles) AddComment(ctx context.Context, in AddCommentInput) (_ httpke
 	viewer := users.Viewer(ctx)
 	id, err := a.store.AddComment(ctx, art.ID, viewer, in.Body.Comment.Body)
 	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return httpkernel.Created[CommentBody]{}, err
+		}
 		return httpkernel.Created[CommentBody]{}, Unavailable{Cause: err}
 	}
 //line comments.ego:38
 	c, _, err := a.store.Comment(ctx, viewer, art.ID, id)
 	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return httpkernel.Created[CommentBody]{}, err
+		}
 		return httpkernel.Created[CommentBody]{}, Unavailable{Cause: err}
 	}
 //line comments.ego:39
@@ -88,6 +98,9 @@ func (a *Articles) DeleteComment(ctx context.Context, in DeleteCommentInput) (_ 
 //line comments.ego:49
 	c, ok, err := a.store.Comment(ctx, 0, art.ID, in.ID)
 	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return httpkernel.NoContent{}, err
+		}
 		return httpkernel.NoContent{}, Unavailable{Cause: err}
 	}
 //line comments.ego:50
@@ -98,6 +111,9 @@ func (a *Articles) DeleteComment(ctx context.Context, in DeleteCommentInput) (_ 
 		return httpkernel.NoContent{}, NotCommentAuthor{ID: in.ID}
 	}
 	if err := a.store.DeleteComment(ctx, in.ID); err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return httpkernel.NoContent{}, err
+		}
 		return httpkernel.NoContent{}, Unavailable{Cause: err}
 	}
 //line comments.ego:57

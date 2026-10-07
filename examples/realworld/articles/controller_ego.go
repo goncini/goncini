@@ -4,6 +4,7 @@ package articles
 
 import (
 	"context"
+	"errors"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
@@ -72,6 +73,9 @@ func (a *Articles) List(ctx context.Context, in ListInput) (_ ArticlesBody, err 
 	f := Filter{Tag: in.Tag, Author: in.Author, Favorited: in.Favorited}
 	list, count, err := a.store.List(ctx, users.Viewer(ctx), f, in.Limit, in.Offset)
 	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return ArticlesBody{}, err
+		}
 		return ArticlesBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:64
@@ -85,6 +89,9 @@ func (a *Articles) Feed(ctx context.Context, in Page) (_ ArticlesBody, err error
 	viewer := users.Viewer(ctx)
 	list, count, err := a.store.List(ctx, viewer, Filter{FeedOf: viewer}, in.Limit, in.Offset)
 	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return ArticlesBody{}, err
+		}
 		return ArticlesBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:70
@@ -114,6 +121,9 @@ func (a *Articles) find(ctx context.Context, slug string) (_ Article, err error)
 //line controller.ego:84
 	art, ok, err := a.store.BySlug(ctx, users.Viewer(ctx), slug)
 	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return Article{}, err
+		}
 		return Article{}, Unavailable{Cause: err}
 	}
 //line controller.ego:85
@@ -162,6 +172,9 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 	}
 	slug, err := a.store.Save(ctx, art, v)
 	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return httpkernel.Created[ArticleBody]{}, err
+		}
 		return httpkernel.Created[ArticleBody]{}, Unavailable{Cause: err}
 	}
 //line controller.ego:115
@@ -231,6 +244,9 @@ func (a *Articles) Update(ctx context.Context, in UpdateInput) (_ ArticleBody, e
 	}
 //line controller.ego:165
 	if _, err := a.store.Save(ctx, art, tags); err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return ArticleBody{}, err
+		}
 		return ArticleBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:166
@@ -252,6 +268,9 @@ func (a *Articles) Delete(ctx context.Context, in SlugInput) (_ httpkernel.NoCon
 	}
 //line controller.ego:172
 	if err := a.store.Delete(ctx, art.ID); err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return httpkernel.NoContent{}, err
+		}
 		return httpkernel.NoContent{}, Unavailable{Cause: err}
 	}
 //line controller.ego:173
@@ -284,6 +303,9 @@ func (a *Articles) favorite(ctx context.Context, slug string, favorite bool) (_ 
 	}
 //line controller.ego:187
 	if err := a.store.Favorite(ctx, users.Viewer(ctx), art.ID, favorite); err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return ArticleBody{}, err
+		}
 		return ArticleBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:188
@@ -306,6 +328,9 @@ func (a *Articles) Tags(ctx context.Context, in struct{}) (_ TagsBody, err error
 //line controller.ego:198
 	tags, err := a.store.Tags(ctx)
 	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return TagsBody{}, err
+		}
 		return TagsBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:199

@@ -67,17 +67,17 @@ func TestInTx(t *testing.T) {
 	}
 	failed := errors.New("failed")
 
-	if err := tr.InTx(ctx, func(ctx context.Context) error { return insert(ctx, "a") }); err != nil {
-		panic(err)
+	if err2 := tr.InTx(ctx, func(ctx context.Context) error { return insert(ctx, "a") }); err2 != nil {
+		panic(err2)
 	}
 //line pgxdb_test.ego:50
 	if err := tr.InTx(ctx, func(ctx context.Context) error { insert(ctx, "b"); return failed }); !errors.Is(err, failed) {
 		t.Errorf("failure: %v", err)
 	}
-	if err := tr.InTx(ctx, func(ctx context.Context) error {
+	if err3 := tr.InTx(ctx, func(ctx context.Context) error {
 		return tr.InTx(ctx, func(ctx context.Context) error { return insert(ctx, "c") })
-	}); err != nil {
-		panic(err)
+	}); err3 != nil {
+		panic(err3)
 	} // nested: one transaction
 //line pgxdb_test.ego:54
 	err := tr.InTx(ctx, func(ctx context.Context) error {

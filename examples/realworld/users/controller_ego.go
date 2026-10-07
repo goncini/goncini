@@ -4,6 +4,7 @@ package users
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"github.com/goncini/goncini/httpkernel"
@@ -79,12 +80,18 @@ func (u *Users) Register(ctx context.Context, in RegisterInput) (_ httpkernel.Cr
 	b := in.Body.User
 	hash, err := u.hasher.Hash(b.Password)
 	if err != nil {
+		if _, ok := errors.AsType[UserError](err); ok {
+			return httpkernel.Created[UserBody]{}, err
+		}
 		return httpkernel.Created[UserBody]{}, Unavailable{Cause: err}
 	}
 //line controller.ego:66
 	user := &User{Username: b.Username, Email: b.Email, PasswordHash: hash}
 	taken, err := u.store.Save(ctx, user)
 	if err != nil {
+		if _, ok := errors.AsType[UserError](err); ok {
+			return httpkernel.Created[UserBody]{}, err
+		}
 		return httpkernel.Created[UserBody]{}, Unavailable{Cause: err}
 	}
 //line controller.ego:68
@@ -93,6 +100,9 @@ func (u *Users) Register(ctx context.Context, in RegisterInput) (_ httpkernel.Cr
 	}
 	body, err := u.body(user)
 	if err != nil {
+		if _, ok := errors.AsType[UserError](err); ok {
+			return httpkernel.Created[UserBody]{}, err
+		}
 		return httpkernel.Created[UserBody]{}, Unavailable{Cause: err}
 	}
 //line controller.ego:72
@@ -114,6 +124,9 @@ func (u *Users) Login(ctx context.Context, in LoginInput) (_ UserBody, err error
 //line controller.ego:85
 	user, ok, err := u.store.ByEmail(ctx, in.Body.User.Email)
 	if err != nil {
+		if _, ok := errors.AsType[UserError](err); ok {
+			return UserBody{}, err
+		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:86
@@ -122,6 +135,9 @@ func (u *Users) Login(ctx context.Context, in LoginInput) (_ UserBody, err error
 	}
 	valid, err := u.hasher.Verify(user.PasswordHash, in.Body.User.Password)
 	if err != nil {
+		if _, ok := errors.AsType[UserError](err); ok {
+			return UserBody{}, err
+		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:90
@@ -130,6 +146,9 @@ func (u *Users) Login(ctx context.Context, in LoginInput) (_ UserBody, err error
 	}
 	body, err := u.body(user)
 	if err != nil {
+		if _, ok := errors.AsType[UserError](err); ok {
+			return UserBody{}, err
+		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:94
@@ -142,6 +161,9 @@ func (u *Users) Current(ctx context.Context, in struct{}) (_ UserBody, err error
 //line controller.ego:98
 	body, err := u.body(Current(ctx))
 	if err != nil {
+		if _, ok := errors.AsType[UserError](err); ok {
+			return UserBody{}, err
+		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:99
@@ -194,6 +216,9 @@ func (u *Users) Update(ctx context.Context, in UpdateInput) (_ UserBody, err err
 	if b.Password.Set {
 		v, err := u.hasher.Hash(b.Password.Value)
 		if err != nil {
+			if _, ok := errors.AsType[UserError](err); ok {
+				return UserBody{}, err
+			}
 			return UserBody{}, Unavailable{Cause: err}
 		}
 		user.PasswordHash = v
@@ -207,6 +232,9 @@ func (u *Users) Update(ctx context.Context, in UpdateInput) (_ UserBody, err err
 	}
 	taken, err := u.store.Save(ctx, &user)
 	if err != nil {
+		if _, ok := errors.AsType[UserError](err); ok {
+			return UserBody{}, err
+		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:152
@@ -215,6 +243,9 @@ func (u *Users) Update(ctx context.Context, in UpdateInput) (_ UserBody, err err
 	}
 	body, err := u.body(&user)
 	if err != nil {
+		if _, ok := errors.AsType[UserError](err); ok {
+			return UserBody{}, err
+		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:156
@@ -275,6 +306,9 @@ func (u *Users) profile(ctx context.Context, username string, follow *bool) (_ P
 //line controller.ego:190
 	user, ok, err := u.store.ByUsername(ctx, username)
 	if err != nil {
+		if _, ok := errors.AsType[UserError](err); ok {
+			return ProfileBody{}, err
+		}
 		return ProfileBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:191
@@ -284,12 +318,18 @@ func (u *Users) profile(ctx context.Context, username string, follow *bool) (_ P
 	viewer := Viewer(ctx)
 	if follow != nil {
 		if err := u.store.Follow(ctx, viewer, user.ID, *follow); err != nil {
+			if _, ok := errors.AsType[UserError](err); ok {
+				return ProfileBody{}, err
+			}
 			return ProfileBody{}, Unavailable{Cause: err}
 		}
 	}
 //line controller.ego:198
 	following, err := u.store.Follows(ctx, viewer, user.ID)
 	if err != nil {
+		if _, ok := errors.AsType[UserError](err); ok {
+			return ProfileBody{}, err
+		}
 		return ProfileBody{}, Unavailable{Cause: err}
 	}
 //line controller.ego:199

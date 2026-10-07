@@ -5,7 +5,7 @@ go 1.27
 tool github.com/effect-go/effect-go/cmd/ego
 
 require (
-	github.com/effect-go/effect-go v0.2.2
+	github.com/effect-go/effect-go v0.3.0
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	go.opentelemetry.io/otel v1.46.0

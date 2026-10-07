@@ -136,8 +136,8 @@ func parseAccept(values []string) []mediaRange {
 			if !ok2 {
 				v2 = "1"
 			}
-			q, err := strconv.ParseFloat(v2, 64)
-			if err != nil {
+			q, err2 := strconv.ParseFloat(v2, 64)
+			if err2 != nil {
 				q = -1
 			}
 //line negotiate.ego:127

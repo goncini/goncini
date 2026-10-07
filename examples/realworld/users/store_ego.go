@@ -76,7 +76,7 @@ func (s *Store) Save(ctx context.Context, u *User) (taken string, err error) {
 	ctx, span := trace.Start(ctx, "users.Store.Save")
 	defer trace.End(span, &err)
 //line store.ego:54
-	if err := s.sql.InTx(ctx, func(ctx context.Context) error {
+	if err2 := s.sql.InTx(ctx, func(ctx context.Context) error {
 		for _, field := range []string{"username", "email"} {
 			var value string
 			if field == "username" {
@@ -96,28 +96,28 @@ func (s *Store) Save(ctx context.Context, u *User) (taken string, err error) {
 			}
 		}
 		if u.ID != 0 {
-			if _, err := s.sql.Conn(ctx).ExecContext(ctx, "UPDATE users SET username = ?, email = ?, password_hash = ?, bio = ?, image = ? WHERE id = ?",
-				u.Username, u.Email, u.PasswordHash, u.Bio, u.Image, u.ID); err != nil {
-				return fmt.Errorf("Conn.ExecContext: %w", err)
+			if _, err2 := s.sql.Conn(ctx).ExecContext(ctx, "UPDATE users SET username = ?, email = ?, password_hash = ?, bio = ?, image = ? WHERE id = ?",
+				u.Username, u.Email, u.PasswordHash, u.Bio, u.Image, u.ID); err2 != nil {
+				return fmt.Errorf("Conn.ExecContext: %w", err2)
 			}
 //line store.ego:67
 			return nil
 		}
-		res, err := s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO users (username, email, password_hash, bio, image) VALUES (?, ?, ?, ?, ?)",
+		res, err3 := s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO users (username, email, password_hash, bio, image) VALUES (?, ?, ?, ?, ?)",
 			u.Username, u.Email, u.PasswordHash, u.Bio, u.Image)
-		if err != nil {
-			return fmt.Errorf("Conn.ExecContext: %w", err)
+		if err3 != nil {
+			return fmt.Errorf("Conn.ExecContext: %w", err3)
 		}
 //line store.ego:71
-		v, err := res.LastInsertId()
-		if err != nil {
-			return fmt.Errorf("res.LastInsertId: %w", err)
+		v, err4 := res.LastInsertId()
+		if err4 != nil {
+			return fmt.Errorf("res.LastInsertId: %w", err4)
 		}
 		u.ID = v
 //line store.ego:72
 		return nil
-	}); err != nil {
-		return "", err
+	}); err2 != nil {
+		return "", err2
 	}
 //line store.ego:74
 	return taken, nil

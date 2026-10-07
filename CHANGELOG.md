@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-goncini requires Go 1.27, and effect-go v0.2.2, which pins the library and
+goncini requires Go 1.27, and effect-go v0.3.0, which pins the library and
 the `ego` tool together.
 
 ### httpkernel
@@ -186,8 +186,15 @@ M1's gates:
   its database is released after it, and no goroutine is left
   (`TestShutdownDuringASlowRequest`). It runs on a real network, which
   `testing/synctest` can't fake, rather than under synctest as planned.
-- Not yet: the app written with plain `net/http`, to compare, and the
-  agent test of AGENTS.md.
+- The same API written with plain `net/http` and hand wiring,
+  [examples/realworld-plain](examples/realworld-plain), passes the same
+  suite. Without blank lines and comments, goncini's articles feature is
+  29% shorter (453 lines against 640), the whole app 31% (915 against
+  1,333), the users feature 3%: half of each feature is SQL in both.
+- An agent given only [AGENTS.md](AGENTS.md) added an endpoint with
+  validation and a new error case, and hidden tests passed at the first
+  attempt; its feedback went into AGENTS.md. The task and the tests are
+  in `examples/realworld/testdata/agent`, to run again.
 
 ### Found while building
 
@@ -215,3 +222,7 @@ M1's gates:
       import each other's `.ego` code;
     - an external test package that imports a package depending on the
       package under test failed to type-check, though `go test` accepts it.
+  - v0.3.0:
+    - `check f() as Case` wrapped errors that already were cases of the set,
+      so a case returned through a callback, such as a transaction's, lost
+      its response.

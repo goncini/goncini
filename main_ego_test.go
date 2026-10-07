@@ -73,9 +73,9 @@ func TestLoad(t *testing.T) {
 		t.Errorf("Load(prod) = %v", err)
 	}
 	t.Setenv("DB_PASSWORD", "s3cret")
-	_, cfg, err := goncini.Load(t.TempDir(), "prod", load)
-	if err != nil {
-		panic(err)
+	_, cfg, err2 := goncini.Load(t.TempDir(), "prod", load)
+	if err2 != nil {
+		panic(err2)
 	}
 //line main_test.ego:61
 	if cfg.DSN != "postgres://app:s3cret@db.internal" {

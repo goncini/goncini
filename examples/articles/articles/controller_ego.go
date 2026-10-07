@@ -4,6 +4,7 @@ package articles
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -41,6 +42,9 @@ func (a *Articles) List(ctx context.Context, in ListInput) (_ ListOutput, err er
 //line controller.ego:32
 	list, count, err := a.store.List(ctx, in.Tag, in.Limit)
 	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return ListOutput{}, err
+		}
 		return ListOutput{}, Unavailable{Cause: err}
 	}
 //line controller.ego:33
@@ -57,6 +61,9 @@ func (a *Articles) Show(ctx context.Context, in ShowInput) (_ Article, err error
 //line controller.ego:41
 	art, ok, err := a.store.Get(ctx, in.Slug)
 	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return Article{}, err
+		}
 		return Article{}, Unavailable{Cause: err}
 	}
 //line controller.ego:42
@@ -100,6 +107,9 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 	art := Article{Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: created}
 	added, err := a.store.Add(ctx, art)
 	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return httpkernel.Created[Article]{}, err
+		}
 		return httpkernel.Created[Article]{}, Unavailable{Cause: err}
 	}
 //line controller.ego:78

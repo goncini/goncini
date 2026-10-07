@@ -102,9 +102,9 @@ func TestShutdownDuringASlowRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the request failed: %v", err)
 	}
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		panic(err)
+	body, err3 := io.ReadAll(res.Body)
+	if err3 != nil {
+		panic(err3)
 	}
 //line shutdown_test.ego:92
 	res.Body.Close()

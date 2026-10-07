@@ -1,0 +1,87 @@
+package articles_test
+
+import (
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/goncini/goncini/webtest"
+
+	"github.com/goncini/goncini/examples/realworld/app"
+	"github.com/goncini/goncini/examples/realworld/config"
+)
+
+type userBody struct {
+	User struct {
+		Token string `json:"token"`
+	} `json:"user"`
+}
+
+type commentBody struct {
+	Comment struct {
+		ID        int64     `json:"id"`
+		Body      string    `json:"body"`
+		CreatedAt time.Time `json:"createdAt"`
+		UpdatedAt time.Time `json:"updatedAt"`
+		Author    struct {
+			Username string `json:"username"`
+		} `json:"author"`
+	} `json:"comment"`
+}
+
+type commentsBody struct {
+	Comments []struct {
+		Body string `json:"body"`
+	} `json:"comments"`
+}
+
+// register returns a client for a new user.
+func register(t *testing.T, c *webtest.Client, name string) *webtest.Client {
+	var u userBody
+	c.Post("/api/users", `{"user":{"username":"`+name+`","email":"`+name+`@test.com","password":"password123"}}`).Status(201).JSON(&u)
+	return c.WithHeader("Authorization", "Token "+u.User.Token)
+}
+
+func TestEditComment(t *testing.T) {
+	synctest.Test(t, (t *testing.T) => {
+		a := webtest.Boot(t, config.Load, app.Build)
+		webtest.Run(t, a, "db:migrate")
+		c := webtest.NewClient(t, a.Kernel)
+		ann, bob := register(t, c, "ann"), register(t, c, "bob")
+
+		var art struct {
+			Article struct {
+				Slug string `json:"slug"`
+			} `json:"article"`
+		}
+		ann.Post("/api/articles", `{"article":{"title":"Edits","description":"d","body":"b"}}`).Status(201).JSON(&art)
+		slug := art.Article.Slug
+		var created commentBody
+		ann.Post("/api/articles/"+slug+"/comments", `{"comment":{"body":"first"}}`).Status(201).JSON(&created)
+		path := "/api/articles/" + slug + "/comments/" + f"{created.Comment.ID}"
+
+		time.Sleep(time.Minute)
+		var edited commentBody
+		ann.Put(path, `{"comment":{"body":"second"}}`).Status(200).JSON(&edited)
+		e := edited.Comment
+		if e.ID != created.Comment.ID || e.Body != "second" || e.Author.Username != "ann" ||
+			!e.CreatedAt.Equal(created.Comment.CreatedAt) || !e.UpdatedAt.After(e.CreatedAt) {
+			t.Errorf("edited %+v, created %+v", e, created.Comment)
+		}
+		var list commentsBody
+		c.Get("/api/articles/" + slug + "/comments").Status(200).JSON(&list)
+		if len(list.Comments) != 1 || list.Comments[0].Body != "second" {
+			t.Errorf("comments %+v", list)
+		}
+
+		c.Put(path, `{"comment":{"body":"x"}}`).Status(401).Contains(`"token":["is missing"]`)
+		ann.Put(path, `{"comment":{"body":""}}`).Status(422).Contains(`"body":["can't be blank"]`)
+		ann.Put("/api/articles/nope/comments/1", `{"comment":{"body":"x"}}`).Status(404).Contains(`"article":["not found"]`)
+		ann.Put("/api/articles/"+slug+"/comments/999", `{"comment":{"body":"x"}}`).Status(404).Contains(`"comment":["not found"]`)
+		bob.Put(path, `{"comment":{"body":"x"}}`).Status(403).Contains(`"comment":["forbidden"]`)
+
+		time.Sleep(15 * time.Minute) // 16 minutes after the comment was posted
+		ann.Put(path, `{"comment":{"body":"third"}}`).Status(409).Contains(`"comment":["can no longer be edited"]`)
+		c.Get("/api/articles/" + slug + "/comments").Status(200).Contains(`"body":"second"`)
+	})
+}

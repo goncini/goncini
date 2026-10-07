@@ -122,20 +122,20 @@ func shape(route *Route) string {
 	var b strings.Builder
 	b.WriteString(route.method + " ")
 	for _, s := range route.segments {
-		var v string
+		var v2 string
 		switch s.kind {
 		case fixed:
-			v = s.text
+			v2 = s.text
 		case wildcard:
-			v = "{}"
+			v2 = "{}"
 		case remainder:
-			v = "{...}"
+			v2 = "{...}"
 		case trailing:
-			v = "{$}"
+			v2 = "{$}"
 		default:
 			panic(s.kind)
 		}
-		b.WriteString("/" + v)
+		b.WriteString("/" + v2)
 	}
 //line requirements.ego:121
 	return b.String()

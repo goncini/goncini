@@ -176,8 +176,8 @@ func writeConfig(out io.Writer, env *Env, cfg any) error {
 			}
 			tok = jsontext.String(s)
 		}
-		if err := enc.WriteToken(tok); err != nil {
-			return err
+		if err2 := enc.WriteToken(tok); err2 != nil {
+			return err2
 		}
 	}
 }

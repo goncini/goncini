@@ -73,24 +73,24 @@ func TestAutoMigrate(t *testing.T) {
 func TestInTx(t *testing.T) {
 	tr := open(t)
 	ctx := context.Background()
-	if err := tr.DB.AutoMigrate(&Article{}); err != nil {
-		panic(err)
+	if err2 := tr.DB.AutoMigrate(&Article{}); err2 != nil {
+		panic(err2)
 	}
 //line gormdb_test.ego:54
 	insert := func(ctx context.Context, slug string) error { return tr.Conn(ctx).Create(&Article{Slug: slug}).Error }
 	failed := errors.New("failed")
 
-	if err := tr.InTx(ctx, func(ctx context.Context) error { return insert(ctx, "a") }); err != nil {
-		panic(err)
+	if err3 := tr.InTx(ctx, func(ctx context.Context) error { return insert(ctx, "a") }); err3 != nil {
+		panic(err3)
 	}
 //line gormdb_test.ego:58
 	if err := tr.InTx(ctx, func(ctx context.Context) error { insert(ctx, "b"); return failed }); !errors.Is(err, failed) {
 		t.Errorf("failure: %v", err)
 	}
-	if err := tr.InTx(ctx, func(ctx context.Context) error {
+	if err4 := tr.InTx(ctx, func(ctx context.Context) error {
 		return tr.InTx(ctx, func(ctx context.Context) error { return insert(ctx, "c") })
-	}); err != nil {
-		panic(err)
+	}); err4 != nil {
+		panic(err4)
 	}
 //line gormdb_test.ego:62
 	err := tr.InTx(ctx, func(ctx context.Context) error {
