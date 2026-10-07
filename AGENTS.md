@@ -291,7 +291,12 @@ A test runs the worker for the messages it expects:
 plain constructors, matched by their result types.
 
 - `app/services.ego`'s `Services` lists the app's constructors, such as
-  `articles.NewStore`: add a new service there.
+  `articles.NewStore`: add a new service there. goncini's packages export
+  sets of providers to list there too: `messenger.SQL` (a bus whose queues
+  are in the database, from `messenger.Config`), `lock.SQL`, `pgxdb.Layer`.
+- `messenger.Config.Consume` and `scheduler.Config.Run` run a worker and
+  the scheduled tasks inside `serve`, beside the server, instead of as
+  processes of their own.
 - `goncini generate` writes `app/autoconfigured_gen.go`, which hands
   goncini, by their types: the services with routes, the error mappers,
   the services that are `console.Command`s and the migrator's commands,

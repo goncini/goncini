@@ -25,7 +25,8 @@ func TestLockStore(t *testing.T) {
 	ctx := context.Background()
 	pool, closePool := must pgxdb.Open(ctx, db.Config{URL: url, MaxOpenConns: 4})
 	t.Cleanup(closePool)
-	sqlDB := stdlib.OpenDBFromPool(pool)
+	sqlDB, closeDB := must pgxdb.DB(pool)
+	t.Cleanup(() => { closeDB() })
 	store := must lock.NewSQLStore(sqlDB)
 	store.Table = "pgxdb_test_locks"
 	t.Cleanup(() => { sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_locks") })

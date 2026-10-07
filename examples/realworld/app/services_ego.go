@@ -39,7 +39,7 @@ var Services = layer.Set(
 	articles.NewStore, articles.NewArticles, articles.NewAuthorship,
 	moderation.NewFirewall, moderation.NewModeration,
 	notifications.NewNotifications, notifications.NewSubscriber,
-	transports, messenger.NewBus, locks, scheduler.New,
+	messenger.SQL, lock.SQL, scheduler.New,
 	routes, clock,
 )
 
@@ -69,28 +69,6 @@ func firewall(c security.Config, tokens *security.Tokens, store *users.Store) *s
 // logins limits the logins of each email from each address: 5 a minute.
 func logins(now func() time.Time) *ratelimit.Limiter {
 	return &ratelimit.Limiter{Policy: ratelimit.SlidingWindow{Limit: 5, Interval: time.Minute}, Now: now}
-}
-
-// transports keeps the messages in the database: those to handle, and
-// those that failed for good.
-func transports(pool *sql.DB) (messenger.Transports, error) {
-	async, err := messenger.NewSQLTransport(pool, "async")
-	if err != nil {
-		return nil, err
-	}
-//line services.ego:72
-	failed, err := messenger.NewSQLTransport(pool, "failed")
-	if err != nil {
-		return nil, err
-	}
-//line services.ego:73
-	return messenger.Transports{"async": async, "failed": failed}, nil
-}
-
-// locks keeps the locks in the database, so that one instance of the app
-// runs each scheduled task.
-func locks(pool *sql.DB) (lock.Store, error) {
-	return lock.NewSQLStore(pool)
 }
 
 // clock is the app's clock: the system's.

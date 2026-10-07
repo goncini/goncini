@@ -26,7 +26,7 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger)
+var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger, autoDefaultSchedulerConfig)
 
 // autoProblems are the error mappers that the app's packages declare.
 func autoProblems() []httpkernel.ErrorMapper {
@@ -63,6 +63,11 @@ func autoTasks(p1 *notifications.Notifications) []scheduler.Tasks {
 	return []scheduler.Tasks{p1}
 }
 
+// autoBackground is the work that serve runs beside the server.
+func autoBackground(p1 *messenger.Bus, p2 *scheduler.Scheduler) []goncini.Background {
+	return []goncini.Background{p1, p2}
+}
+
 // autoServices describes the app's services, for debug:container.
 func autoServices() []goncini.Service {
 	return []goncini.Service{
@@ -85,7 +90,7 @@ func autoServices() []goncini.Service {
 		{Type: "[]security.Voter", Provider: "autoVoters", Needs: []string{"articles.Authorship"}},
 		{Type: "*security.Access", Provider: "security.NewAccess", Needs: []string{"security.Config", "[]security.Voter"}},
 		{Type: "messenger.Config", Provider: "autoConfigMessenger", Needs: []string{"config.Config"}},
-		{Type: "messenger.Transports", Provider: "transports", Needs: []string{"*sql.DB"}},
+		{Type: "messenger.Transports", Provider: "messenger.NewSQLTransports", Needs: []string{"*sql.DB", "messenger.Config"}},
 		{Type: "*notifications.Notifications", Provider: "notifications.NewNotifications", Needs: []string{"*db.SQL", "func() time.Time"}},
 		{Type: "[]messenger.Handlers", Provider: "autoHandlers", Needs: []string{"*notifications.Notifications"}},
 		{Type: "goncini.Log", Provider: "autoConfigLog", Needs: []string{"config.Config"}},
@@ -106,16 +111,18 @@ func autoServices() []goncini.Service {
 		{Type: "*httpkernel.Kernel", Provider: "goncini.NewKernel", Needs: []string{"goncini.HTTP", "*routing.Router", "[]httpkernel.Middleware", "[]httpkernel.ErrorMapper", "httpkernel.Renderer", "httpkernel.Validator", "*event.Dispatcher", "*slog.Logger"}},
 		{Type: "*httpkernel.Server", Provider: "goncini.NewServer", Needs: []string{"goncini.HTTP", "*httpkernel.Kernel", "*slog.Logger"}},
 		{Type: "db.Migrator", Provider: "migrator", Needs: []string{"*sql.DB"}},
-		{Type: "lock.Store", Provider: "locks", Needs: []string{"*sql.DB"}},
+		{Type: "scheduler.Config", Provider: "autoDefaultSchedulerConfig", Needs: []string{}},
+		{Type: "*lock.SQLStore", Provider: "lock.NewSQLStore", Needs: []string{"*sql.DB"}},
 		{Type: "[]scheduler.Tasks", Provider: "autoTasks", Needs: []string{"*notifications.Notifications"}},
-		{Type: "*scheduler.Scheduler", Provider: "scheduler.New", Needs: []string{"lock.Store", "[]scheduler.Tasks", "*slog.Logger"}},
+		{Type: "*scheduler.Scheduler", Provider: "scheduler.New", Needs: []string{"scheduler.Config", "*lock.SQLStore", "[]scheduler.Tasks", "*slog.Logger"}},
 		{Type: "[]console.Command", Provider: "autoCommands", Needs: []string{"db.Migrator", "*messenger.Bus", "*scheduler.Scheduler"}},
 		{Type: "[]goncini.Check", Provider: "autoChecks", Needs: []string{"*sql.DB"}},
 		{Type: "[]goncini.Service", Provider: "autoServices", Needs: []string{}},
 		{Type: "openapi.Config", Provider: "autoConfigOpenAPI", Needs: []string{"config.Config"}},
 		{Type: "openapi.Annotations", Provider: "autoOpenAPI", Needs: []string{}},
 		{Type: "*openapi.Document", Provider: "goncini.NewOpenAPI", Needs: []string{"openapi.Config", "*routing.Router", "*httpkernel.Kernel", "openapi.Annotations"}},
-		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger", "*openapi.Document", "*event.Dispatcher"}},
+		{Type: "[]goncini.Background", Provider: "autoBackground", Needs: []string{"*messenger.Bus", "*scheduler.Scheduler"}},
+		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger", "*openapi.Document", "*event.Dispatcher", "[]goncini.Background"}},
 	}
 }
 
@@ -185,3 +192,6 @@ func autoConfigModeration(c config.Config) moderation.Config { return c.Moderati
 
 // autoConfigMessenger is the Messenger section of the config.
 func autoConfigMessenger(c config.Config) messenger.Config { return c.Messenger }
+
+// autoDefaultSchedulerConfig is the default of scheduler.Config, which the config doesn't have.
+func autoDefaultSchedulerConfig() scheduler.Config { return scheduler.Config{} }

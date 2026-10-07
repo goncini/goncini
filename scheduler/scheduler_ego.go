@@ -35,8 +35,18 @@ type Tasks interface {
 	Schedule(s *Scheduler)
 }
 
+// Config configures a scheduler.
+type Config struct {
+	// Run runs the tasks inside serve, beside the server, as a fiber of
+	// the app's scope: for apps that don't run scheduler:run as a process
+	// of its own.
+	Run bool
+}
+
 // Scheduler runs tasks on their triggers.
 type Scheduler struct {
+	// Config is the config the scheduler was made with.
+	Config Config
 	// Locks, if any, make each tick run in one instance of the app: the one
 	// that takes its lock. Without, every instance runs every tick.
 	Locks lock.Store
@@ -55,8 +65,8 @@ type task struct {
 }
 
 // New returns a scheduler of the tasks, with the lock store, if any.
-func New(locks lock.Store, tasks []Tasks, logger *slog.Logger) *Scheduler {
-	s := &Scheduler{Locks: locks, Logger: logger, owner: uid.NewV4().String()}
+func New(c Config, locks lock.Store, tasks []Tasks, logger *slog.Logger) *Scheduler {
+	s := &Scheduler{Config: c, Locks: locks, Logger: logger, owner: uid.NewV4().String()}
 	for _, t := range tasks {
 		t.Schedule(s)
 	}
@@ -96,6 +106,15 @@ func (s *Scheduler) Run(ctx context.Context) error {
 	return err
 }
 
+// Background runs the tasks until ctx is done, if Config.Run says so:
+// serve runs it beside the server.
+func (s *Scheduler) Background(ctx context.Context) error {
+	if !s.Config.Run {
+		return nil
+	}
+	return s.Run(ctx)
+}
+
 // loop runs t at each of its ticks until ctx is done.
 func (s *Scheduler) loop(ctx context.Context, t task) {
 	v := s.Logger
@@ -103,7 +122,7 @@ func (s *Scheduler) loop(ctx context.Context, t task) {
 		v = slog.Default()
 	}
 	log := (v).With(slog.String("task", t.name))
-//line scheduler.ego:98
+//line scheduler.ego:117
 	for {
 		tick := t.trigger.Next(time.Now())
 		if tick.IsZero() {
@@ -169,7 +188,7 @@ func (s *Scheduler) writeTable(out io.Writer, now time.Time) error {
 		} else {
 			when = next.Format(time.RFC3339)
 		}
-//line scheduler.ego:158
+//line scheduler.ego:177
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", t.name, t.trigger, when)
 	}
 	return tw.Flush()

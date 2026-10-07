@@ -29,7 +29,7 @@ func TestOneInstancePerTickInSQL(t *testing.T) {
 		pool := must sql.Open("sqlite", "file:"+file+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)")
 		t.Cleanup(() => { pool.Close() })
 		store := must lock.NewSQLStore(pool)
-		s := scheduler.New(store, nil, slog.New(slog.DiscardHandler))
+		s := scheduler.New(scheduler.Config{}, store, nil, slog.New(slog.DiscardHandler))
 		s.Add("report", scheduler.Every(100*time.Millisecond), (ctx context.Context) => {
 			tick := time.Now().Truncate(100 * time.Millisecond).UnixMilli()
 			mu.Lock()

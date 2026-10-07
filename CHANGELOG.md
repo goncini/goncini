@@ -322,6 +322,28 @@ runs in one instance of an app: the one that takes the tick's lock.
 next runs. Lock stores now prune expired locks, which keys used once, as
 ticks are, would leave.
 
+### Bridges as layers
+
+goncini's packages and adapters export what an app lists in its
+`layer.Set`, instead of the providers each app wrote by hand:
+
+- `messenger.SQL` and `messenger.Memory`: a bus and its queues, named by
+  `messenger.Config.Queues`; `lock.SQL` and `lock.Memory`, whose store fills
+  a `lock.Store` parameter, such as the scheduler's; `pgxdb.Layer`: the
+  pool, its transactor, and a `*sql.DB` on it for goose and goncini's SQL
+  stores.
+- `log/zaplog` and `log/zerologlog`, modules of their own: the library's
+  logger from `goncini.Log`, and the handler that replaces goncini's. The
+  articles example logs with zap.
+- A service that is a `goncini.Background` runs beside the server in
+  `serve`, as a fiber of the app's scope, stopping with it:
+  `messenger.Config.Consume` makes the bus run a worker so, and
+  `scheduler.Config.Run` the scheduler.
+- `goncini generate` follows the sets of other packages, such as
+  `messenger.SQL`, to find what the app provides, and gives
+  `messenger.Config` and `scheduler.Config` defaults when the config has no
+  section for them.
+
 ### RealWorld's notifications (M3)
 
 Publishing an article dispatches `articles.Published`; the notifications'

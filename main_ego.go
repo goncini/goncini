@@ -17,13 +17,12 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/effect-go/effect-go/scope"
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
-
-	"github.com/effect-go/effect-go/scope"
 )
 
 // Main runs an app from its command line, as its main function does:
@@ -40,7 +39,7 @@ import (
 // exits with status 2. Anything else that fails is logged, and exits with
 // status 1.
 //
-//line main.ego:38
+//line main.ego:39
 func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C) (*App, error)) {
 	env, cfg, err := Load(ProjectDir(), "", load)
 	if err != nil {
@@ -61,7 +60,7 @@ func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C)
 		}
 		return err
 	})
-//line main.ego:55
+//line main.ego:56
 	if usage != nil {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
@@ -77,12 +76,12 @@ func Load[C any](dir, name string, load func(*Env) C) (*Env, C, error) {
 	if err != nil {
 		return nil, *new(C), err
 	}
-//line main.ego:67
+//line main.ego:68
 	cfg = load(env)
 	if err := env.Err(); err != nil {
 		return nil, *new(C), err
 	}
-//line main.ego:69
+//line main.ego:70
 	return env, cfg, nil
 }
 
@@ -95,7 +94,7 @@ func ProjectDir() string {
 	if err != nil {
 		wd = "."
 	}
-//line main.ego:78
+//line main.ego:79
 	for dir := wd; ; dir = filepath.Dir(dir) {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
@@ -111,7 +110,8 @@ func ProjectDir() string {
 // own commands, there are:
 //   - serve, which runs the app's checks, then serves it over HTTP until
 //     ctx is done, and shuts down gracefully; -addr overrides the address
-//     of the config, for a developer whose port is taken;
+//     of the config, for a developer whose port is taken. The app's
+//     Background work runs beside the server;
 //   - debug:router, which lists the routes;
 //   - openapi:dump, which prints the app's OpenAPI document;
 //   - debug:event-dispatcher, which lists the listeners of each event;
@@ -122,7 +122,7 @@ func ProjectDir() string {
 //   - list and help, which describe the commands.
 func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, args []string) error {
 	commands := []console.Command{
-		serveCommand{app.Server, app.Checks},
+		serveCommand{app.Server, app.Checks, app.Background},
 		console.New("debug:router", "Lists the routes", func(ctx context.Context, out io.Writer, args []string) error {
 			return routing.WriteTable(out, app.Router.List())
 		}),
@@ -142,15 +142,16 @@ func writeDocument(out io.Writer, doc *openapi.Document) error {
 	if err2 != nil {
 		return err2
 	}
-//line main.ego:117
+//line main.ego:119
 	_, err := fmt.Fprintf(out, "%s\n", b)
 	return err
 }
 
 // serveCommand serves the app until ctx is done, once its checks pass.
 type serveCommand struct {
-	server *httpkernel.Server
-	checks []Check
+	server     *httpkernel.Server
+	checks     []Check
+	background []Background
 }
 
 func (serveCommand) Name() string    { return "serve" }
@@ -169,7 +170,14 @@ func (c serveCommand) Run(ctx context.Context, out io.Writer, args []string) err
 			return fmt.Errorf("goncini: the app isn't ready to serve: %w", err)
 		}
 	}
-	return c.server.ListenAndServe(ctx)
+	// The server and the background work run together: when one fails,
+	// the others stop, and all of them stop with ctx.
+	tasks := []scope.Task[struct{}]{func(ctx context.Context) (struct{}, error) { return struct{}{}, c.server.ListenAndServe(ctx) }}
+	for _, b := range c.background {
+		tasks = append(tasks, func(ctx context.Context) (struct{}, error) { return struct{}{}, b.Background(ctx) })
+	}
+	_, err := scope.All(ctx, tasks...)
+	return err
 }
 
 // writeServices writes the services, with their providers and what they
@@ -195,7 +203,7 @@ func writeConfig(out io.Writer, env *Env, cfg any) error {
 	if err != nil {
 		return err
 	}
-//line main.ego:166
+//line main.ego:176
 	dec := jsontext.NewDecoder(bytes.NewReader(b))
 	enc := jsontext.NewEncoder(out, jsontext.WithIndent("  "))
 	for {
@@ -206,7 +214,7 @@ func writeConfig(out io.Writer, env *Env, cfg any) error {
 		if err != nil {
 			return err
 		}
-//line main.ego:174
+//line main.ego:184
 		if tok.Kind() == '"' {
 			s := tok.String()
 			for _, secret := range env.read {

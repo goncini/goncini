@@ -76,6 +76,17 @@ type App struct {
 	OpenAPI *openapi.Document
 	// Events dispatches the app's events, and the kernel's.
 	Events *event.Dispatcher
+	// Background is the work that serve runs beside the server, such as a
+	// bus's worker when messenger.Config.Consume says so.
+	Background []Background
+}
+
+// Background is a service that serve runs beside the server, as a fiber
+// of the app's scope, until it stops: on SIGTERM, Background's ctx is done,
+// and serve waits for it to return. goncini generate collects the services
+// that are Backgrounds; one with nothing to do returns nil at once.
+type Background interface {
+	Background(ctx context.Context) error
 }
 
 // ServeHTTP serves r with the app's kernel.
@@ -215,6 +226,6 @@ func NewOpenAPI(c openapi.Config, router *routing.Router, kernel *httpkernel.Ker
 }
 
 // NewApp returns the app made of these parts.
-func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger, doc *openapi.Document, events *event.Dispatcher) *App {
-	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger, OpenAPI: doc, Events: events}
+func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger, doc *openapi.Document, events *event.Dispatcher, background []Background) *App {
+	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger, OpenAPI: doc, Events: events, Background: background}
 }

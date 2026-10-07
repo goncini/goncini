@@ -83,6 +83,17 @@ type App struct {
 	OpenAPI *openapi.Document
 	// Events dispatches the app's events, and the kernel's.
 	Events *event.Dispatcher
+	// Background is the work that serve runs beside the server, such as a
+	// bus's worker when messenger.Config.Consume says so.
+	Background []Background
+}
+
+// Background is a service that serve runs beside the server, as a fiber
+// of the app's scope, until it stops: on SIGTERM, Background's ctx is done,
+// and serve waits for it to return. goncini generate collects the services
+// that are Backgrounds; one with nothing to do returns nil at once.
+type Background interface {
+	Background(ctx context.Context) error
 }
 
 // ServeHTTP serves r with the app's kernel.
@@ -175,7 +186,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:168
+//line app.ego:179
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -183,7 +194,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:172
+//line app.ego:183
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
@@ -192,7 +203,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:177
+//line app.ego:188
 		mw = append(mw, cors)
 	}
 	return &httpkernel.Kernel{
@@ -234,21 +245,21 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 // serves, with the doc comments and errors of a, and serves it on router
 // as c says.
 //
-//line app.ego:211
+//line app.ego:222
 func NewOpenAPI(c openapi.Config, router *routing.Router, kernel *httpkernel.Kernel, a openapi.Annotations) (*openapi.Document, error) {
 	doc, err := openapi.Generate(router.List(), kernel, c, a)
 	if err != nil {
 		return nil, err
 	}
-//line app.ego:213
+//line app.ego:224
 	if err := openapi.Mount(router, doc, c); err != nil {
 		return nil, err
 	}
-//line app.ego:214
+//line app.ego:225
 	return doc, nil
 }
 
 // NewApp returns the app made of these parts.
-func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger, doc *openapi.Document, events *event.Dispatcher) *App {
-	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger, OpenAPI: doc, Events: events}
+func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger, doc *openapi.Document, events *event.Dispatcher, background []Background) *App {
+	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger, OpenAPI: doc, Events: events, Background: background}
 }

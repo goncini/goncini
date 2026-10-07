@@ -88,7 +88,7 @@ func TestOneInstancePerTick(t *testing.T) {
 			defer stop()
 			var wg sync.WaitGroup
 			for _, instance := range []string{"a", "b"} {
-				s := scheduler.New(locks, nil, slog.New(slog.DiscardHandler))
+				s := scheduler.New(scheduler.Config{}, locks, nil, slog.New(slog.DiscardHandler))
 				s.Add("report", scheduler.Every(time.Minute), func(ctx context.Context) error {
 					mu.Lock()
 					defer mu.Unlock()
@@ -110,7 +110,7 @@ func TestOneInstancePerTick(t *testing.T) {
 
 //line scheduler_test.ego:90
 func TestDebugTable(t *testing.T) {
-	s := scheduler.New(nil, nil, nil)
+	s := scheduler.New(scheduler.Config{}, nil, nil, nil)
 	s.Add("digest", scheduler.MustCron("0 8 * * 1-5"), func(ctx context.Context) error { return nil })
 	var out strings.Builder
 	cmds := scheduler.Commands(s)

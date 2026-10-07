@@ -21,14 +21,17 @@ package messenger
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/effect-go/effect-go/layer"
 	"github.com/effect-go/effect-go/schedule"
 
 	"github.com/goncini/goncini/uid"
@@ -125,6 +128,66 @@ type Config struct {
 	Concurrency int
 	Lease       time.Duration
 	StopTimeout time.Duration
+	// Queues are the transports that SQL and Memory make, besides the
+	// failure transport; none means one, "async".
+	Queues []string
+	// Consume runs a worker of the queues inside serve, beside the server,
+	// as a fiber of the app's scope: for apps that don't run
+	// messenger:consume as a process of its own.
+	Consume bool
+}
+
+// SQL is the providers of a bus whose transports are SQL queues in the
+// app's database, one per Config.Queues and the failure transport's:
+//
+//	var Services = layer.Set(db.Open, messenger.SQL, …)
+var SQL = layer.Set(NewSQLTransports, NewBus)
+
+// Memory is the providers of a bus whose transports are in memory: for
+// tests, and for work that may be lost when the app stops.
+var Memory = layer.Set(NewMemoryTransports, NewBus)
+
+// NewSQLTransports returns the queues of c in pool.
+func NewSQLTransports(pool *sql.DB, c Config) (Transports, error) {
+	ts := Transports{}
+	for _, name := range c.queues() {
+		ts[name] = check NewSQLTransport(pool, name) ""
+	}
+	return ts, nil
+}
+
+// NewMemoryTransports returns the queues of c in memory.
+func NewMemoryTransports(c Config) Transports {
+	ts := Transports{}
+	for _, name := range c.queues() {
+		ts[name] = &MemoryTransport{}
+	}
+	return ts
+}
+
+// queues are the transports' names, the failure transport's included.
+func (c Config) queues() []string {
+	queues := c.Queues
+	if len(queues) == 0 {
+		queues = []string{"async"}
+	}
+	return append(slices.Clone(queues), if c.Failed == "" { "failed" } else { c.Failed })
+}
+
+// Background runs a worker of the queues until ctx is done, if
+// Config.Consume says so: serve runs it beside the server.
+func (b *Bus) Background(ctx context.Context) error {
+	if !b.Config.Consume {
+		return nil
+	}
+	var queues []string
+	for _, name := range b.Config.queues() {
+		if name != b.Failed {
+			queues = append(queues, name)
+		}
+	}
+	w := &Worker{Bus: b, Transports: queues, Concurrency: b.Config.Concurrency, Lease: b.Config.Lease, StopTimeout: b.Config.StopTimeout, Logger: b.Logger}
+	return w.Run(ctx)
 }
 
 // NewBus returns a bus with the transports, whose retries and failure

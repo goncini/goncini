@@ -11,6 +11,7 @@ require (
 	github.com/effect-go/effect-go v0.3.0
 	github.com/goncini/goncini v0.0.0
 	github.com/goncini/goncini/db/goosedb v0.0.0
+	github.com/goncini/goncini/log/zaplog v0.0.0
 	github.com/pressly/goose/v3 v3.28.0
 	modernc.org/sqlite v1.60.1
 )
@@ -36,6 +37,8 @@ require (
 	go.opentelemetry.io/otel/metric v1.46.0 // indirect
 	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
+	go.uber.org/zap v1.28.0 // indirect
+	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
@@ -51,3 +54,5 @@ replace (
 	github.com/goncini/goncini => ../..
 	github.com/goncini/goncini/db/goosedb => ../../db/goosedb
 )
+
+replace github.com/goncini/goncini/log/zaplog => ../../log/zaplog

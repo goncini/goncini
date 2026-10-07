@@ -23,14 +23,17 @@ package messenger
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/effect-go/effect-go/layer"
 	"github.com/effect-go/effect-go/schedule"
 
 	"github.com/goncini/goncini/uid"
@@ -39,7 +42,7 @@ import (
 // Message is a message as transports keep it: its type's name and its
 // body, encoded.
 //
-//line messenger.ego:39
+//line messenger.ego:42
 type Message struct {
 	// ID identifies the message, a UUID made when it was dispatched.
 	ID string
@@ -129,6 +132,80 @@ type Config struct {
 	Concurrency int
 	Lease       time.Duration
 	StopTimeout time.Duration
+	// Queues are the transports that SQL and Memory make, besides the
+	// failure transport; none means one, "async".
+	Queues []string
+	// Consume runs a worker of the queues inside serve, beside the server,
+	// as a fiber of the app's scope: for apps that don't run
+	// messenger:consume as a process of its own.
+	Consume bool
+}
+
+// SQL is the providers of a bus whose transports are SQL queues in the
+// app's database, one per Config.Queues and the failure transport's:
+//
+//	var Services = layer.Set(db.Open, messenger.SQL, …)
+var SQL = layer.Set(NewSQLTransports, NewBus)
+
+// Memory is the providers of a bus whose transports are in memory: for
+// tests, and for work that may be lost when the app stops.
+var Memory = layer.Set(NewMemoryTransports, NewBus)
+
+// NewSQLTransports returns the queues of c in pool.
+func NewSQLTransports(pool *sql.DB, c Config) (Transports, error) {
+	ts := Transports{}
+	for _, name := range c.queues() {
+		v, err := NewSQLTransport(pool, name)
+		if err != nil {
+			return nil, err
+		}
+		ts[name] = v
+	}
+//line messenger.ego:156
+	return ts, nil
+}
+
+// NewMemoryTransports returns the queues of c in memory.
+func NewMemoryTransports(c Config) Transports {
+	ts := Transports{}
+	for _, name := range c.queues() {
+		ts[name] = &MemoryTransport{}
+	}
+	return ts
+}
+
+// queues are the transports' names, the failure transport's included.
+func (c Config) queues() []string {
+	queues := c.Queues
+	if len(queues) == 0 {
+		queues = []string{"async"}
+	}
+	arg := slices.Clone(queues)
+	var v string
+	if c.Failed == "" {
+		v = "failed"
+	} else {
+		v = c.Failed
+	}
+	return append(arg, v)
+}
+
+// Background runs a worker of the queues until ctx is done, if
+// Config.Consume says so: serve runs it beside the server.
+//
+//line messenger.ego:179
+func (b *Bus) Background(ctx context.Context) error {
+	if !b.Config.Consume {
+		return nil
+	}
+	var queues []string
+	for _, name := range b.Config.queues() {
+		if name != b.Failed {
+			queues = append(queues, name)
+		}
+	}
+	w := &Worker{Bus: b, Transports: queues, Concurrency: b.Config.Concurrency, Lease: b.Config.Lease, StopTimeout: b.Config.StopTimeout, Logger: b.Logger}
+	return w.Run(ctx)
 }
 
 // NewBus returns a bus with the transports, whose retries and failure
@@ -140,14 +217,14 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 	} else {
 		retries = max(c.Retries, 0)
 	}
-//line messenger.ego:134
+//line messenger.ego:197
 	var delay time.Duration
 	if c.Delay == 0 {
 		delay = time.Second
 	} else {
 		delay = c.Delay
 	}
-//line messenger.ego:135
+//line messenger.ego:198
 	var v string
 	if c.Failed == "" {
 		v = "failed"
@@ -161,7 +238,7 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 		Config:     c,
 		Logger:     logger,
 	}
-//line messenger.ego:142
+//line messenger.ego:205
 	for _, h := range handlers {
 		h.Handlers(b)
 	}
@@ -222,7 +299,7 @@ func Delay(d time.Duration) Option {
 // Dispatch handles m now, if its type has no route, or sends it to its
 // transport.
 //
-//line messenger.ego:199
+//line messenger.ego:262
 func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
 	t := reflect.TypeFor[M]()
 	b.mu.RLock()
@@ -240,7 +317,7 @@ func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
 	if err != nil {
 		return err
 	}
-//line messenger.ego:213
+//line messenger.ego:276
 	msg := Message{ID: uid.NewV7().String(), Type: name, Body: body, AvailableAt: b.now()}
 	for _, o := range opts {
 		o(&msg)
@@ -261,7 +338,7 @@ func (b *Bus) handle(ctx context.Context, t reflect.Type, m any) error {
 			return err
 		}
 	}
-//line messenger.ego:231
+//line messenger.ego:294
 	return nil
 }
 

@@ -15,6 +15,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/effect-go/effect-go/scope"
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
@@ -90,7 +91,8 @@ func ProjectDir() string {
 // own commands, there are:
 //   - serve, which runs the app's checks, then serves it over HTTP until
 //     ctx is done, and shuts down gracefully; -addr overrides the address
-//     of the config, for a developer whose port is taken;
+//     of the config, for a developer whose port is taken. The app's
+//     Background work runs beside the server;
 //   - debug:router, which lists the routes;
 //   - openapi:dump, which prints the app's OpenAPI document;
 //   - debug:event-dispatcher, which lists the listeners of each event;
@@ -101,7 +103,7 @@ func ProjectDir() string {
 //   - list and help, which describe the commands.
 func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, args []string) error {
 	commands := []console.Command{
-		serveCommand{app.Server, app.Checks},
+		serveCommand{app.Server, app.Checks, app.Background},
 		console.New("debug:router", "Lists the routes", (ctx context.Context, out io.Writer, args []string) => routing.WriteTable(out, app.Router.List())),
 		console.New("openapi:dump", "Prints the OpenAPI document", (ctx context.Context, out io.Writer, args []string) => writeDocument(out, app.OpenAPI)),
 		console.New("debug:event-dispatcher", "Lists the listeners of each event", (ctx context.Context, out io.Writer, args []string) => event.WriteTable(out, app.Events.List())),
@@ -120,8 +122,9 @@ func writeDocument(out io.Writer, doc *openapi.Document) error {
 
 // serveCommand serves the app until ctx is done, once its checks pass.
 type serveCommand struct {
-	server *httpkernel.Server
-	checks []Check
+	server     *httpkernel.Server
+	checks     []Check
+	background []Background
 }
 
 func (serveCommand) Name() string    { return "serve" }
@@ -140,7 +143,14 @@ func (c serveCommand) Run(ctx context.Context, out io.Writer, args []string) err
 			return fmt.Errorf("goncini: the app isn't ready to serve: %w", err)
 		}
 	}
-	return c.server.ListenAndServe(ctx)
+	// The server and the background work run together: when one fails,
+	// the others stop, and all of them stop with ctx.
+	tasks := []scope.Task[struct{}]{func(ctx context.Context) (struct{}, error) { return struct{}{}, c.server.ListenAndServe(ctx) }}
+	for _, b := range c.background {
+		tasks = append(tasks, func(ctx context.Context) (struct{}, error) { return struct{}{}, b.Background(ctx) })
+	}
+	_, err := scope.All(ctx, tasks...)
+	return err
 }
 
 // writeServices writes the services, with their providers and what they

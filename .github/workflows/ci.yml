@@ -13,7 +13,7 @@ jobs:
       matrix:
         # goncini, then the modules of its adapters and of the example;
         # pgxdb has a job of its own, with PostgreSQL.
-        module: [., db/goosedb, db/migratedb, db/gormdb, examples/articles, examples/realworld, examples/realworld-plain]
+        module: [., db/goosedb, db/migratedb, db/gormdb, log/zaplog, log/zerologlog, examples/articles, examples/realworld, examples/realworld-plain]
     defaults:
       run:
         working-directory: ${{ matrix.module }}

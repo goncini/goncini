@@ -1,0 +1,36 @@
+package zaplog_test
+
+import (
+	"log/slog"
+	"testing"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/log/zaplog"
+)
+
+func TestHandler(t *testing.T) {
+	core, logs := observer.New(zapcore.InfoLevel)
+	logger := goncini.NewLogger(zaplog.NewHandler(zap.New(core)))
+	logger.Debug("hidden")
+	logger.Warn("the queue is slow", slog.Int("depth", 42))
+	entries := logs.All()
+	if len(entries) != 1 || entries[0].Message != "the queue is slow" || entries[0].Level != zapcore.WarnLevel || entries[0].ContextMap()["depth"] != int64(42) {
+		t.Errorf("entries %+v", entries)
+	}
+}
+
+func TestNewLogger(t *testing.T) {
+	for _, c := range []goncini.Log{{}, {Level: slog.LevelWarn, JSON: true}} {
+		l, sync := must zaplog.NewLogger(c)
+		if l.Core().Enabled(zaplog.Level(c.Level-1)) || !l.Core().Enabled(zaplog.Level(c.Level)) {
+			t.Errorf("%+v: levels", c)
+		}
+		if err := sync(); err != nil {
+			t.Errorf("sync: %v", err)
+		}
+	}
+}

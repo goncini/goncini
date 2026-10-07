@@ -64,7 +64,7 @@ func build(c goncini.HTTP, routes []routing.Routes, commands []console.Command) 
 		panic(err)
 	}
 //line main_test.ego:49
-	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, services, logger, doc, goncini.NewDispatcher(nil))
+	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, services, logger, doc, goncini.NewDispatcher(nil), nil)
 }
 
 // routes registers a route.
@@ -299,5 +299,49 @@ func TestLoggerOnAnotherHandler(t *testing.T) {
 	goncini.NewLogger(h).InfoContext(ctx, "hello", "k", "v")
 	if h.attrs["k"] != "v" || h.attrs["trace_id"] != tid.String() || h.attrs["span_id"] != sid.String() {
 		t.Errorf("attributes %v", h.attrs)
+	}
+}
+
+// worker is background work that runs until its ctx is done, or fails.
+type worker struct {
+	started, stopped chan struct{}
+	fail             error
+}
+
+func (w *worker) Background(ctx context.Context) error {
+	close(w.started)
+	if w.fail != nil {
+		return w.fail
+	}
+	<-ctx.Done()
+	close(w.stopped)
+	return nil
+}
+
+// TestServeBackground checks that serve runs the app's background work
+// beside the server, stops it with the server, and stops the server when
+// it fails.
+func TestServeBackground(t *testing.T) {
+	app := build(goncini.HTTP{Addr: "127.0.0.1:0"}, nil, nil)
+	w := &worker{started: make(chan struct{}), stopped: make(chan struct{})}
+	app.Background = []goncini.Background{w}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error)
+	go func() { done <- goncini.Run(ctx, io.Discard, goncini.NewEnv("dev", nil), config{}, app, nil) }()
+	<-w.started
+	cancel() // SIGTERM
+	if err := <-done; err != nil {
+		t.Errorf("serve: %v", err)
+	}
+	select {
+	case <-w.stopped:
+	default:
+		t.Error("the background work didn't stop")
+	}
+
+	broken := &worker{started: make(chan struct{}), fail: errors.New("the queue is gone")}
+	app.Background = []goncini.Background{broken}
+	if err := goncini.Run(context.Background(), io.Discard, goncini.NewEnv("dev", nil), config{}, app, nil); err == nil || err.Error() != "the queue is gone" {
+		t.Errorf("serve with failing background work: %v", err)
 	}
 }

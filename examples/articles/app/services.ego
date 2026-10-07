@@ -11,13 +11,14 @@ import (
 
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/goosedb"
+	"github.com/goncini/goncini/log/zaplog"
 
 	"github.com/goncini/goncini/examples/articles/articles"
 	"github.com/goncini/goncini/examples/articles/migrations"
 )
 
 // Services is the app's own services.
-var Services = layer.Set(db.Open, db.NewSQL, migrator, articles.NewStore, articles.NewArticles, articles.NewSlugCommand, clock)
+var Services = layer.Set(zaplog.NewLogger, db.Open, db.NewSQL, migrator, articles.NewStore, articles.NewArticles, articles.NewSlugCommand, clock)
 
 // migrator runs the migrations with goose.
 func migrator(pool *sql.DB) (db.Migrator, error) {

@@ -1,0 +1,65 @@
+// Package zaplog makes zap goncini's logger: the app's slog records go to a
+// zap logger, which the services that take a *zap.Logger share.
+//
+//	var Services = layer.Set(zaplog.NewLogger, …)
+//
+//	func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
+//		panic(layer.Build(goncini.Framework, Services, Autoconfigured, zaplog.NewHandler))
+//	}
+//
+// NewHandler goes to layer.Build itself, so that it replaces goncini's
+// handler. Records keep the trace and span IDs that goncini's logger adds.
+package zaplog
+
+import (
+	"errors"
+	"log/slog"
+	"syscall"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/exp/zapslog"
+	"go.uber.org/zap/zapcore"
+
+	"github.com/goncini/goncini"
+)
+
+// NewLogger returns a zap logger for c, from c.Level up: zap's production
+// logger, JSON, if c.JSON, or else its development one, which writes lines
+// for people. It is flushed when the app stops.
+func NewLogger(c goncini.Log) (*zap.Logger, func() error, error) {
+	cfg := zap.NewDevelopmentConfig()
+	if c.JSON {
+		cfg = zap.NewProductionConfig()
+	}
+	cfg.Level = zap.NewAtomicLevelAt(Level(c.Level))
+	l := check cfg.Build() ""
+	return l, () => ignoreTerminal(l.Sync()), nil
+}
+
+// NewHandler returns the slog.Handler that writes to l, as the app's.
+func NewHandler(l *zap.Logger) slog.Handler {
+	return zapslog.NewHandler(l.Core(), zapslog.WithCaller(true))
+}
+
+// Level is zap's level of an slog level: Debug, Info, Warn and Error map to
+// theirs, and the levels between to the one below.
+func Level(l slog.Level) zapcore.Level {
+	switch {
+	case l < slog.LevelInfo:
+		return zapcore.DebugLevel
+	case l < slog.LevelWarn:
+		return zapcore.InfoLevel
+	case l < slog.LevelError:
+		return zapcore.WarnLevel
+	}
+	return zapcore.ErrorLevel
+}
+
+// ignoreTerminal ignores the errors of syncing a terminal or a pipe, which
+// can't be: zap's well-known noise on stderr.
+func ignoreTerminal(err error) error {
+	if errors.Is(err, syscall.ENOTTY) || errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.EBADF) {
+		return nil
+	}
+	return err
+}

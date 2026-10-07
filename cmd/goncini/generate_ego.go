@@ -127,10 +127,11 @@ var kinds = []kind{
 	{"autoSubscribers", "event.Subscriber", "autoSubscribers are the services that subscribe to events."},
 	{"autoHandlers", "messenger.Handlers", "autoHandlers are the services that handle messages."},
 	{"autoTasks", "scheduler.Tasks", "autoTasks are the services that schedule tasks."},
+	{"autoBackground", "goncini.Background", "autoBackground is the work that serve runs beside the server."},
 }
 
 // sections are the config sections that goncini's providers take.
-var sections = []string{"goncini.HTTP", "goncini.Log", "openapi.Config"}
+var sections = []string{"goncini.HTTP", "goncini.Log", "openapi.Config", "messenger.Config", "scheduler.Config"}
 
 // hasField reports whether the struct has a field of type t.
 func hasField(st *types.Struct, t types.Type) bool {
@@ -158,7 +159,7 @@ func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 	if err2 != nil {
 		return nil, err2
 	}
-//line generate.ego:120
+//line generate.ego:121
 	var b strings.Builder
 	var names []string
 	for _, k := range kinds {
@@ -233,7 +234,7 @@ func load(root, appDir string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:191
+//line generate.ego:192
 	var errs []error
 	packages.Visit(pkgs, nil, func(p *packages.Package) {
 		for _, e := range p.Errors {
@@ -243,12 +244,12 @@ func load(root, appDir string) (*app, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-//line generate.ego:198
+//line generate.ego:199
 	dir, err := filepath.Abs(filepath.Join(root, appDir))
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:199
+//line generate.ego:200
 	a := &app{all: pkgs, imports: map[string]string{}}
 	for _, p := range pkgs {
 		if len(p.GoFiles) > 0 && filepath.Dir(p.GoFiles[0]) == dir {
@@ -261,7 +262,7 @@ func load(root, appDir string) (*app, error) {
 	if err := a.findProviders(); err != nil {
 		return nil, err
 	}
-//line generate.ego:209
+//line generate.ego:210
 	return a, nil
 }
 
@@ -333,7 +334,7 @@ func isFunc(info *types.Info, x ast.Expr, path, name string) bool {
 
 // ident is the name in x, an identifier or a selector, or nil.
 //
-//line generate.ego:273
+//line generate.ego:274
 func ident(x ast.Expr) *ast.Ident {
 	switch x := x.(type) {
 	case *ast.Ident:
@@ -344,26 +345,32 @@ func ident(x ast.Expr) *ast.Ident {
 	return nil
 }
 
-// addProviders adds the results of the providers in args: functions, sets
-// of the app's package, and layer.Close of a function.
+// addProviders adds the results of the providers in args, written in the
+// app's package: functions, sets, and layer.Close of a function.
 func (a *app) addProviders(args []ast.Expr, seen map[types.Object]bool) {
-	info := a.pkg.TypesInfo
+	a.addProvidersIn(a.pkg.TypesInfo, args, seen)
+}
+
+// addProvidersIn adds the results of the providers in args, written in the
+// package whose types info is info.
+func (a *app) addProvidersIn(info *types.Info, args []ast.Expr, seen map[types.Object]bool) {
 	for _, x := range args {
 		if call, ok := x.(*ast.CallExpr); ok {
 			if isFunc(info, call.Fun, layerPath, "Close") || isFunc(info, call.Fun, layerPath, "Set") {
-				a.addProviders(call.Args, seen)
+				a.addProvidersIn(info, call.Args, seen)
 			}
 			continue
 		}
 		obj := info.Uses[ident(x)]
 		if v, ok := obj.(*types.Var); ok && isNamed(v.Type(), layerPath, "ProviderSet") {
-			// The app's own sets, not goncini's, nor what this file generates.
-			if seen[v] || v.Pkg() != a.pkg.Types || v.Name() == "Autoconfigured" {
+			// The app's sets and its packages', such as messenger.SQL, but
+			// not goncini's Framework, nor what this file generates.
+			if seen[v] || v.Pkg().Path() == gonciniPath || v.Pkg() == a.pkg.Types && v.Name() == "Autoconfigured" {
 				continue
 			}
 			seen[v] = true
-			if init := a.varInit(v); init != nil {
-				a.addProviders([]ast.Expr{init}, seen)
+			if init, initInfo := a.varInit(v); init != nil {
+				a.addProvidersIn(initInfo, []ast.Expr{init}, seen)
 			}
 			continue
 		}
@@ -373,10 +380,19 @@ func (a *app) addProviders(args []ast.Expr, seen map[types.Object]bool) {
 	}
 }
 
-// varInit returns the expression that v, a package-level variable of the
-// app, is initialized with.
-func (a *app) varInit(v *types.Var) ast.Expr {
-	for _, f := range a.pkg.Syntax {
+// varInit returns the expression that v, a package-level variable, is
+// initialized with, and the types info of its package.
+func (a *app) varInit(v *types.Var) (ast.Expr, *types.Info) {
+	var pkg *packages.Package
+	packages.Visit(a.all, nil, func(p *packages.Package) {
+		if p.Types == v.Pkg() {
+			pkg = p
+		}
+	})
+	if pkg == nil {
+		return nil, nil
+	}
+	for _, f := range pkg.Syntax {
 		for _, d := range f.Decls {
 			gd, ok := d.(*ast.GenDecl)
 			if !ok {
@@ -388,14 +404,14 @@ func (a *app) varInit(v *types.Var) ast.Expr {
 					continue
 				}
 				for i, n := range vs.Names {
-					if a.pkg.TypesInfo.Defs[n] == v && i < len(vs.Values) {
-						return vs.Values[i]
+					if pkg.TypesInfo.Defs[n] == v && i < len(vs.Values) {
+						return vs.Values[i], pkg.TypesInfo
 					}
 				}
 			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func isNamed(t types.Type, path, name string) bool {
@@ -424,7 +440,7 @@ func (a *app) lookup(name string) types.Type {
 	} else {
 		path = gonciniPath + "/" + pkgName
 	}
-//line generate.ego:358
+//line generate.ego:374
 	var found types.Type
 	packages.Visit(a.all, nil, func(p *packages.Package) {
 		if found == nil && p.PkgPath == path {
@@ -447,14 +463,14 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 	switch k.name {
 	case "autoProblems":
 
-//line generate.ego:379
+//line generate.ego:395
 		for _, v := range a.mappers(elem) {
 			items = append(items, a.qualify(v.Pkg())+"."+v.Name())
 		}
 
 	case "autoChecks":
 
-//line generate.ego:384
+//line generate.ego:400
 		for _, t := range a.provided {
 			if m := pinger(t); m != "" {
 				add(t, "$."+m)
@@ -463,7 +479,7 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 
 	default:
 
-//line generate.ego:391
+//line generate.ego:407
 		iface, _ := elem.Underlying().(*types.Interface)
 		for _, t := range a.provided {
 			if iface != nil && types.Implements(t, iface) && !types.IsInterface(t) {
@@ -616,7 +632,7 @@ func describe(root, appDir string) ([]service, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:540
+//line generate.ego:556
 	if len(pkgs) != 1 || len(pkgs[0].Errors) > 0 {
 		return nil, nil
 	}
@@ -644,7 +660,7 @@ func describe(root, appDir string) ([]service, error) {
 		}
 		return v
 	}
-//line generate.ego:559
+//line generate.ego:575
 	var services []service
 	for _, stmt := range build.Body.List {
 		assign, ok := stmt.(*ast.AssignStmt)

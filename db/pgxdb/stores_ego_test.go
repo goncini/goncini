@@ -33,30 +33,38 @@ func TestLockStore(t *testing.T) {
 	}
 //line stores_test.ego:27
 	t.Cleanup(closePool)
-	sqlDB := stdlib.OpenDBFromPool(pool)
+	sqlDB, closeDB, err := pgxdb.DB(pool)
+	if err != nil {
+		panic(err)
+	}
+//line stores_test.ego:29
+	t.Cleanup(func() {
+		closeDB()
+	})
+//line stores_test.ego:30
 	store, err := lock.NewSQLStore(sqlDB)
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:30
+//line stores_test.ego:31
 	store.Table = "pgxdb_test_locks"
 	t.Cleanup(func() {
 		sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_locks")
 	})
 
-//line stores_test.ego:33
+//line stores_test.ego:34
 	f := &lock.Factory{Store: store, TTL: 200 * time.Millisecond}
 	a, b := f.New("report"), f.New("report")
 	gotA, err := a.Acquire(ctx)
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:36
+//line stores_test.ego:37
 	gotB, err := b.Acquire(ctx)
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:37
+//line stores_test.ego:38
 	if !gotA || gotB {
 		t.Fatalf("a %v, b %v", gotA, gotB)
 	}
@@ -65,16 +73,16 @@ func TestLockStore(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:42
+//line stores_test.ego:43
 	if err := b.Release(ctx); err != nil {
 		panic(err)
 	}
-//line stores_test.ego:43
+//line stores_test.ego:44
 	released, err := a.Acquire(ctx)
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:44
+//line stores_test.ego:45
 	if !expired || !released {
 		t.Errorf("after expiry %v, after release %v", expired, released)
 	}
@@ -91,7 +99,7 @@ func TestMessengerTransport(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:57
+//line stores_test.ego:58
 	t.Cleanup(closePool)
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	transporttest.Run(t, func(t *testing.T, now func() time.Time) messenger.Transport {
@@ -99,13 +107,13 @@ func TestMessengerTransport(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line stores_test.ego:61
+//line stores_test.ego:62
 		tr.Table, tr.Now = "pgxdb_test_messages", now
 		sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_messages")
 		t.Cleanup(func() {
 			sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_messages")
 		})
-//line stores_test.ego:64
+//line stores_test.ego:65
 		return tr
 	})
 }

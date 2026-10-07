@@ -89,10 +89,11 @@ var kinds = []kind{
 	{"autoSubscribers", "event.Subscriber", "autoSubscribers are the services that subscribe to events."},
 	{"autoHandlers", "messenger.Handlers", "autoHandlers are the services that handle messages."},
 	{"autoTasks", "scheduler.Tasks", "autoTasks are the services that schedule tasks."},
+	{"autoBackground", "goncini.Background", "autoBackground is the work that serve runs beside the server."},
 }
 
 // sections are the config sections that goncini's providers take.
-var sections = []string{"goncini.HTTP", "goncini.Log", "openapi.Config"}
+var sections = []string{"goncini.HTTP", "goncini.Log", "openapi.Config", "messenger.Config", "scheduler.Config"}
 
 // hasField reports whether the struct has a field of type t.
 func hasField(st *types.Struct, t types.Type) bool {
@@ -280,26 +281,32 @@ func ident(x ast.Expr) *ast.Ident {
 	return nil
 }
 
-// addProviders adds the results of the providers in args: functions, sets
-// of the app's package, and layer.Close of a function.
+// addProviders adds the results of the providers in args, written in the
+// app's package: functions, sets, and layer.Close of a function.
 func (a *app) addProviders(args []ast.Expr, seen map[types.Object]bool) {
-	info := a.pkg.TypesInfo
+	a.addProvidersIn(a.pkg.TypesInfo, args, seen)
+}
+
+// addProvidersIn adds the results of the providers in args, written in the
+// package whose types info is info.
+func (a *app) addProvidersIn(info *types.Info, args []ast.Expr, seen map[types.Object]bool) {
 	for _, x := range args {
 		if call, ok := x.(*ast.CallExpr); ok {
 			if isFunc(info, call.Fun, layerPath, "Close") || isFunc(info, call.Fun, layerPath, "Set") {
-				a.addProviders(call.Args, seen)
+				a.addProvidersIn(info, call.Args, seen)
 			}
 			continue
 		}
 		obj := info.Uses[ident(x)]
 		if v, ok := obj.(*types.Var); ok && isNamed(v.Type(), layerPath, "ProviderSet") {
-			// The app's own sets, not goncini's, nor what this file generates.
-			if seen[v] || v.Pkg() != a.pkg.Types || v.Name() == "Autoconfigured" {
+			// The app's sets and its packages', such as messenger.SQL, but
+			// not goncini's Framework, nor what this file generates.
+			if seen[v] || v.Pkg().Path() == gonciniPath || v.Pkg() == a.pkg.Types && v.Name() == "Autoconfigured" {
 				continue
 			}
 			seen[v] = true
-			if init := a.varInit(v); init != nil {
-				a.addProviders([]ast.Expr{init}, seen)
+			if init, initInfo := a.varInit(v); init != nil {
+				a.addProvidersIn(initInfo, []ast.Expr{init}, seen)
 			}
 			continue
 		}
@@ -309,10 +316,19 @@ func (a *app) addProviders(args []ast.Expr, seen map[types.Object]bool) {
 	}
 }
 
-// varInit returns the expression that v, a package-level variable of the
-// app, is initialized with.
-func (a *app) varInit(v *types.Var) ast.Expr {
-	for _, f := range a.pkg.Syntax {
+// varInit returns the expression that v, a package-level variable, is
+// initialized with, and the types info of its package.
+func (a *app) varInit(v *types.Var) (ast.Expr, *types.Info) {
+	var pkg *packages.Package
+	packages.Visit(a.all, nil, p => {
+		if p.Types == v.Pkg() {
+			pkg = p
+		}
+	})
+	if pkg == nil {
+		return nil, nil
+	}
+	for _, f := range pkg.Syntax {
 		for _, d := range f.Decls {
 			gd, ok := d.(*ast.GenDecl)
 			if !ok {
@@ -324,14 +340,14 @@ func (a *app) varInit(v *types.Var) ast.Expr {
 					continue
 				}
 				for i, n := range vs.Names {
-					if a.pkg.TypesInfo.Defs[n] == v && i < len(vs.Values) {
-						return vs.Values[i]
+					if pkg.TypesInfo.Defs[n] == v && i < len(vs.Values) {
+						return vs.Values[i], pkg.TypesInfo
 					}
 				}
 			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func isNamed(t types.Type, path, name string) bool {

@@ -17,6 +17,7 @@ import (
 	"github.com/goncini/goncini/examples/realworld/moderation"
 	"github.com/goncini/goncini/examples/realworld/notifications"
 	"github.com/goncini/goncini/examples/realworld/users"
+	"github.com/goncini/goncini/lock"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/scheduler"
 	"github.com/goncini/goncini/security"
@@ -57,16 +58,16 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v2 := autoVoters(authorship)
 	access := security.NewAccess(config2, v2)
 	config5 := autoConfigMessenger(cfg)
-	transports2, err := transports(db2)
+	transports, err := messenger.NewSQLTransports(db2, config5)
 	if err != nil {
-		return nil, fmt.Errorf("transports: %w", err)
+		return nil, fmt.Errorf("NewSQLTransports: %w", err)
 	}
 	notifications2 := notifications.NewNotifications(sql2, v)
 	v3 := autoHandlers(notifications2)
 	log := autoConfigLog(cfg)
 	handler := goncini.NewLogHandler(log)
 	logger := goncini.NewLogger(handler)
-	bus := messenger.NewBus(config5, transports2, v3, logger)
+	bus := messenger.NewBus(config5, transports, v3, logger)
 	subscriber := notifications.NewSubscriber(bus)
 	v4 := autoSubscribers(subscriber)
 	dispatcher := goncini.NewDispatcher(v4)
@@ -87,21 +88,23 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	store3, err := locks(db2)
+	config6 := autoDefaultSchedulerConfig()
+	sqlStore, err := lock.NewSQLStore(db2)
 	if err != nil {
-		return nil, fmt.Errorf("locks: %w", err)
+		return nil, fmt.Errorf("NewSQLStore: %w", err)
 	}
 	v8 := autoTasks(notifications2)
-	scheduler2 := scheduler.New(store3, v8, logger)
+	scheduler2 := scheduler.New(config6, sqlStore, v8, logger)
 	v9 := autoCommands(migrator2, bus, scheduler2)
 	v10 := autoChecks(db2)
 	v11 := autoServices()
-	config6 := autoConfigOpenAPI(cfg)
+	config7 := autoConfigOpenAPI(cfg)
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config6, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config7, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
-	app := goncini.NewApp(kernel, server, router, v9, v10, v11, logger, document, dispatcher)
+	v12 := autoBackground(bus, scheduler2)
+	app := goncini.NewApp(kernel, server, router, v9, v10, v11, logger, document, dispatcher, v12)
 	return app, nil
 }

@@ -9,14 +9,21 @@
 //
 //	queries := sqlcgen.New(s.pgx.Conn(ctx))
 //
-// Tools that need a *sql.DB, such as goose, get one on the pool with pgx's
-// stdlib.OpenDBFromPool.
+// Layer provides them all: the pool, its Transactor, and a *sql.DB on the
+// same pool for what needs database/sql, such as goose, messenger.SQL and
+// lock.SQL:
+//
+//	var Services = layer.Set(pgxdb.Layer, messenger.SQL, lock.SQL, …)
 package pgxdb
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/effect-go/effect-go/layer"
+	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -33,7 +40,7 @@ import (
 // database work without it; the app checks it before serving with
 // pool.Ping, as a goncini.Check.
 //
-//line pgxdb.ego:33
+//line pgxdb.ego:40
 func Open(ctx context.Context, c db.Config) (*pgxpool.Pool, func(), error) {
 	cfg, err := pgxpool.ParseConfig(c.URL)
 	if err != nil {
@@ -53,6 +60,17 @@ func Open(ctx context.Context, c db.Config) (*pgxpool.Pool, func(), error) {
 		return nil, nil, fmt.Errorf("pgxdb: %w", err)
 	}
 	return pool, pool.Close, nil
+}
+
+// Layer is the providers of a PostgreSQL database through pgx, from the
+// app's db.Config: Open, New and DB.
+var Layer = layer.Set(Open, New, DB)
+
+// DB returns a *sql.DB on pool, for the libraries that need database/sql:
+// they share the pool's connections, and closing it leaves the pool open.
+func DB(pool *pgxpool.Pool) (*sql.DB, func() error, error) {
+	d := stdlib.OpenDBFromPool(pool)
+	return d, d.Close, nil
 }
 
 // Conn is what pgx's pools and transactions have in common: the DBTX

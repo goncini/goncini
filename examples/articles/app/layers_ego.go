@@ -14,9 +14,11 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/examples/articles/articles"
 	"github.com/goncini/goncini/examples/articles/config"
+	"github.com/goncini/goncini/log/zaplog"
 )
 
-// Build builds the app for cfg.
+// Build builds the app for cfg. It logs with zap, whose handler replaces
+// goncini's.
 func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
 	http := autoConfigHTTP(cfg)
 	config2 := autoConfigDB(cfg)
@@ -38,13 +40,18 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v5 := autoSubscribers()
 	dispatcher := goncini.NewDispatcher(v5)
 	log := autoConfigLog(cfg)
-	handler := goncini.NewLogHandler(log)
-	logger := goncini.NewLogger(handler)
-	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, dispatcher, logger)
+	logger, cleanup2, err := zaplog.NewLogger(log)
+	if err != nil {
+		return nil, fmt.Errorf("zaplog.NewLogger: %w", err)
+	}
+	s.Defer(func(context.Context) error { return cleanup2() })
+	handler := zaplog.NewHandler(logger)
+	logger2 := goncini.NewLogger(handler)
+	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, dispatcher, logger2)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
-	server := goncini.NewServer(http, kernel, logger)
+	server := goncini.NewServer(http, kernel, logger2)
 	slugCommand := articles.NewSlugCommand(articles2)
 	migrator2, err := migrator(db2)
 	if err != nil {
@@ -59,7 +66,8 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
-	app := goncini.NewApp(kernel, server, router, v6, v7, v8, logger, document, dispatcher)
+	v9 := autoBackground()
+	app := goncini.NewApp(kernel, server, router, v6, v7, v8, logger2, document, dispatcher, v9)
 	return app, nil
 }
 
@@ -84,13 +92,18 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	v4 := autoSubscribers()
 	dispatcher := goncini.NewDispatcher(v4)
 	log := autoConfigLog(cfg)
-	handler := goncini.NewLogHandler(log)
-	logger := goncini.NewLogger(handler)
-	kernel, err := goncini.NewKernel(http, router, v2, v3, renderer, validator, dispatcher, logger)
+	logger, cleanup2, err := zaplog.NewLogger(log)
+	if err != nil {
+		return nil, fmt.Errorf("zaplog.NewLogger: %w", err)
+	}
+	s.Defer(func(context.Context) error { return cleanup2() })
+	handler := zaplog.NewHandler(logger)
+	logger2 := goncini.NewLogger(handler)
+	kernel, err := goncini.NewKernel(http, router, v2, v3, renderer, validator, dispatcher, logger2)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
-	server := goncini.NewServer(http, kernel, logger)
+	server := goncini.NewServer(http, kernel, logger2)
 	slugCommand := articles.NewSlugCommand(articles2)
 	migrator2, err := migrator(db2)
 	if err != nil {
@@ -105,6 +118,7 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
-	app := goncini.NewApp(kernel, server, router, v5, v6, v7, logger, document, dispatcher)
+	v8 := autoBackground()
+	app := goncini.NewApp(kernel, server, router, v5, v6, v7, logger2, document, dispatcher, v8)
 	return app, nil
 }

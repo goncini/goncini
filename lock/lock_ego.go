@@ -23,11 +23,13 @@ import (
 	"encoding/hex"
 	"sync"
 	"time"
+
+	"github.com/effect-go/effect-go/layer"
 )
 
 // Store keeps locks: who holds each key, until when.
 //
-//line lock.ego:27
+//line lock.ego:29
 type Store interface {
 	// Acquire gives key to owner for ttl, if no one else holds it or their
 	// hold has expired, and reports whether it did. An owner that holds
@@ -90,7 +92,7 @@ func (l *Lock) Wait(ctx context.Context, interval time.Duration) error {
 		if err != nil {
 			return err
 		}
-//line lock.ego:86
+//line lock.ego:88
 		if ok {
 			return nil
 		}
@@ -111,7 +113,7 @@ func (l *Lock) Run(ctx context.Context, f func(ctx context.Context) error) (bool
 	if err2 != nil {
 		return false, err2
 	}
-//line lock.ego:103
+//line lock.ego:105
 	if !ok {
 		return false, nil
 	}
@@ -151,6 +153,19 @@ var ErrLost = lostError{}
 type lostError struct{}
 
 func (lostError) Error() string { return "lock: the lock was lost" }
+
+// SQL is the provider of a lock store in the app's database, which a
+// scheduler's lock.Store parameter takes:
+//
+//	var Services = layer.Set(db.Open, lock.SQL, scheduler.New, …)
+var SQL = layer.Set(NewSQLStore)
+
+// Memory is the provider of a lock store in memory, for an app of one
+// process.
+var Memory = layer.Set(NewMemoryStore)
+
+// NewMemoryStore returns an empty store in memory.
+func NewMemoryStore() *MemoryStore { return &MemoryStore{} }
 
 // MemoryStore keeps locks in memory: the locks of one process. Its zero
 // value is ready.

@@ -30,6 +30,26 @@ The kernel's access log and errors, the server's, `goncini.Main`'s and
 
 Each one compiles with the library's current version.
 
+### zap and zerolog: adapter modules
+
+`log/zaplog` and `log/zerologlog` are modules of their own, so that apps
+that don't use those libraries don't depend on them. Each has a provider of
+the library's logger, built from the app's `goncini.Log` section (the
+level, and JSON or lines for people), and `NewHandler`, which replaces
+goncini's handler when it is passed to `layer.Build`:
+
+```go
+var Services = layer.Set(zaplog.NewLogger, …) // a *zap.Logger, synced when the app stops
+
+func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
+	panic(layer.Build(goncini.Framework, Services, Autoconfigured, zaplog.NewHandler))
+}
+```
+
+The services that take a `*zap.Logger` share the one the handler writes to.
+[examples/articles](../examples/articles) logs this way. The recipes below
+do the same by hand, for other setups.
+
 ### zap
 
 ```go

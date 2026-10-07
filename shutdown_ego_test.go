@@ -70,7 +70,7 @@ func TestShutdownDuringASlowRequest(t *testing.T) {
 				panic(err)
 			}
 //line shutdown_test.ego:59
-			app := goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, nil, nil, nil, logger, nil, nil)
+			app := goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, nil, nil, nil, logger, nil, nil, nil)
 			return struct{}{}, goncini.Run(s.Context(), io.Discard, goncini.NewEnv("prod", nil), c, app, nil)
 		})
 		served <- err

@@ -44,7 +44,7 @@ func TestOneInstancePerTickInSQL(t *testing.T) {
 			panic(err)
 		}
 //line gate_test.ego:32
-		s := scheduler.New(store, nil, slog.New(slog.DiscardHandler))
+		s := scheduler.New(scheduler.Config{}, store, nil, slog.New(slog.DiscardHandler))
 		s.Add("report", scheduler.Every(100*time.Millisecond), func(ctx context.Context) error {
 			tick := time.Now().Truncate(100 * time.Millisecond).UnixMilli()
 			mu.Lock()
