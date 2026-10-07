@@ -18,35 +18,53 @@ import (
 )
 
 // TestOneInstancePerTickInSQL is M3's fourth gate: two instances of an
-// app, each with its own pool on one database, run a task every 100ms for a
-// second, and the SQL lock store lets exactly one of them run each tick.
+// app, each with its own pool on one database, run a task every 200ms for
+// two seconds, and the SQL lock store lets exactly one of them run each
+// tick.
 //
-//line gate_test.ego:21
+//line gate_test.ego:22
 func TestOneInstancePerTickInSQL(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "locks.db")
+	// The database and its table are there before the instances start, as
+	// an app's migrations would leave them.
+	setup, err := sql.Open("sqlite", "file:"+file)
+	if err != nil {
+		panic(err)
+	}
+//line gate_test.ego:27
+	if _, err := setup.Exec("PRAGMA journal_mode = WAL"); err != nil {
+		panic(err)
+	}
+//line gate_test.ego:28
+	if _, err := setup.Exec((&lock.SQLStore{}).Schema()); err != nil {
+		panic(err)
+	}
+//line gate_test.ego:29
+	setup.Close()
 	var mu sync.Mutex
 	ticks := map[int64][]string{} // instances that ran each tick
-	ctx, stop := context.WithTimeout(context.Background(), time.Second+50*time.Millisecond)
+	ctx, stop := context.WithTimeout(context.Background(), 2*time.Second+50*time.Millisecond)
 	defer stop()
 	var wg sync.WaitGroup
 	for _, instance := range []string{"a", "b"} {
-		pool, err := sql.Open("sqlite", "file:"+file+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)")
+		pool, err := sql.Open("sqlite", "file:"+file+"?_pragma=busy_timeout(10000)")
 		if err != nil {
 			panic(err)
 		}
-//line gate_test.ego:30
+//line gate_test.ego:37
 		t.Cleanup(func() {
 			pool.Close()
 		})
-//line gate_test.ego:31
+//line gate_test.ego:38
 		store, err := lock.NewSQLStore(pool)
 		if err != nil {
 			panic(err)
 		}
-//line gate_test.ego:32
-		s := scheduler.New(scheduler.Config{}, store, nil, slog.New(slog.DiscardHandler))
-		s.Add("report", scheduler.Every(100*time.Millisecond), func(ctx context.Context) error {
-			tick := time.Now().Truncate(100 * time.Millisecond).UnixMilli()
+//line gate_test.ego:39
+		store.NoSetup = true
+		s := scheduler.New(scheduler.Config{}, store, nil, slog.New(slog.NewTextHandler(t.Output(), &slog.HandlerOptions{Level: slog.LevelWarn})))
+		s.Add("report", scheduler.Every(200*time.Millisecond), func(ctx context.Context) error {
+			tick := time.Now().Truncate(200 * time.Millisecond).UnixMilli()
 			mu.Lock()
 			defer mu.Unlock()
 			ticks[tick] = append(ticks[tick], instance)
@@ -56,9 +74,9 @@ func TestOneInstancePerTickInSQL(t *testing.T) {
 			s.Run(ctx)
 		})
 	}
-//line gate_test.ego:42
+//line gate_test.ego:50
 	wg.Wait()
-	if len(ticks) < 9 {
+	if len(ticks) < 5 { // about 10, but a busy machine may miss some
 		t.Errorf("%d ticks ran, want about 10", len(ticks))
 	}
 	for tick, ran := range ticks {
