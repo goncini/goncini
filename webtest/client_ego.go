@@ -226,6 +226,11 @@ type Problem struct {
 	response *Response
 }
 
+// Response returns the response of the problem, for more checks.
+func (p *Problem) Response() *Response {
+	return p.response
+}
+
 // HasDetail checks the problem's detail.
 func (p *Problem) HasDetail(detail string) *Problem {
 	p.response.t.Helper()
@@ -264,7 +269,7 @@ func describe(vs []httpkernel.Violation) string {
 		} else {
 			where = v.Header
 		}
-//line client.ego:256
+//line client.ego:261
 		parts = append(parts, fmt.Sprintf("%s: %q", where, v.Detail))
 	}
 	return strings.Join(parts, ", ")

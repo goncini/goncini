@@ -1,0 +1,156 @@
+package security
+
+import (
+	"cmp"
+	"context"
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+// AuthError is everything authentication fails with. Each case is a 401
+// problem with a WWW-Authenticate header, for the scheme of the firewall.
+error AuthError {
+	// Unauthenticated means that the request needs a user, and has no
+	// credentials.
+	Unauthenticated{ Scheme string } "authentication is required"
+	// InvalidToken means that the request's token can't be trusted, for
+	// Reason.
+	InvalidToken {
+		Scheme string
+		Reason string
+	} "invalid token: {Reason}"
+}
+
+// Problem is the response to e.
+func (e Unauthenticated) Problem() httpkernel.Problem {
+	return httpkernel.Problem{
+		Status: http.StatusUnauthorized,
+		Detail: e.Error(),
+		Header: challenge(e.Scheme, ""),
+	}
+}
+
+// Problem is the response to e.
+func (e InvalidToken) Problem() httpkernel.Problem {
+	return httpkernel.Problem{
+		Status: http.StatusUnauthorized,
+		Detail: e.Error(),
+		Header: challenge(e.Scheme, ` error="invalid_token"`),
+	}
+}
+
+// challenge is the WWW-Authenticate header of a 401 for the scheme, as RFC
+// 6750 writes it.
+func challenge(scheme, params string) http.Header {
+	h := http.Header{}
+	h.Set("WWW-Authenticate", cmp.Or(scheme, "Bearer")+params)
+	return h
+}
+
+// Firewall authenticates requests that have a token in their
+// Authorization header, and loads the user it names with Load. Requests
+// without one go through as anonymous; those whose token is invalid, or
+// names a user that doesn't exist, get a 401.
+//
+// U is the app's type of users. An app provides its firewall:
+//
+//	func firewall(c security.Config, tokens *security.Tokens, users *users.Store) *security.Firewall[*users.User] {
+//		return &security.Firewall[*users.User]{Config: c, Tokens: tokens, Load: users.ByID}
+//	}
+//
+// and puts its Middleware in the kernel's, with a []httpkernel.Middleware
+// provider passed to layer.Build.
+type Firewall[U any] struct {
+	// Config gives the scheme of the Authorization header.
+	Config Config
+	// Tokens verifies the tokens.
+	Tokens *Tokens
+	// Load returns the user that a token's subject identifies, and reports
+	// whether there is one. Its errors are the server's: 500s.
+	Load func(ctx context.Context, subject string) (U, bool, error)
+}
+
+// state is what a firewall found out about a request.
+type state struct {
+	scheme string
+	user   any // nil for an anonymous request
+}
+
+type stateKey struct{}
+
+// Middleware authenticates requests, as Firewall says.
+func (f *Firewall[U]) Middleware(next http.Handler) http.Handler {
+	scheme := cmp.Or(f.Config.Scheme, "Bearer")
+	return http.HandlerFunc((w http.ResponseWriter, r *http.Request) => {
+		st := &state{scheme: scheme}
+		header := r.Header.Get("Authorization")
+		if header != "" {
+			user, err := f.authenticate(r.Context(), scheme, header)
+			if err != nil {
+				httpkernel.WriteError(w, r, err)
+				return
+			}
+			st.user = user
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), stateKey{}, st)))
+	})
+}
+
+// authenticate returns the user of an Authorization header.
+func (f *Firewall[U]) authenticate(ctx context.Context, scheme, header string) (U, error) {
+	var zero U
+	got, token, _ := strings.Cut(header, " ")
+	if !strings.EqualFold(got, scheme) || token == "" {
+		return zero, InvalidToken{Scheme: scheme, Reason: f"the Authorization header isn't {scheme} and a token"}
+	}
+	subject, err := f.Tokens.Verify(strings.TrimSpace(token))
+	if e, ok := errors.AsType[InvalidToken](err); ok {
+		e.Scheme = scheme
+		return zero, e
+	}
+	check err ""
+	user, ok := check f.Load(ctx, subject) ""
+	if !ok {
+		return zero, InvalidToken{Scheme: scheme, Reason: "its user doesn't exist"}
+	}
+	return user, nil
+}
+
+// User returns the user that the request ctx belongs to was authenticated
+// as, and reports whether it was: false for an anonymous request, or a
+// request no firewall saw.
+func User[U any](ctx context.Context) (U, bool) {
+	st, _ := ctx.Value(stateKey{}).(*state)
+	u, ok := st?.user.(U)
+	return u, ok
+}
+
+// CurrentUser returns the user that the request ctx belongs to was
+// authenticated as, or fails with Unauthenticated, a 401.
+func CurrentUser[U any](ctx context.Context) (U, error) {
+	if u, ok := User[U](ctx); ok {
+		return u, nil
+	}
+	var zero U
+	st, _ := ctx.Value(stateKey{}).(*state)
+	return zero, Unauthenticated{Scheme: st?.scheme}
+}
+
+// Required answers 401 to the requests that aren't authenticated: those
+// without a token. It goes on the routes that need a user, behind a
+// firewall in the kernel's middleware:
+//
+//	r.With(security.Required).Post("/articles", httpkernel.Endpoint(a.Create))
+func Required(next http.Handler) http.Handler {
+	return http.HandlerFunc((w http.ResponseWriter, r *http.Request) => {
+		st, _ := r.Context().Value(stateKey{}).(*state)
+		if st?.user == nil {
+			httpkernel.WriteError(w, r, Unauthenticated{Scheme: st?.scheme})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

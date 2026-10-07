@@ -8,12 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/goncini/goncini/httpkernel"
 )
 
-//line problem_test.ego:14
+//line problem_test.ego:15
 func TestWriteProblemFillsStatusAndTitle(t *testing.T) {
 	rec := httptest.NewRecorder()
 	if err := httpkernel.WriteProblem(rec, httpkernel.Problem{Detail: "boom"}); err != nil {
@@ -88,5 +89,20 @@ func TestProblemNeedsAnErrorStatus(t *testing.T) {
 		if rec.Code != http.StatusInternalServerError {
 			t.Errorf("status %d written as %d, want 500", status, rec.Code)
 		}
+	}
+}
+
+func TestProblemHeader(t *testing.T) {
+	rec := httptest.NewRecorder()
+	p := httpkernel.Problem{Status: 401, Header: http.Header{"www-authenticate": {`Token realm="api"`}}}
+	if err := httpkernel.WriteProblem(rec, p); err != nil {
+		panic(err)
+	}
+//line problem_test.ego:96
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Token realm="api"` {
+		t.Errorf("WWW-Authenticate = %q", got)
+	}
+	if strings.Contains(rec.Body.String(), "realm") {
+		t.Errorf("the header is in the body: %s", rec.Body)
 	}
 }

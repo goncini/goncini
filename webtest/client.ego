@@ -222,6 +222,11 @@ type Problem struct {
 	response *Response
 }
 
+// Response returns the response of the problem, for more checks.
+func (p *Problem) Response() *Response {
+	return p.response
+}
+
 // HasDetail checks the problem's detail.
 func (p *Problem) HasDetail(detail string) *Problem {
 	p.response.t.Helper()

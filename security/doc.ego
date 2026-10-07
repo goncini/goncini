@@ -1,0 +1,22 @@
+// Package security authenticates the users of goncini APIs: Symfony's
+// Security component, the light version. It has:
+//   - Hasher, which hashes passwords with argon2id and verifies bcrypt
+//     hashes too;
+//   - Tokens, which issues and verifies signed tokens (JWT, HS256) that
+//     name a user;
+//   - Firewall, middleware that authenticates requests carrying a token in
+//     their Authorization header, and puts their user in their context;
+//   - User and CurrentUser, which give handlers that user, and Required,
+//     middleware for routes that need one.
+//
+// Its failures are the AuthError cases, which answer 401 problems with a
+// WWW-Authenticate header.
+//
+//	r.Post("/users/login", httpkernel.Endpoint(u.Login))
+//	r.With(security.Required).Get("/user", httpkernel.Endpoint(u.Current))
+//
+//	effect (u *Users) Current(in struct{}) (User, error) {
+//		user := check security.CurrentUser[*User](ctx) ""
+//		return *user, nil
+//	}
+package security

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/goncini/goncini/httpkernel"
@@ -85,5 +86,17 @@ func TestProblemNeedsAnErrorStatus(t *testing.T) {
 		if rec.Code != http.StatusInternalServerError {
 			t.Errorf("status %d written as %d, want 500", status, rec.Code)
 		}
+	}
+}
+
+func TestProblemHeader(t *testing.T) {
+	rec := httptest.NewRecorder()
+	p := httpkernel.Problem{Status: 401, Header: http.Header{"www-authenticate": {`Token realm="api"`}}}
+	must httpkernel.WriteProblem(rec, p)
+	if got := rec.Header().Get("WWW-Authenticate"); got != `Token realm="api"` {
+		t.Errorf("WWW-Authenticate = %q", got)
+	}
+	if strings.Contains(rec.Body.String(), "realm") {
+		t.Errorf("the header is in the body: %s", rec.Body)
 	}
 }

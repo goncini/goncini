@@ -138,6 +138,25 @@ Databases, whatever library an app queries them with:
 - `examples/articles` keeps its articles in SQLite, with goose migrations;
   its tests each get a database of their own.
 
+### security
+
+Symfony's Security component, the light version:
+
+- **`Hasher`** hashes passwords with argon2id (OWASP's parameters by
+  default, PHC strings), verifies bcrypt hashes too, and says when a hash
+  `NeedsRehash`.
+- **`Tokens`** issues and verifies JWTs signed with HMAC-SHA256, naming a
+  user, from the `security.Config` section: a secret of 32 bytes or more,
+  a TTL, an issuer.
+- **`Firewall[U]`** authenticates requests with a token in their
+  `Authorization` header, and loads their user; requests without one go
+  through as anonymous, and an invalid token is a 401 even on a public
+  route. `User[U]` and `CurrentUser[U]` give handlers the user, and
+  `Required` guards routes.
+- Its failures are the `AuthError` cases, 401 problems with a
+  `WWW-Authenticate` header. For that, `httpkernel.Problem` gained a
+  `Header` of response headers, which the kernel's 405 now uses for `Allow`.
+
 ### Found while building
 
 - **Reviews:** independent reviews found 15 defects in `httpkernel` and 9 in

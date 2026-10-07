@@ -37,6 +37,10 @@ type Problem struct {
 	// Extensions are more members, written next to the ones above. Those
 	// named like the members above are left out.
 	Extensions map[string]any `json:",embed"`
+	// Header holds response headers that go with the problem, such as
+	// WWW-Authenticate for a 401, Allow for a 405, or Retry-After. They
+	// aren't members of the body.
+	Header http.Header `json:"-"`
 }
 
 // Violation is one thing a request got wrong. At most one of Pointer,
@@ -68,7 +72,7 @@ func (p Problem) Error() string {
 
 // status is p's status, or 500 if it isn't an error status.
 //
-//line problem.ego:59
+//line problem.ego:63
 func (p Problem) status() int {
 	if p.Status < 400 || p.Status > 599 {
 		return http.StatusInternalServerError
@@ -88,8 +92,8 @@ func (p Problem) title() string {
 }
 
 // WriteProblem writes p as the response, with the media type
-// application/problem+json. A Status that isn't 4xx or 5xx is written as
-// 500, and an empty Title as the status text.
+// application/problem+json and p.Header. A Status that isn't 4xx or 5xx is
+// written as 500, and an empty Title as the status text.
 //
 // Error responses must not fail, so invalid UTF-8 in the strings is
 // replaced, and extensions that can't be encoded are left out.
@@ -111,6 +115,9 @@ func WriteProblem(w http.ResponseWriter, p Problem) error {
 		if b, err = json.Marshal(p, opts...); err != nil {
 			return err
 		}
+	}
+	for name, values := range p.Header {
+		w.Header()[http.CanonicalHeaderKey(name)] = values
 	}
 	return writeBody(w, p.Status, "application/problem+json", b)
 }
@@ -151,14 +158,14 @@ func ProblemFor(err error) Problem {
 	if p, ok := errors.AsType[Problem](err); ok {
 		return p
 	} else if e, ok := errors.AsType[ProblemError](err); ok {
-//line problem.ego:140
+//line problem.ego:147
 		return e.Problem()
 	} else if e, ok := errors.AsType[BodyError](err); ok {
-//line problem.ego:141
+//line problem.ego:148
 		return bodyProblem(e)
 	} else {
 
-//line problem.ego:143
+//line problem.ego:150
 		if errors.Is(err, context.DeadlineExceeded) {
 			return Problem{Status: http.StatusGatewayTimeout, Detail: "the request took too long"}
 		}

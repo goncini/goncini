@@ -103,7 +103,7 @@ func Map[E error](problem func(error) Problem) ErrorMapper {
 	}
 }
 
-// Renderer writes a problem as the response to r.
+// Renderer writes a problem as the response to r, with its Header.
 type Renderer func(w http.ResponseWriter, r *http.Request, p Problem)
 
 // Validator checks the inputs Endpoint binds with rules that hold for any
@@ -478,15 +478,14 @@ func (u unmatched) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 //line kernel.ego:416
 		notFound(w, r)
 	case http.StatusMethodNotAllowed:
-
-//line kernel.ego:418
-		if allow := probe.header.Get("Allow"); allow != "" {
-			w.Header().Set("Allow", allow)
-		}
-		WriteError(w, r, Problem{Status: http.StatusMethodNotAllowed, Detail: fmt.Sprintf("%s isn't allowed on %s", r.Method, r.URL.EscapedPath())})
-
+//line kernel.ego:417
+		WriteError(w, r, Problem{
+			Status: http.StatusMethodNotAllowed,
+			Detail: fmt.Sprintf("%s isn't allowed on %s", r.Method, r.URL.EscapedPath()),
+			Header: http.Header{"Allow": probe.header.Values("Allow")},
+		})
 	default:
-//line kernel.ego:423
+//line kernel.ego:422
 		u.m.ServeHTTP(w, r)
 	}
 }
