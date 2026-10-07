@@ -14,6 +14,7 @@ import (
 
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
 )
 
@@ -38,7 +39,7 @@ func load(env *goncini.Env) config {
 func build(c goncini.HTTP, routes []routing.Routes, commands []console.Command) *goncini.App {
 	logger := slog.New(slog.DiscardHandler)
 	router := goncini.NewRouter(routes)
-	kernel := must goncini.NewKernel(c, router, nil, logger)
+	kernel := must goncini.NewKernel(c, router, nil, nil, goncini.NewRenderer(), goncini.NewValidator(), logger)
 	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, logger)
 }
 
@@ -94,12 +95,7 @@ func TestRun(t *testing.T) {
 		"debug:config": "" +
 			"{\n" +
 			"  \"HTTP\": {\n" +
-			"    \"Addr\": \"\",\n" +
-			"    \"TrustedProxies\": [],\n" +
-			"    \"TrustedHosts\": [],\n" +
-			"    \"BodyLimit\": 0,\n" +
-			"    \"ShutdownTimeout\": \"5s\",\n" +
-			"    \"Debug\": false\n" +
+			"    \"ShutdownTimeout\": \"5s\"\n" +
 			"  },\n" +
 			"  \"DSN\": \"postgres://app:******@******\"\n" +
 			"}\n",
@@ -151,8 +147,26 @@ func TestNewKernel(t *testing.T) {
 			t.Errorf("%s: %d", host, rec.Code)
 		}
 	}
+	// The app's middleware runs inside goncini's.
+	var mw httpkernel.Middleware = (next http.Handler) => http.HandlerFunc((w http.ResponseWriter, r *http.Request) => {
+		w.Header().Set("X-App", "1")
+		next.ServeHTTP(w, r)
+	})
+	logger := slog.New(slog.DiscardHandler)
+	k := must goncini.NewKernel(goncini.HTTP{TrustedHosts: []string{"api.example.com"}}, routing.New(), []httpkernel.Middleware{mw}, nil, nil, nil, logger)
+	rec := httptest.NewRecorder()
+	k.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://evil.example/", nil))
+	if rec.Code != 400 || rec.Header().Get("X-App") != "" {
+		t.Errorf("untrusted host: %d, X-App %q", rec.Code, rec.Header().Get("X-App"))
+	}
+	rec = httptest.NewRecorder()
+	k.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil))
+	if rec.Header().Get("X-App") != "1" {
+		t.Error("the app's middleware didn't run")
+	}
+
 	for _, c := range []goncini.HTTP{{TrustedProxies: []string{"lb.internal"}}, {TrustedHosts: []string{"api.example.com:443"}}} {
-		if _, err := goncini.NewKernel(c, routing.New(), nil, slog.New(slog.DiscardHandler)); err == nil {
+		if _, err := goncini.NewKernel(c, routing.New(), nil, nil, nil, nil, slog.New(slog.DiscardHandler)); err == nil {
 			t.Errorf("NewKernel(%+v) accepted it", c)
 		}
 	}

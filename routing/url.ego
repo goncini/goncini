@@ -75,6 +75,8 @@ func (r *Router) URL(name string, params Params) (string, URLError) {
 // absent: a wildcard needs a value, but a query parameter that is nil or
 // empty is left out, since httpkernel reads an empty one as absent.
 //
+// A value must also meet the route's requirement for its wildcard, if any.
+//
 // URL fails with ShadowedURL rather than return a URL that another route
 // would serve. For a route of every method, registered with Handle, it only
 // checks the routes of every method.
@@ -111,6 +113,13 @@ func (r *Route) param(s segment, params Params) (string, URLError) {
 	text, err := format(v)
 	if err != nil {
 		fail InvalidParam{Route: r.label(), Param: s.text, Reason: err.Error()}
+	}
+	r.t.mu.RLock()
+	i := slices.IndexFunc(r.requirements, q => q.name == s.text)
+	req := if i >= 0 { r.requirements[i] } else { requirement{} }
+	r.t.mu.RUnlock()
+	if req.re != nil && !req.re.MatchString(text) {
+		fail InvalidParam{Route: r.label(), Param: s.text, Reason: f"doesn't match its requirement {req.pattern}"}
 	}
 	if s.kind == wildcard {
 		if text == "" || text == "/" || text == "." || text == ".." {
@@ -165,8 +174,8 @@ func (t *table) servedBy(method, path string) string {
 		method = anyMethod
 	}
 	unescaped := url.PathUnescape(path) else path
-	_, pattern := t.mux.Handler(&http.Request{Method: method, URL: &url.URL{Path: unescaped, RawPath: path}})
-	return pattern
+	_, route := t.lookup(&http.Request{Method: method, URL: &url.URL{Path: unescaped, RawPath: path}})
+	return route?.pattern
 }
 
 // hasWildcard reports whether the route has a wildcard with the name.

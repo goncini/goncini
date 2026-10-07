@@ -118,16 +118,17 @@ func (k *Kernel) bodyLimit() int64 {
 	return DefaultBodyLimit
 }
 
-// validate checks a bound input: with its own Validate method if it has
-// one, then with the Validator of k, the kernel serving the request if any.
+// validate checks a bound input: with the Validator of k, the kernel
+// serving the request if any, then with the input's own Validate method if
+// it has one.
 func validate(ctx context.Context, k *Kernel, in any) error {
-	if v, ok := in.(interface{ Validate() error }); ok {
-		if err := v.Validate(); err != nil {
+	if k != nil && k.Validator != nil {
+		if err := k.Validator.Validate(ctx, in); err != nil {
 			return err
 		}
 	}
-	if k != nil && k.Validator != nil {
-		return k.Validator.Validate(ctx, in)
+	if v, ok := in.(interface{ Validate() error }); ok {
+		return v.Validate()
 	}
 	return nil
 }

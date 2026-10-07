@@ -62,7 +62,8 @@ func TestArticlesAPI(t *testing.T) {
 		{"GET", "/articles", "", 200, `"count":2`},
 		{"GET", "/articles?tag=go", "", 200, `"count":1`},
 		{"GET", "/articles?limit=1", "", 200, `{"articles":[{"slug":"second-post"`},
-		{"GET", "/articles?limit=0", "", 422, `"detail":"must be from 1 to 100","parameter":"limit"`},
+		{"GET", "/articles?limit=0", "", 422, `"detail":"must be at least 1","parameter":"limit"`},
+		{"POST", "/articles", `{"title":"Tags","body":"x","tags":["go",""]}`, 422, `"errors":[{"detail":"is required","pointer":"#/tags/1"}]`},
 		{"GET", "/articles?limit=all", "", 400, `"detail":"must be an integer","parameter":"limit"`},
 		{"DELETE", "/articles/hello-world", "", 405, `"detail":"DELETE isn't allowed on /articles/hello-world"`},
 	}
@@ -98,7 +99,7 @@ func TestRoutes(t *testing.T) {
 	if err := routing.WriteTable(&b, boot(t).Router.List()); err != nil {
 		panic(err)
 	}
-//line controller_test.ego:91
+//line controller_test.ego:92
 	want := "" +
 		"NAME            METHOD  PATH              HANDLER\n" +
 		"article_list    GET     /articles         articles.(*Articles).List\n" +

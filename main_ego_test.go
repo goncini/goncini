@@ -16,12 +16,13 @@ import (
 
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
 )
 
 // config is an app's config.
 //
-//line main_test.ego:21
+//line main_test.ego:22
 type config struct {
 	HTTP goncini.HTTP
 	DSN  string
@@ -32,13 +33,13 @@ func load(env *goncini.Env) config {
 	c := config{HTTP: goncini.HTTP{ShutdownTimeout: 5 * time.Second}}
 	switch env.Name {
 	case "dev":
-//line main_test.ego:30
+//line main_test.ego:31
 		c.DSN = "sqlite::memory:"
 	case "prod":
-//line main_test.ego:31
+//line main_test.ego:32
 		c.DSN = "postgres://app:" + env.Secret("DB_PASSWORD") + "@" + env.Secret("DB_HOST")
 	default:
-//line main_test.ego:32
+//line main_test.ego:33
 		env.Unknown()
 	}
 	return c
@@ -48,11 +49,11 @@ func load(env *goncini.Env) config {
 func build(c goncini.HTTP, routes []routing.Routes, commands []console.Command) *goncini.App {
 	logger := slog.New(slog.DiscardHandler)
 	router := goncini.NewRouter(routes)
-	kernel, err := goncini.NewKernel(c, router, nil, logger)
+	kernel, err := goncini.NewKernel(c, router, nil, nil, goncini.NewRenderer(), goncini.NewValidator(), logger)
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:42
+//line main_test.ego:43
 	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, logger)
 }
 
@@ -64,7 +65,7 @@ func (routes) Routes(r *routing.Router) {
 	})).Name("hello")
 }
 
-//line main_test.ego:52
+//line main_test.ego:53
 func TestLoad(t *testing.T) {
 	t.Setenv("DB_HOST", "db.internal")
 	_, _, err := goncini.Load(t.TempDir(), "prod", load)
@@ -76,7 +77,7 @@ func TestLoad(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:60
+//line main_test.ego:61
 	if cfg.DSN != "postgres://app:s3cret@db.internal" {
 		t.Errorf("DSN = %q", cfg.DSN)
 	}
@@ -114,12 +115,7 @@ func TestRun(t *testing.T) {
 		"debug:config": "" +
 			"{\n" +
 			"  \"HTTP\": {\n" +
-			"    \"Addr\": \"\",\n" +
-			"    \"TrustedProxies\": [],\n" +
-			"    \"TrustedHosts\": [],\n" +
-			"    \"BodyLimit\": 0,\n" +
-			"    \"ShutdownTimeout\": \"5s\",\n" +
-			"    \"Debug\": false\n" +
+			"    \"ShutdownTimeout\": \"5s\"\n" +
 			"  },\n" +
 			"  \"DSN\": \"postgres://app:******@******\"\n" +
 			"}\n",
@@ -171,8 +167,32 @@ func TestNewKernel(t *testing.T) {
 			t.Errorf("%s: %d", host, rec.Code)
 		}
 	}
+	// The app's middleware runs inside goncini's.
+	var mw httpkernel.Middleware = func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-App", "1")
+			next.ServeHTTP(w, r)
+		})
+	}
+	logger := slog.New(slog.DiscardHandler)
+	k, err := goncini.NewKernel(goncini.HTTP{TrustedHosts: []string{"api.example.com"}}, routing.New(), []httpkernel.Middleware{mw}, nil, nil, nil, logger)
+	if err != nil {
+		panic(err)
+	}
+//line main_test.ego:157
+	rec := httptest.NewRecorder()
+	k.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://evil.example/", nil))
+	if rec.Code != 400 || rec.Header().Get("X-App") != "" {
+		t.Errorf("untrusted host: %d, X-App %q", rec.Code, rec.Header().Get("X-App"))
+	}
+	rec = httptest.NewRecorder()
+	k.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://api.example.com/", nil))
+	if rec.Header().Get("X-App") != "1" {
+		t.Error("the app's middleware didn't run")
+	}
+
 	for _, c := range []goncini.HTTP{{TrustedProxies: []string{"lb.internal"}}, {TrustedHosts: []string{"api.example.com:443"}}} {
-		if _, err := goncini.NewKernel(c, routing.New(), nil, slog.New(slog.DiscardHandler)); err == nil {
+		if _, err := goncini.NewKernel(c, routing.New(), nil, nil, nil, nil, slog.New(slog.DiscardHandler)); err == nil {
 			t.Errorf("NewKernel(%+v) accepted it", c)
 		}
 	}

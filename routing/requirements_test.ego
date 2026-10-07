@@ -1,0 +1,116 @@
+package routing_test
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini/routing"
+)
+
+func TestRequirements(t *testing.T) {
+	r := routing.New()
+	r.Get("/articles/{id<[0-9]+>}", echo("id")).Name("by_id")
+	r.Get("/articles/{slug}", echo("slug")).Require("slug", routing.ASCIISlug).Name("by_slug")
+	r.Get("/files/{path...<.+\\.pdf>}", echo("path"))
+	r.Group("/users/{uid<\\d+>}").Get("/posts", echo("uid"))
+	r.Get("/days/{day}", echo("day")).Require("day", routing.DateYMD)
+
+	for target, want := range map[string]string{
+		"/articles/12":          "GET /articles/{id} id=12",
+		"/articles/hello-world": "GET /articles/{slug} slug=hello-world",
+		"/articles/caf%C3%A9":   "404",
+		"/articles/-":           "404",
+		"/files/a/b.pdf":        "GET /files/{path...} path=a/b.pdf",
+		"/files/a.txt":          "404",
+		"/users/7/posts":        "GET /users/{uid}/posts uid=7",
+		"/users/me/posts":       "404",
+		"/days/2026-10-07":      "GET /days/{day} day=2026-10-07",
+		"/days/2026-13-07":      "404",
+		"/articles/12?x=1":      "GET /articles/{id} id=12",
+	} {
+		rec := serve(r, "GET", target)
+		got := if rec.Code == 200 { rec.Body.String() } else { f"{rec.Code}" }
+		if got != want {
+			t.Errorf("GET %s: %s, want %s", target, got, want)
+		}
+		info, ok := r.Match(httptest.NewRequest("GET", target, nil))
+		if ok != (want != "404") || ok && !strings.HasPrefix(want, info.Pattern) {
+			t.Errorf("Match(GET %s) = %s, %v", target, info.Pattern, ok)
+		}
+	}
+
+	// Handler gives the pattern of the route that serves the request, as a
+	// kernel names its span after it.
+	if _, pattern := r.Handler(httptest.NewRequest("GET", "/articles/hello", nil)); pattern != "GET /articles/{slug}" {
+		t.Errorf("Handler pattern = %q", pattern)
+	}
+	if _, pattern := r.Handler(httptest.NewRequest("GET", "/articles/caf%C3%A9", nil)); pattern != "" {
+		t.Errorf("Handler pattern of a 404 = %q", pattern)
+	}
+
+	// URLs meet the requirements, and don't lead to the other route.
+	for _, tt := range []struct {
+		name   string
+		params routing.Params
+		want   string
+	}{
+		{"by_id", routing.Params{"id": 12}, "/articles/12"},
+		{"by_slug", routing.Params{"slug": "hello"}, "/articles/hello"},
+		{"by_id", routing.Params{"id": "abc"}, `route "by_id": parameter "id" doesn't match its requirement [0-9]+`},
+		{"by_slug", routing.Params{"slug": "12"}, `route "by_slug": /articles/12 would be served by GET /articles/{id}`},
+	} {
+		got, err := r.URL(tt.name, tt.params)
+		if err != nil {
+			got = err.Error()
+		}
+		if got != tt.want {
+			t.Errorf("URL(%s, %v) = %s, want %s", tt.name, tt.params, got, tt.want)
+		}
+	}
+
+	var b strings.Builder
+	must routing.WriteTable(&b, r.List()[:2])
+	if want := "NAME     METHOD  PATH                                              HANDLER\n" +
+		"by_id    GET     /articles/{id<[0-9]+>}                            http.HandlerFunc\n" +
+		"by_slug  GET     /articles/{slug<[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*>}  http.HandlerFunc\n"; b.String() != want {
+		t.Errorf("table:\n%s\nwant:\n%s", b.String(), want)
+	}
+}
+
+func TestRequirementMistakesPanic(t *testing.T) {
+	r := routing.New()
+	open := r.Get("/a/{x}", echo())
+	open2 := r.Get("/b/{x<\\d+>}/{w}", echo())
+	r.Get("/b/{y}/{v}", echo())
+	for want, f := range map[string]func(){
+		"has no wildcard \"y\"":                          () => { open.Require("y", ".+") },
+		"requirement \"(\" of \"x\"":                     () => { open.Require("x", "(") },
+		"require \"w\" before registering another route": () => { open2.Require("w", "1") },
+		"has a requirement for \"x\" already":            () => { r.Get("/c/{x<\\d+>}", echo()).Require("x", "1") },
+		"has no closing >}":                              () => { r.Get("/d/{x<\\d+}", echo()) },
+		"conflicts with GET /b/{y}/{v}":                  () => { r.Get("/b/{z<\\d+>}/{u}", echo()) },
+	} {
+		if msg := panics(t, f); !strings.Contains(msg, want) || !strings.Contains(msg, "requirements_test.ego:") {
+			t.Errorf("panic: %s\nwant it to contain %s", msg, want)
+		}
+	}
+}
+
+func TestRequirementsBehindMiddleware(t *testing.T) {
+	r := routing.New()
+	tag := func(name string) func(http.Handler) http.Handler {
+		return next => http.HandlerFunc((w http.ResponseWriter, req *http.Request) => {
+			w.Header().Set("X-Route", name)
+			next.ServeHTTP(w, req)
+		})
+	}
+	r.With(tag("id")).Get("/articles/{id<\\d+>}", echo("id"))
+	r.With(tag("slug")).Get("/articles/{slug}", echo("slug"))
+	for target, want := range map[string]string{"/articles/1": "id", "/articles/x": "slug"} {
+		if rec := serve(r, "GET", target); rec.Header().Get("X-Route") != want {
+			t.Errorf("GET %s ran the middleware of %q", target, rec.Header().Get("X-Route"))
+		}
+	}
+}

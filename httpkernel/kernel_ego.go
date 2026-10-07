@@ -49,11 +49,11 @@ type Kernel struct {
 	// ErrorMappers turn errors into problems. They are tried in order, then
 	// ProblemFor. Map makes one for an effect-go error set.
 	ErrorMappers []ErrorMapper
-	// Renderer writes the problems; nil means WriteProblem. An API with an
+	// Renderer writes the problems; nil means RenderProblem. An API with an
 	// error format of its own replaces it.
 	Renderer Renderer
-	// Validator checks the inputs Endpoint binds; nil leaves it to their
-	// Validate methods.
+	// Validator checks the inputs Endpoint binds, before their own Validate
+	// methods; nil leaves it to those.
 	Validator Validator
 	// BodyLimit is the most bytes Endpoint reads from a request body; zero
 	// means DefaultBodyLimit.
@@ -106,9 +106,11 @@ func Map[E error](problem func(error) Problem) ErrorMapper {
 // Renderer writes a problem as the response to r.
 type Renderer func(w http.ResponseWriter, r *http.Request, p Problem)
 
-// Validator checks the inputs Endpoint binds, after their own Validate
-// method if they have one. Its errors become responses like any other:
-// return Invalid(…) for a 422 that lists the violations.
+// Validator checks the inputs Endpoint binds with rules that hold for any
+// input, such as goncini's validator package and its struct tags. The
+// input's own Validate method runs only if it passes, so that method can
+// rely on those rules. Its errors become responses like any other: return
+// Invalid(…) for a 422 that lists the violations.
 type Validator interface {
 	Validate(ctx context.Context, v any) error
 }
@@ -266,7 +268,7 @@ func stateOf(ctx context.Context) *state {
 
 // kernelOf returns the kernel serving the request ctx belongs to, or nil.
 //
-//line kernel.ego:260
+//line kernel.ego:262
 func kernelOf(ctx context.Context) *Kernel {
 	st := stateOf(ctx)
 	var v *Kernel
@@ -285,7 +287,7 @@ func kernelOf(ctx context.Context) *Kernel {
 // goroutine that outlives the handler can't use it: work that must go on
 // after the response belongs in a longer-lived scope.
 //
-//line kernel.ego:273
+//line kernel.ego:275
 func RequestScope(ctx context.Context) *scope.Scope {
 	st := stateOf(ctx)
 	var v *scope.Scope
@@ -304,7 +306,7 @@ func RequestScope(ctx context.Context) *scope.Scope {
 // done) gets no response. If the response has already started, the problem
 // can only be logged.
 //
-//line kernel.ego:286
+//line kernel.ego:288
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	k := kernelOf(r.Context())
 	if clientGone(r.Context(), err) {
@@ -320,21 +322,26 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	if k != nil {
 		v = k.Debug
 	}
-	var v2 Renderer
-	if k != nil {
-		v2 = k.Renderer
-	}
-	debug, render := v, v2
-//line kernel.ego:298
-	if debug && p.status() >= 500 {
+	if v && p.status() >= 500 {
 		p = debugProblem(p, err)
 	}
-	if render != nil {
-		render(w, r, p)
-		return
+//line kernel.ego:302
+	var render Renderer
+	if k != nil && k.Renderer != nil {
+		render = k.Renderer
+	} else {
+		render = RenderProblem
 	}
-	if werr := WriteProblem(w, p); werr != nil {
-		k.logger().DebugContext(r.Context(), "writing a problem failed", requestAttrs(r, slog.Any("error", werr))...)
+//line kernel.ego:303
+	render(w, r, p)
+}
+
+// RenderProblem is the kernel's default Renderer: it writes p as
+// application/problem+json with WriteProblem, and logs at debug level if
+// that fails.
+func RenderProblem(w http.ResponseWriter, r *http.Request, p Problem) {
+	if err := WriteProblem(w, p); err != nil {
+		kernelOf(r.Context()).logger().DebugContext(r.Context(), "writing a problem failed", requestAttrs(r, slog.Any("error", err))...)
 	}
 }
 
@@ -355,7 +362,7 @@ func (k *Kernel) problemFor(err error) Problem {
 	if k != nil {
 		mappers = k.ErrorMappers
 	}
-//line kernel.ego:324
+//line kernel.ego:329
 	for _, m := range mappers {
 		if p, ok := m(err); ok {
 			return p
@@ -378,7 +385,7 @@ func (k *Kernel) logger() *slog.Logger {
 // log logs a failed request: 5xx problems as errors, with err (and a panic's
 // stack), and the others at debug level.
 //
-//line kernel.ego:339
+//line kernel.ego:344
 func (k *Kernel) log(r *http.Request, err error, p Problem) {
 	attrs := []slog.Attr{slog.Int("status", p.status())}
 	if pe, ok := errors.AsType[*scope.Panic](err); ok {
@@ -423,7 +430,7 @@ func routeOf(r *http.Request) string {
 
 // debugProblem adds what went wrong to a 5xx problem, for development.
 //
-//line kernel.ego:372
+//line kernel.ego:377
 func debugProblem(p Problem, err error) Problem {
 	if pe, ok := errors.AsType[*scope.Panic](err); ok {
 		p.Detail = fmt.Sprintf("panic: %v", pe.Value)
@@ -431,7 +438,7 @@ func debugProblem(p Problem, err error) Problem {
 		if ext == nil {
 			ext = map[string]any{}
 		}
-//line kernel.ego:376
+//line kernel.ego:381
 		ext["stack"] = strings.Split(strings.TrimSpace(string(pe.Stack)), "\n")
 		p.Extensions = ext
 	} else if p.Detail == "" {
@@ -468,18 +475,18 @@ func (u unmatched) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.ServeHTTP(probe, r)
 	switch probe.status {
 	case http.StatusNotFound:
-//line kernel.ego:411
+//line kernel.ego:416
 		notFound(w, r)
 	case http.StatusMethodNotAllowed:
 
-//line kernel.ego:413
+//line kernel.ego:418
 		if allow := probe.header.Get("Allow"); allow != "" {
 			w.Header().Set("Allow", allow)
 		}
 		WriteError(w, r, Problem{Status: http.StatusMethodNotAllowed, Detail: fmt.Sprintf("%s isn't allowed on %s", r.Method, r.URL.EscapedPath())})
 
 	default:
-//line kernel.ego:418
+//line kernel.ego:423
 		u.m.ServeHTTP(w, r)
 	}
 }

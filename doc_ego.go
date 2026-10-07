@@ -24,13 +24,13 @@
 //
 //	panic(layer.Build(goncini.Framework, Services, Autoconfigured))
 //
-// Framework is goncini's providers: NewLogger, NewRouter, NewKernel,
-// NewServer and NewApp. The app provides its own services, the services of
-// each kind goncini uses ([]routing.Routes, []httpkernel.ErrorMapper,
-// []console.Command), and the config sections that goncini's providers take
-// (HTTP and Log). Each
-// setting's zero value is a sensible default, and an app replaces any of
-// goncini's providers by passing its own to layer.Build.
+// Framework is goncini's providers. The app provides its own services, the
+// services of each kind goncini uses ([]routing.Routes,
+// []httpkernel.ErrorMapper, []console.Command), and the config sections
+// that goncini's providers take (HTTP and Log), whose zero values are
+// sensible defaults. It replaces any of goncini's providers by passing its
+// own to layer.Build: an httpkernel.Renderer for an error format of its
+// own, []httpkernel.Middleware, an httpkernel.Validator.
 //
 // # Commands
 //

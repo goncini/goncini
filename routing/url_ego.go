@@ -147,6 +147,8 @@ func (r *Router) URL(name string, params Params) (string, error) {
 // absent: a wildcard needs a value, but a query parameter that is nil or
 // empty is left out, since httpkernel reads an empty one as absent.
 //
+// A value must also meet the route's requirement for its wildcard, if any.
+//
 // URL fails with ShadowedURL rather than return a URL that another route
 // would serve. For a route of every method, registered with Handle, it only
 // checks the routes of every method.
@@ -156,19 +158,19 @@ func (r *Route) URL(params Params) (string, error) {
 		b.WriteByte('/')
 		switch s.kind {
 		case fixed:
-//line url.ego:86
+//line url.ego:88
 			b.WriteString(s.text)
 		case trailing:
-//line url.ego:87
+//line url.ego:89
 			continue
 		case wildcard, remainder:
 
-//line url.ego:89
+//line url.ego:91
 			v, err := r.param(s, params)
 			if err != nil {
 				return "", err
 			}
-//line url.ego:90
+//line url.ego:92
 			b.WriteString(v)
 
 		}
@@ -181,7 +183,7 @@ func (r *Route) URL(params Params) (string, error) {
 	if err != nil {
 		return "", err
 	}
-//line url.ego:99
+//line url.ego:101
 	if q != "" {
 		path += "?" + q
 	}
@@ -198,6 +200,19 @@ func (r *Route) param(s segment, params Params) (string, error) {
 	if err != nil {
 		return "", InvalidParam{Route: r.label(), Param: s.text, Reason: err.Error()}
 	}
+	r.t.mu.RLock()
+	i := slices.IndexFunc(r.requirements, func(q requirement) bool { return q.name == s.text })
+	var req requirement
+	if i >= 0 {
+		req = r.requirements[i]
+	} else {
+		req = requirement{}
+	}
+//line url.ego:120
+	r.t.mu.RUnlock()
+	if req.re != nil && !req.re.MatchString(text) {
+		return "", InvalidParam{Route: r.label(), Param: s.text, Reason: fmt.Sprintf("doesn't match its requirement %s", req.pattern)}
+	}
 	if s.kind == wildcard {
 		if text == "" || text == "/" || text == "." || text == ".." {
 			var reason string
@@ -206,7 +221,7 @@ func (r *Route) param(s segment, params Params) (string, error) {
 			} else {
 				reason = fmt.Sprintf("can't be %q", text)
 			}
-//line url.ego:118
+//line url.ego:127
 			return "", InvalidParam{Route: r.label(), Param: s.text, Reason: reason}
 		}
 		return url.PathEscape(text), nil
@@ -221,7 +236,7 @@ func (r *Route) param(s segment, params Params) (string, error) {
 			} else {
 				reason = fmt.Sprintf("has a %q segment", p)
 			}
-//line url.ego:127
+//line url.ego:136
 			return "", InvalidParam{Route: r.label(), Param: s.text, Reason: reason}
 		}
 		parts[i] = url.PathEscape(p)
@@ -266,12 +281,18 @@ func (t *table) servedBy(method, path string) string {
 	if err != nil {
 		unescaped = path
 	}
-//line url.ego:168
-	_, pattern := t.mux.Handler(&http.Request{Method: method, URL: &url.URL{Path: unescaped, RawPath: path}})
-	return pattern
+//line url.ego:177
+	_, route := t.lookup(&http.Request{Method: method, URL: &url.URL{Path: unescaped, RawPath: path}})
+	var v string
+	if route != nil {
+		v = route.pattern
+	}
+	return v
 }
 
 // hasWildcard reports whether the route has a wildcard with the name.
+//
+//line url.ego:182
 func (r *Route) hasWildcard(name string) bool {
 	for _, s := range r.segments {
 		if (s.kind == wildcard || s.kind == remainder) && s.text == name {
@@ -297,7 +318,7 @@ func (r *Route) label() string {
 
 // absent reports whether v is nil, or a nil pointer.
 //
-//line url.ego:191
+//line url.ego:200
 func absent(v any) bool {
 	rv := reflect.ValueOf(v)
 	return !rv.IsValid() || rv.Kind() == reflect.Pointer && rv.IsNil()
@@ -317,7 +338,7 @@ func formatAll(v any) ([]string, error) {
 				}
 				values[i] = v2
 			}
-//line url.ego:206
+//line url.ego:215
 			return values, nil
 		}
 	}
@@ -325,7 +346,7 @@ func formatAll(v any) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-//line url.ego:210
+//line url.ego:219
 	return []string{text}, nil
 }
 
@@ -347,7 +368,7 @@ func format(v any) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("can't be written as text: %w", err)
 		}
-//line url.ego:228
+//line url.ego:237
 		return string(b), nil
 	}
 	rv := reflect.ValueOf(v)
@@ -401,7 +422,7 @@ func (v segmentKind) String() string {
 
 // segment is a part of a route's path, between slashes.
 //
-//line url.ego:264
+//line url.ego:273
 type segment struct {
 	kind segmentKind
 	text string // fixed: the text, escaped; wildcards: the name
@@ -434,6 +455,6 @@ func segmentOf(s string) segment {
 	if err != nil {
 		text = s
 	}
-//line url.ego:293
+//line url.ego:302
 	return segment{kind: fixed, text: url.PathEscape(text)}
 }

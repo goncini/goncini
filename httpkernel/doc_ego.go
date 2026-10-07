@@ -70,8 +70,8 @@
 // absent), or a slice of them (every value of a repeated parameter).
 //
 // Invalid values are answered with a 400 problem that lists them all. Then
-// the input's own Validate method, if it has one, and the kernel's Validator
-// check it; they usually return Invalid, a 422.
+// the kernel's Validator, and the input's own Validate method if it has
+// one, check it; they usually return Invalid, a 422.
 //
 // Bodies are encoded and decoded with encoding/json/v2: member names match
 // field names case-sensitively, nil slices are written as [], and

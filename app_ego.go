@@ -10,6 +10,7 @@ import (
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/validator"
 
 	"github.com/effect-go/effect-go/layer"
 	"github.com/effect-go/effect-go/trace"
@@ -18,7 +19,7 @@ import (
 // HTTP configures how an app serves HTTP. Each field's zero value is the
 // default it names.
 //
-//line app.ego:15
+//line app.ego:16
 type HTTP struct {
 	// Addr is the TCP address to listen on; empty means ":8080".
 	Addr string
@@ -34,9 +35,19 @@ type HTTP struct {
 	// BodyLimit is the most bytes read from a request body; zero means
 	// httpkernel.DefaultBodyLimit.
 	BodyLimit int64
+	// ReadHeaderTimeout, ReadTimeout, WriteTimeout, IdleTimeout and
+	// MaxHeaderBytes are the server's, with httpkernel.Server's defaults.
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	MaxHeaderBytes    int
 	// ShutdownTimeout bounds how long shutting down waits for the requests
 	// in flight; zero means 30 seconds.
 	ShutdownTimeout time.Duration
+	// StopTimeout bounds how long a request waits for the fibers forked in
+	// its scope to stop; zero means 10 seconds.
+	StopTimeout time.Duration
 	// Debug puts error messages and panic stacks in 5xx responses. It is
 	// for development only: they reveal internals.
 	Debug bool
@@ -60,9 +71,14 @@ type App struct {
 	Logger   *slog.Logger
 }
 
-// Framework is goncini's providers, for an app's layer.Build: NewLogger,
-// NewRouter, NewKernel, NewServer and NewApp.
-var Framework = layer.Set(NewLogger, NewRouter, NewKernel, NewServer, NewApp)
+// Framework is goncini's providers, for an app's layer.Build. An app
+// replaces one by passing its own to layer.Build, next to Framework:
+//
+//	panic(layer.Build(goncini.Framework, Services, Autoconfigured, NewConduitRenderer))
+//
+// where NewConduitRenderer returns an httpkernel.Renderer. NewMiddleware,
+// NewRenderer and NewValidator are there to be replaced so.
+var Framework = layer.Set(NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewKernel, NewServer, NewApp)
 
 // NewLogger returns the logger of an app: records on stderr that carry the
 // trace and span IDs of the context they're logged with.
@@ -80,17 +96,36 @@ func NewRouter(routes []routing.Routes) *routing.Router {
 	return routing.New(routes...)
 }
 
+// NewMiddleware returns the app's own middleware for the kernel: none. An
+// app with some provides its own []httpkernel.Middleware instead.
+func NewMiddleware() []httpkernel.Middleware {
+	return nil
+}
+
+// NewRenderer returns the renderer of problems: httpkernel.RenderProblem,
+// which writes RFC 9457 problem+json. An API with an error format of its
+// own provides its own httpkernel.Renderer instead.
+func NewRenderer() httpkernel.Renderer {
+	return httpkernel.RenderProblem
+}
+
+// NewValidator returns the validator of inputs, which checks their validate
+// struct tags: see the validator package.
+func NewValidator() httpkernel.Validator {
+	return validator.New()
+}
+
 // NewKernel returns the kernel that serves router: behind the trusted
-// proxies and hosts of c, with an access log, and with mappers turning
-// errors into problems.
-func NewKernel(c HTTP, router *routing.Router, mappers []httpkernel.ErrorMapper, logger *slog.Logger) (*httpkernel.Kernel, error) {
+// proxies and hosts of c and an access log, then the app's middleware, with
+// mappers turning errors into problems that renderer writes.
+func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middleware, mappers []httpkernel.ErrorMapper, renderer httpkernel.Renderer, v httpkernel.Validator, logger *slog.Logger) (*httpkernel.Kernel, error) {
 	var mw []httpkernel.Middleware
 	if len(c.TrustedProxies) > 0 {
 		proxies, err := httpkernel.TrustProxies(c.TrustedProxies...)
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:83
+//line app.ego:118
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -98,15 +133,18 @@ func NewKernel(c HTTP, router *routing.Router, mappers []httpkernel.ErrorMapper,
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:87
+//line app.ego:122
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
 	return &httpkernel.Kernel{
 		Handler:      router,
-		Middleware:   mw,
+		Middleware:   append(mw, middleware...),
 		ErrorMappers: mappers,
+		Renderer:     renderer,
+		Validator:    v,
 		BodyLimit:    c.BodyLimit,
+		StopTimeout:  c.StopTimeout,
 		Logger:       logger,
 		Debug:        c.Debug,
 	}, nil
@@ -121,16 +159,21 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 		v = ":8080"
 	}
 	return &httpkernel.Server{
-		Addr:            v,
-		Handler:         kernel,
-		ShutdownTimeout: c.ShutdownTimeout,
-		Logger:          logger,
+		Addr:              v,
+		Handler:           kernel,
+		ReadHeaderTimeout: c.ReadHeaderTimeout,
+		ReadTimeout:       c.ReadTimeout,
+		WriteTimeout:      c.WriteTimeout,
+		IdleTimeout:       c.IdleTimeout,
+		MaxHeaderBytes:    c.MaxHeaderBytes,
+		ShutdownTimeout:   c.ShutdownTimeout,
+		Logger:            logger,
 	}
 }
 
 // NewApp returns the app made of these parts.
 //
-//line app.ego:111
+//line app.ego:154
 func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, logger *slog.Logger) *App {
 	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Logger: logger}
 }

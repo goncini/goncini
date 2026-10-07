@@ -59,6 +59,11 @@ outside the standard library:
   - a `{name}` value of `/`;
   - dot segments, since RFC 3986 and browsers treat `%2E` as a dot;
   - URLs that a more specific route would serve (`ShadowedURL`).
+- **Requirements,** as in Symfony: `/articles/{id<\d+>}` or
+  `Require("id", routing.Digits)`. Routes with the same path are tried in
+  order, so `/articles/{id<\d+>}` and `/articles/{slug}` can live together;
+  a request that meets no requirement gets a 404, and URLs check them too.
+  It costs about 7 ns per request.
 - **Startup checks:** conflicting routes, duplicate names, and paths ServeMux
   can't route panic at startup, saying where each route was registered.
 - **Listing:** `List`, `Match` and `WriteTable` list the routes for
@@ -78,10 +83,17 @@ Running an app, in the [layout](docs/layout.md) of goncini apps:
   changes. Environment variables only carry `APP_ENV` and secrets, read with
   `Env.Secret` from the process or from `.env` files, in Symfony's order. An
   unknown environment and every missing secret fail at boot, together.
-- **Providers:** `Framework`, the set of `NewLogger`, `NewRouter`,
-  `NewKernel`, `NewServer` and `NewApp`, configured by the `HTTP` and `Log` sections, whose zero values
-  are the defaults. Logs carry trace IDs; the kernel sits behind the trusted
-  proxies and hosts, with an access log.
+- **Providers:** `Framework` sets up the logger, router, kernel and server,
+  configured by the `HTTP` and `Log` sections, whose zero values are the
+  defaults; `HTTP` has the server's and the kernel's timeouts too. Logs carry
+  trace IDs; the kernel sits behind the trusted proxies and hosts, with an
+  access log. An app replaces any provider by passing its own to
+  `layer.Build`: a `Renderer` for an error format of its own, its
+  `[]httpkernel.Middleware`, a `Validator`.
+- **`validator`** checks `validate` struct tags with
+  go-playground/validator, and answers a 422 with a violation per failing
+  value: a pointer into the body, or the parameter or header. It runs
+  before an input's `Validate` method, which can rely on the tags.
 - **Commands:** `console` runs an app's commands, which are services. A
   command with flags declares them in a `Flags` method, and console parses
   them. goncini adds `serve` (the default, with `-addr` for a busy port),

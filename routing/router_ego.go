@@ -33,11 +33,12 @@ type Router struct {
 
 // table is what a router shares with the routers derived from it.
 type table struct {
-	mux       *http.ServeMux
-	mu        sync.RWMutex
-	routes    []*Route // in the order they were registered
-	byName    map[string]*Route
-	byPattern map[string]*Route
+	mux    *http.ServeMux
+	mu     sync.RWMutex
+	routes []*Route // in the order they were registered
+	byName map[string]*Route
+	groups map[string]*group // by the pattern registered on the mux
+	shapes map[string]*group // by shape
 }
 
 // Routes is implemented by the parts of an app that have routes, such as
@@ -54,9 +55,10 @@ type Routes interface {
 // registered in order.
 func New(routes ...Routes) *Router {
 	r := &Router{t: &table{
-		mux:       http.NewServeMux(),
-		byName:    map[string]*Route{},
-		byPattern: map[string]*Route{},
+		mux:    http.NewServeMux(),
+		byName: map[string]*Route{},
+		groups: map[string]*group{},
+		shapes: map[string]*group{},
 	}}
 	r.Include(routes...)
 	return r
@@ -154,20 +156,31 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 // another method would match: an httpkernel.Kernel answers those with
 // problems instead.
 func (r *Router) Handler(req *http.Request) (h http.Handler, pattern string) {
-	return r.t.mux.Handler(req)
+	h, route := r.t.lookup(req)
+	var v string
+	if route != nil {
+		v = route.pattern
+	}
+	return h, v
 }
 
-// Route is a registered route. Name names it, and URL builds its URLs.
+// Route is a registered route. Name names it, Require sets requirements on
+// its wildcards, and URL builds its URLs.
+//
+//line router.ego:161
 type Route struct {
-	t          *table
-	name       string
-	method     string
-	path       string
-	pattern    string
-	handler    http.Handler
-	source     string
-	namePrefix string
-	segments   []segment
+	t            *table
+	name         string
+	method       string
+	path         string
+	pattern      string
+	handler      http.Handler
+	served       http.Handler // handler, in the middleware
+	source       string
+	namePrefix   string
+	segments     []segment
+	requirements []requirement
+	group        *group
 }
 
 // add registers h, wrapped in r's middleware, for method and path. Only the
@@ -178,7 +191,7 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 	if path != "" && !strings.HasPrefix(path, "/") {
 		panic(fmt.Sprintf("routing: path %q doesn't start with / (%s)", path, source))
 	}
-	path = r.prefix + path
+	path, reqs := cutRequirements(r.prefix+path, source)
 	if path == "" {
 		path = "/"
 	}
@@ -193,7 +206,7 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 	} else {
 		pattern = muxPath
 	}
-//line router.ego:187
+//line router.ego:194
 	if f, ok := h.(http.HandlerFunc); h == nil || ok && f == nil {
 		panic(fmt.Sprintf("routing: nil handler for %s (%s)", pattern, source))
 	}
@@ -207,11 +220,15 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 		path:       path,
 		pattern:    pattern,
 		handler:    h,
+		served:     served,
 		source:     source,
 		namePrefix: r.namePrefix,
 		segments:   segments(muxPath),
 	}
-	r.t.add(route, served)
+	r.t.add(route)
+	for _, q := range reqs {
+		route.Require(q[0], q[1])
+	}
 	return route
 }
 
@@ -235,25 +252,41 @@ func mustBeRoutable(p, source string) {
 		if err != nil {
 			text = s
 		}
-//line router.ego:225
+//line router.ego:236
 		if text == "." || text == ".." {
 			panic(fmt.Sprintf("routing: path %q has a %q segment (%s), which clients resolve away", p, text, source))
 		}
 	}
 }
 
-// add registers a route on the ServeMux, with h serving it.
-func (t *table) add(route *Route, h http.Handler) {
+// add registers a route: on the ServeMux, or in the group of the routes
+// with the same method and path, after them.
+func (t *table) add(route *Route) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	defer func() {
-		if v := recover(); v != nil {
-			panic(t.explain(route, v))
+	key := shape(route)
+	if g := t.shapes[key]; g != nil {
+		if last := g.routes[len(g.routes)-1]; len(last.requirements) == 0 {
+			panic(fmt.Sprintf("routing: %s (%s) conflicts with %s (%s): %s matches the same requests as %s, which has no requirements", route.pattern, route.source, last.pattern, last.source, route.pattern, last.pattern))
 		}
+		g.routes = append(g.routes, route)
+		route.group = g
+		t.routes = append(t.routes, route)
+		return
+	}
+	g := &group{t: t, routes: []*Route{route}}
+	func() {
+		defer func() {
+			if v := recover(); v != nil {
+				panic(t.explain(route, v))
+			}
+		}()
+		t.mux.Handle(route.pattern, g)
 	}()
-	t.mux.Handle(route.pattern, h)
+	route.group = g
+	t.groups[route.pattern] = g
+	t.shapes[key] = g
 	t.routes = append(t.routes, route)
-	t.byPattern[route.pattern] = route
 }
 
 // explain is the message for a route that ServeMux refused, with what

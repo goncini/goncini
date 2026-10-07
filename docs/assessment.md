@@ -173,7 +173,7 @@ func dbConfig(c Config) db.Config                                       { return
 
 ### 3.4 Order of work (components first)
 
-> **Status (2026-10-07):** steps 1, 2, 4 and 5 are built: [`httpkernel`](../httpkernel), [`routing`](../routing), config as code, [`console`](../console) and `goncini.Main`, used by [examples/articles](../examples/articles) in the [layout](layout.md). Exporting spans is left for when an app needs it: the kernel's spans go to the global tracer provider, and log records carry their trace IDs. [CHANGELOG.md](../CHANGELOG.md) says what they do, what building them found, and where they differ from this plan.
+> **Status (2026-10-07):** steps 1 to 5 are built: [`httpkernel`](../httpkernel), [`routing`](../routing) with requirements, [`validator`](../validator), config as code, [`console`](../console) and `goncini.Main`, used by [examples/articles](../examples/articles) in the [layout](layout.md). Exporting spans is left for when an app needs it: the kernel's spans go to the global tracer provider, and log records carry their trace IDs. [CHANGELOG.md](../CHANGELOG.md) says what they do, what building them found, and where they differ from this plan.
 
 Each step is a package that works in any `net/http` app, the way Laravel uses Symfony's HttpFoundation. effect-go matters most from step 4.
 
@@ -209,7 +209,7 @@ Each step is a package that works in any `net/http` app, the way Laravel uses Sy
 - Are error mappers registered on the kernel (proposed) or provided as services?
 - Validation: struct tags plus `Validate()` (proposed), or rules in Go code only?
 - Default error body: RFC 9457 problem+json (proposed)?
-- Routing: host routes, and requirements on wildcards? Without them, `/articles/abc` for an integer id is a 400 from binding rather than a 404. Redirects between `/x` and `/x/` are ServeMux's alone.
+- Routing: host routes? Redirects between `/x` and `/x/` are ServeMux's alone. (Requirements on wildcards are built, as in Symfony.)
 
 ## Prior art
 

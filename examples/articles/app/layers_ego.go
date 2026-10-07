@@ -22,17 +22,20 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	articles2 := articles.NewArticles(v)
 	v2 := routes(articles2)
 	router := goncini.NewRouter(v2)
-	v3 := problems()
+	v3 := goncini.NewMiddleware()
+	v4 := problems()
+	renderer := goncini.NewRenderer()
+	validator := goncini.NewValidator()
 	log := logConfig(cfg)
 	logger := goncini.NewLogger(log)
-	kernel, err := goncini.NewKernel(http, router, v3, logger)
+	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
 	server := goncini.NewServer(http, kernel, logger)
 	slugCommand := articles.NewSlugCommand(articles2)
-	v4 := commands(slugCommand)
-	app := goncini.NewApp(kernel, server, router, v4, logger)
+	v5 := commands(slugCommand)
+	app := goncini.NewApp(kernel, server, router, v5, logger)
 	return app, nil
 }
 
@@ -42,16 +45,19 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	articles2 := articles.NewArticles(now)
 	v := routes(articles2)
 	router := goncini.NewRouter(v)
-	v2 := problems()
+	v2 := goncini.NewMiddleware()
+	v3 := problems()
+	renderer := goncini.NewRenderer()
+	validator := goncini.NewValidator()
 	log := logConfig(cfg)
 	logger := goncini.NewLogger(log)
-	kernel, err := goncini.NewKernel(http, router, v2, logger)
+	kernel, err := goncini.NewKernel(http, router, v2, v3, renderer, validator, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
 	server := goncini.NewServer(http, kernel, logger)
 	slugCommand := articles.NewSlugCommand(articles2)
-	v3 := commands(slugCommand)
-	app := goncini.NewApp(kernel, server, router, v3, logger)
+	v4 := commands(slugCommand)
+	app := goncini.NewApp(kernel, server, router, v4, logger)
 	return app, nil
 }

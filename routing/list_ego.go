@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"text/tabwriter"
 )
 
 // Info describes a route.
 //
-//line list.ego:11
+//line list.ego:12
 type Info struct {
 	Name    string       // empty for a route without a name
 	Method  string       // empty for a route of every method
@@ -19,10 +20,20 @@ type Info struct {
 	Pattern string       // what the ServeMux matches: GET /api/articles/{slug}
 	Handler http.Handler // as registered, without the middleware
 	Source  string       // where it was registered, as file:line
+	// Requirements are the regular expressions that wildcards' values must
+	// match, by wildcard name.
+	Requirements map[string]string
 }
 
 func (r *Route) info() Info {
-	return Info{Name: r.name, Method: r.method, Path: r.path, Pattern: r.pattern, Handler: r.handler, Source: r.source}
+	info := Info{Name: r.name, Method: r.method, Path: r.path, Pattern: r.pattern, Handler: r.handler, Source: r.source}
+	for _, q := range r.requirements {
+		if info.Requirements == nil {
+			info.Requirements = map[string]string{}
+		}
+		info.Requirements[q.name] = q.pattern
+	}
+	return info
 }
 
 // List returns the routes in the order they were registered.
@@ -38,25 +49,25 @@ func (r *Router) List() []Info {
 
 // Match returns the route that serves req, and reports whether there is
 // one. A request that ServeMux redirects to a cleaner path, such as one
-// with a double slash, gets the route of that path.
+// with a double slash, gets the first route of that path.
 func (r *Router) Match(req *http.Request) (Info, bool) {
-	_, pattern := r.t.mux.Handler(req)
-	r.t.mu.RLock()
-	defer r.t.mu.RUnlock()
-	route := r.t.byPattern[pattern]
+	_, route := r.t.lookup(req)
 	if route == nil {
 		return Info{}, false
 	}
+	r.t.mu.RLock()
+	defer r.t.mu.RUnlock()
 	return route.info(), true
 }
 
 // WriteTable writes routes as a table, one route per line, the way
 // debug:router prints them:
 //
-//	NAME          METHOD  PATH              HANDLER
-//	article_list  GET     /articles         main.(*Articles).List
-//	article_show  GET     /articles/{slug}  main.(*Articles).Show
+//	NAME          METHOD  PATH                 HANDLER
+//	article_list  GET     /articles            main.(*Articles).List
+//	article_show  GET     /articles/{id<\d+>}  main.(*Articles).Show
 //
+// Requirements are written in the path, as in Symfony's route syntax.
 // A handler is named by its String method if it has one, as
 // httpkernel.Endpoint's handlers do, or else by its type.
 func WriteTable(w io.Writer, routes []Info) error {
@@ -69,10 +80,20 @@ func WriteTable(w io.Writer, routes []Info) error {
 		} else {
 			method = "ANY"
 		}
-//line list.ego:63
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Name, method, r.Path, describe(r.Handler))
+//line list.ego:74
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Name, method, withRequirements(r.Path, r.Requirements), describe(r.Handler))
 	}
 	return tw.Flush()
+}
+
+// withRequirements writes requirements into a path: /articles/{id<\d+>}.
+func withRequirements(path string, reqs map[string]string) string {
+	for name, re := range reqs {
+		for _, w := range []string{"{" + name + "}", "{" + name + "...}"} {
+			path = strings.Replace(path, w, w[:len(w)-1]+"<"+re+">}", 1)
+		}
+	}
+	return path
 }
 
 // describe names a handler.

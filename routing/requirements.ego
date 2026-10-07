@@ -1,0 +1,197 @@
+package routing
+
+import (
+	"net/http"
+	"net/url"
+	"regexp"
+	"slices"
+	"strings"
+)
+
+// Requirements for common wildcards, as Symfony's Requirement class has
+// them: regular expressions for Route.Require, or for a path such as
+// /articles/{id<[0-9]+>}.
+const (
+	Digits      = `[0-9]+`
+	PositiveInt = `[1-9][0-9]*`
+	ASCIISlug   = `[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*`
+	UUID        = `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`
+	DateYMD     = `[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])`
+)
+
+// requirement is a regular expression that a wildcard's value must match
+// for the route to match.
+type requirement struct {
+	name    string
+	pattern string
+	re      *regexp.Regexp // pattern, anchored at both ends
+	pos     int            // the wildcard's position among the route's wildcards
+}
+
+// Require makes the route match only the requests whose wildcard name has a
+// value that pattern, a regular expression, matches as a whole:
+//
+//	r.Get("/articles/{id}", h).Require("id", routing.Digits)
+//
+// which can also be written in the path: /articles/{id<[0-9]+>}. A request
+// for /articles/abc then gets a 404, or the next route registered with the
+// same path, such as /articles/{slug}; and building the URL of the route
+// with an id of "abc" fails. Require panics if the route has no wildcard
+// with the name, or a requirement for it already, or if pattern doesn't
+// compile; and once a route has been registered after this one with the
+// same path, since that route was registered as reachable.
+func (r *Route) Require(name, pattern string) *Route {
+	pos := slices.IndexFunc(r.wildcards(), s => s.text == name)
+	if pos < 0 {
+		panic(f"routing: {r.pattern} ({r.source}) has no wildcard {name:q} to require")
+	}
+	re, err := regexp.Compile(`^(?:` + pattern + `)$`)
+	if err != nil {
+		panic(f"routing: requirement {pattern:q} of {name:q} in {r.pattern} ({r.source}): {err}")
+	}
+	r.t.mu.Lock()
+	defer r.t.mu.Unlock()
+	if slices.ContainsFunc(r.requirements, q => q.name == name) {
+		panic(f"routing: {r.pattern} ({r.source}) has a requirement for {name:q} already")
+	}
+	if g := r.group; g.routes[len(g.routes)-1] != r {
+		panic(f"routing: {r.pattern} ({r.source}): require {name:q} before registering another route with the same path")
+	}
+	r.requirements = append(r.requirements, requirement{name: name, pattern: pattern, re: re, pos: pos})
+	return r
+}
+
+// wildcards returns the segments of the route that are wildcards, in order.
+func (r *Route) wildcards() []segment {
+	return slices.DeleteFunc(slices.Clone(r.segments), s => s.kind != wildcard && s.kind != remainder)
+}
+
+// cutRequirements takes the requirements out of a path's wildcards, as in
+// /articles/{id<[0-9]+>}, and returns the path without them, with the
+// requirements by wildcard name, in order.
+func cutRequirements(path, source string) (string, [][2]string) {
+	var b strings.Builder
+	var reqs [][2]string
+	for {
+		open := strings.IndexByte(path, '{')
+		if open < 0 {
+			b.WriteString(path)
+			return b.String(), reqs
+		}
+		end := strings.IndexAny(path[open:], "<}")
+		if end < 0 || path[open+end] == '}' {
+			cut := if end < 0 { len(path) } else { open + end + 1 }
+			b.WriteString(path[:cut])
+			path = path[cut:]
+			continue
+		}
+		name := path[open+1 : open+end]
+		closing := strings.Index(path[open+end:], ">}")
+		if closing < 0 {
+			panic(f"routing: the requirement of {name:q} in {path:q} has no closing >}} ({source})")
+		}
+		reqs = append(reqs, [2]string{strings.TrimSuffix(name, "..."), path[open+end+1 : open+end+closing]})
+		b.WriteString(path[:open+1] + name + "}")
+		path = path[open+end+closing+2:]
+	}
+}
+
+// group is the routes registered with the same method and path, but for
+// the names of their wildcards: ServeMux has one pattern for them, and
+// group serves each request with the first route whose requirements it
+// meets.
+type group struct {
+	t      *table
+	routes []*Route
+}
+
+// shape is the pattern of a route with its wildcards unnamed: the key of
+// its group.
+func shape(route *Route) string {
+	var b strings.Builder
+	b.WriteString(route.method + " ")
+	for _, s := range route.segments {
+		b.WriteString("/" + match s.kind {
+			fixed     => s.text
+			wildcard  => "{}"
+			remainder => "{...}"
+			trailing  => "{$}"
+		})
+	}
+	return b.String()
+}
+
+// ServeHTTP serves req with the route that matches it, with the path values
+// and pattern of that route; or else answers 404.
+func (g *group) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	route, values := g.match(req)
+	if route == nil {
+		http.NotFound(w, req)
+		return
+	}
+	if route.pattern != req.Pattern {
+		for i, s := range route.wildcards() {
+			req.SetPathValue(s.text, values[i])
+		}
+		req.Pattern = route.pattern
+	}
+	route.served.ServeHTTP(w, req)
+}
+
+// match returns the first route of g that meets its requirements, if any,
+// with the values of its wildcards. ServeMux matched req's path with the
+// pattern of the group.
+func (g *group) match(req *http.Request) (*Route, []string) {
+	g.t.mu.RLock()
+	defer g.t.mu.RUnlock()
+	if len(g.routes) == 1 && len(g.routes[0].requirements) == 0 {
+		return g.routes[0], nil // the common case: no values needed
+	}
+	values := pathValues(g.routes[0].segments, req.URL.EscapedPath())
+	for _, route := range g.routes {
+		if !slices.ContainsFunc(route.requirements, q => !q.re.MatchString(values[q.pos])) {
+			return route, values
+		}
+	}
+	return nil, nil
+}
+
+// pathValues returns the values of the wildcards of a path that ServeMux
+// matched with segs, in order, unescaped as ServeMux gives them.
+func pathValues(segs []segment, path string) []string {
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	var values []string
+	for i, s := range segs {
+		if s.kind != wildcard && s.kind != remainder {
+			continue
+		}
+		raw := ""
+		if i < len(parts) {
+			raw = if s.kind == wildcard { parts[i] } else { strings.Join(parts[i:], "/") }
+		}
+		value := url.PathUnescape(raw) else raw
+		values = append(values, value)
+	}
+	return values
+}
+
+// lookup returns the handler for req and the route that serves it, as
+// ServeMux.Handler does with the requirements of the routes on top: a
+// request that meets none gets ServeMux's 404 and no route. A request that
+// ServeMux redirects to a cleaner path gets the first route of that path.
+func (t *table) lookup(req *http.Request) (http.Handler, *Route) {
+	h, pattern := t.mux.Handler(req)
+	if g, ok := h.(*group); ok {
+		route, _ := g.match(req)
+		if route == nil {
+			return http.NotFoundHandler(), nil
+		}
+		return g, route
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if g := t.groups[pattern]; g != nil {
+		return h, g.routes[0]
+	}
+	return h, nil
+}

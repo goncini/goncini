@@ -45,11 +45,11 @@ type Kernel struct {
 	// ErrorMappers turn errors into problems. They are tried in order, then
 	// ProblemFor. Map makes one for an effect-go error set.
 	ErrorMappers []ErrorMapper
-	// Renderer writes the problems; nil means WriteProblem. An API with an
+	// Renderer writes the problems; nil means RenderProblem. An API with an
 	// error format of its own replaces it.
 	Renderer Renderer
-	// Validator checks the inputs Endpoint binds; nil leaves it to their
-	// Validate methods.
+	// Validator checks the inputs Endpoint binds, before their own Validate
+	// methods; nil leaves it to those.
 	Validator Validator
 	// BodyLimit is the most bytes Endpoint reads from a request body; zero
 	// means DefaultBodyLimit.
@@ -102,9 +102,11 @@ func Map[E error](problem func(error) Problem) ErrorMapper {
 // Renderer writes a problem as the response to r.
 type Renderer func(w http.ResponseWriter, r *http.Request, p Problem)
 
-// Validator checks the inputs Endpoint binds, after their own Validate
-// method if they have one. Its errors become responses like any other:
-// return Invalid(…) for a 422 that lists the violations.
+// Validator checks the inputs Endpoint binds with rules that hold for any
+// input, such as goncini's validator package and its struct tags. The
+// input's own Validate method runs only if it passes, so that method can
+// rely on those rules. Its errors become responses like any other: return
+// Invalid(…) for a 422 that lists the violations.
 type Validator interface {
 	Validate(ctx context.Context, v any) error
 }
@@ -294,16 +296,19 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	if started(w) {
 		return
 	}
-	debug, render := k?.Debug, k?.Renderer
-	if debug && p.status() >= 500 {
+	if k?.Debug && p.status() >= 500 {
 		p = debugProblem(p, err)
 	}
-	if render != nil {
-		render(w, r, p)
-		return
-	}
-	if werr := WriteProblem(w, p); werr != nil {
-		k.logger().DebugContext(r.Context(), "writing a problem failed", requestAttrs(r, slog.Any("error", werr))...)
+	render := k?.Renderer ?? RenderProblem
+	render(w, r, p)
+}
+
+// RenderProblem is the kernel's default Renderer: it writes p as
+// application/problem+json with WriteProblem, and logs at debug level if
+// that fails.
+func RenderProblem(w http.ResponseWriter, r *http.Request, p Problem) {
+	if err := WriteProblem(w, p); err != nil {
+		kernelOf(r.Context()).logger().DebugContext(r.Context(), "writing a problem failed", requestAttrs(r, slog.Any("error", err))...)
 	}
 }
 

@@ -89,7 +89,7 @@ func ProjectDir() string {
 //     developer whose port is taken;
 //   - debug:router, which lists the routes;
 //   - debug:config, which prints cfg as JSON, with the values of env's
-//     secrets masked;
+//     secrets masked, and without its zero values, which are defaults;
 //   - list and help, which describe the commands.
 func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, args []string) error {
 	commands := []console.Command{
@@ -117,11 +117,11 @@ func (c serveCommand) Run(ctx context.Context, out io.Writer, args []string) err
 	return c.server.ListenAndServe(ctx)
 }
 
-// writeConfig writes cfg as indented JSON, with the values of env's secrets
-// masked.
+// writeConfig writes cfg as indented JSON, without its zero values, which
+// are defaults, and with the values of env's secrets masked.
 func writeConfig(out io.Writer, env *Env, cfg any) error {
 	durations := json.MarshalToFunc((enc *jsontext.Encoder, d time.Duration) => enc.WriteToken(jsontext.String(d.String())))
-	b := check json.Marshal(cfg, jsontext.WithIndent("  "), json.WithMarshalers(durations)) ""
+	b := check json.Marshal(cfg, jsontext.WithIndent("  "), json.OmitZeroStructFields(true), json.WithMarshalers(durations)) ""
 	text := string(b)
 	for _, secret := range env.read {
 		quoted := must json.Marshal(secret)

@@ -35,6 +35,25 @@
 // than the other, are a conflict: registering the second one panics, and
 // says where both were registered.
 //
+// # Requirements
+//
+// As in Symfony, a wildcard can require its value to match a regular
+// expression, in the path or with Require; constants such as Digits and
+// UUID hold common ones:
+//
+//	r.Get("/articles/{id<\d+>}", httpkernel.Endpoint(c.ShowByID))
+//	r.Get("/articles/{slug}", httpkernel.Endpoint(c.Show)).Require("slug", routing.ASCIISlug)
+//
+// A route matches only the requests that meet its requirements. Routes with
+// the same method and path, but for the names of their wildcards, are tried
+// in the order they were registered, so /articles/12 goes to the first route
+// above and /articles/hello-world to the second; a request that meets none
+// gets a 404. Every route but the last of such routes needs requirements,
+// or the next one could never match: registering it panics, as a conflict.
+// Routes with different paths are still told apart by ServeMux, and a
+// request that a route matches but doesn't meet the requirements of gets a
+// 404, not another route.
+//
 // # URLs
 //
 // A Route builds its URLs from its parameters, so that paths are written
@@ -53,8 +72,8 @@
 //
 // Parameters that aren't wildcards of the route go into the query string.
 // Each value is escaped, so that the route gets back exactly the value
-// given, and URL fails rather than return a URL that a more specific route
-// would serve. The URLError cases say what went wrong; they are mistakes in
+// given, a value must meet its wildcard's requirement, and URL fails rather
+// than return a URL that another route would serve. The URLError cases say what went wrong; they are mistakes in
 // the code that builds the URL, so a handler can panic on them with must.
 //
 // # Listing

@@ -276,7 +276,7 @@ func TestConflictsSayWhereBothRoutesAre(t *testing.T) {
 	second := nextLine()
 	msg := panics(t, func() { r.Get("/articles/{id}", echo()) })
 	want := "routing: GET /articles/{id} (" + second + ") conflicts with GET /articles/{slug} (" + first + "): " +
-		"GET /articles/{id} matches the same requests as GET /articles/{slug}"
+		"GET /articles/{id} matches the same requests as GET /articles/{slug}, which has no requirements"
 	if msg != want {
 		t.Errorf("panic: %s\nwant:  %s", msg, want)
 	}

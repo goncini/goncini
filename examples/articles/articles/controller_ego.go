@@ -26,14 +26,7 @@ func (a *Articles) Routes(r *routing.Router) {
 
 type ListInput struct {
 	Tag   string `query:"tag"`
-	Limit int    `query:"limit" default:"20"`
-}
-
-func (in *ListInput) Validate() error {
-	if in.Limit < 1 || in.Limit > 100 {
-		return httpkernel.Invalid(httpkernel.Violation{Parameter: "limit", Detail: "must be from 1 to 100"})
-	}
-	return nil
+	Limit int    `query:"limit" default:"20" validate:"min=1,max=100"`
 }
 
 type ListOutput struct {
@@ -45,7 +38,7 @@ type ListOutput struct {
 func (a *Articles) List(ctx context.Context, in ListInput) (_ ListOutput, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.List")
 	defer trace.End(span, &err)
-//line controller.ego:39
+//line controller.ego:32
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	var list []Article
@@ -65,7 +58,7 @@ type ShowInput struct {
 func (a *Articles) Show(ctx context.Context, in ShowInput) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Show")
 	defer trace.End(span, &err)
-//line controller.ego:56
+//line controller.ego:49
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	art, ok := a.bySlug[in.Slug]
@@ -79,10 +72,11 @@ type CreateInput struct {
 	Body struct {
 		Title string   `json:"title"`
 		Body  string   `json:"body"`
-		Tags  []string `json:"tags"`
+		Tags  []string `json:"tags" validate:"max=5,dive,required"`
 	}
 }
 
+// Validate checks what the validate tags can't express.
 func (in *CreateInput) Validate() error {
 	var vs []httpkernel.Violation
 	if strings.TrimSpace(in.Body.Title) == "" {
@@ -102,7 +96,7 @@ func (in *CreateInput) Validate() error {
 func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Created[Article], err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Create")
 	defer trace.End(span, &err)
-//line controller.ego:90
+//line controller.ego:84
 	slug := slugify(in.Body.Title)
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -116,6 +110,6 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 	if err != nil {
 		panic(err)
 	}
-//line controller.ego:100
+//line controller.ego:94
 	return httpkernel.Created[Article]{Location: loc, Body: art}, nil
 }
