@@ -1,6 +1,7 @@
 package httpkernel
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/effect-go/effect-go/scope"
+	"github.com/goncini/goncini/event"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -65,6 +67,9 @@ type Kernel struct {
 	// Debug puts error messages and panic stacks in 5xx responses. Never set
 	// it in production: they reveal internals.
 	Debug bool
+	// Events, if any, gets the kernel's events: RequestEvent, ErrorEvent
+	// and ResponseEvent.
+	Events *event.Dispatcher
 
 	once  sync.Once
 	chain http.Handler
@@ -130,6 +135,12 @@ func (k *Kernel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	st := &state{kernel: k, request: r}
 	r = r.WithContext(context.WithValue(ctx, stateKey{}, st))
 	defer k.end(span, tw, r, st)
+	if event.Has[ResponseEvent](k.Events) {
+		start := time.Now()
+		defer func() {
+			dispatched(k, r, &ResponseEvent{Request: r, Status: cmp.Or(tw.Status(), http.StatusOK), Size: tw.Size(), Duration: time.Since(start)})
+		}()
+	}
 	k.serve(tw, r, st)
 }
 
@@ -179,6 +190,12 @@ func (k *Kernel) serve(w *ResponseTracker, r *http.Request, st *state) {
 				st.pattern = req.Pattern
 			}
 		}()
+		if event.Has[RequestEvent](k.Events) {
+			if err := event.Dispatch(req.Context(), k.Events, &RequestEvent{Request: req}); err != nil {
+				WriteError(w, req, err)
+				return struct{}{}, nil
+			}
+		}
 		k.chain.ServeHTTP(w, req)
 		return struct{}{}, nil
 	}, scope.StopTimeout(orDefault(k.StopTimeout, 10*time.Second)))
@@ -298,6 +315,11 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	if k?.Debug && p.status() >= 500 {
 		p = debugProblem(p, err)
+	}
+	if event.Has[ErrorEvent](k?.Events) {
+		e := &ErrorEvent{Request: r, Err: err, Problem: p}
+		dispatched(k, r, e)
+		p = e.Problem
 	}
 	render := k?.Renderer ?? RenderProblem
 	render(w, r, p)

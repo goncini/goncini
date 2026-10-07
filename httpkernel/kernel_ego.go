@@ -3,6 +3,7 @@
 package httpkernel
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/effect-go/effect-go/scope"
+	"github.com/goncini/goncini/event"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -39,7 +41,7 @@ import (
 //
 // Set the fields before the first request and don't change them after.
 //
-//line kernel.ego:39
+//line kernel.ego:41
 type Kernel struct {
 	// Handler serves the requests: a router, or an *http.ServeMux.
 	Handler http.Handler
@@ -69,6 +71,9 @@ type Kernel struct {
 	// Debug puts error messages and panic stacks in 5xx responses. Never set
 	// it in production: they reveal internals.
 	Debug bool
+	// Events, if any, gets the kernel's events: RequestEvent, ErrorEvent
+	// and ResponseEvent.
+	Events *event.Dispatcher
 
 	once  sync.Once
 	chain http.Handler
@@ -134,6 +139,12 @@ func (k *Kernel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	st := &state{kernel: k, request: r}
 	r = r.WithContext(context.WithValue(ctx, stateKey{}, st))
 	defer k.end(span, tw, r, st)
+	if event.Has[ResponseEvent](k.Events) {
+		start := time.Now()
+		defer func() {
+			dispatched(k, r, &ResponseEvent{Request: r, Status: cmp.Or(tw.Status(), http.StatusOK), Size: tw.Size(), Duration: time.Since(start)})
+		}()
+	}
 	k.serve(tw, r, st)
 }
 
@@ -183,6 +194,12 @@ func (k *Kernel) serve(w *ResponseTracker, r *http.Request, st *state) {
 				st.pattern = req.Pattern
 			}
 		}()
+		if event.Has[RequestEvent](k.Events) {
+			if err := event.Dispatch(req.Context(), k.Events, &RequestEvent{Request: req}); err != nil {
+				WriteError(w, req, err)
+				return struct{}{}, nil
+			}
+		}
 		k.chain.ServeHTTP(w, req)
 		return struct{}{}, nil
 	}, scope.StopTimeout(orDefault(k.StopTimeout, 10*time.Second)))
@@ -268,7 +285,7 @@ func stateOf(ctx context.Context) *state {
 
 // kernelOf returns the kernel serving the request ctx belongs to, or nil.
 //
-//line kernel.ego:262
+//line kernel.ego:279
 func kernelOf(ctx context.Context) *Kernel {
 	st := stateOf(ctx)
 	var v *Kernel
@@ -287,7 +304,7 @@ func kernelOf(ctx context.Context) *Kernel {
 // goroutine that outlives the handler can't use it: work that must go on
 // after the response belongs in a longer-lived scope.
 //
-//line kernel.ego:275
+//line kernel.ego:292
 func RequestScope(ctx context.Context) *scope.Scope {
 	st := stateOf(ctx)
 	var v *scope.Scope
@@ -306,7 +323,7 @@ func RequestScope(ctx context.Context) *scope.Scope {
 // done) gets no response. If the response has already started, the problem
 // can only be logged.
 //
-//line kernel.ego:288
+//line kernel.ego:305
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	k := kernelOf(r.Context())
 	if clientGone(r.Context(), err) {
@@ -325,14 +342,24 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	if v && p.status() >= 500 {
 		p = debugProblem(p, err)
 	}
-//line kernel.ego:302
+//line kernel.ego:319
+	var v2 *event.Dispatcher
+	if k != nil {
+		v2 = k.Events
+	}
+	if event.Has[ErrorEvent](v2) {
+		e := &ErrorEvent{Request: r, Err: err, Problem: p}
+		dispatched(k, r, e)
+		p = e.Problem
+	}
+//line kernel.ego:324
 	var render Renderer
 	if k != nil && k.Renderer != nil {
 		render = k.Renderer
 	} else {
 		render = RenderProblem
 	}
-//line kernel.ego:303
+//line kernel.ego:325
 	render(w, r, p)
 }
 
@@ -362,7 +389,7 @@ func (k *Kernel) problemFor(err error) Problem {
 	if k != nil {
 		mappers = k.ErrorMappers
 	}
-//line kernel.ego:329
+//line kernel.ego:351
 	for _, m := range mappers {
 		if p, ok := m(err); ok {
 			return p
@@ -385,7 +412,7 @@ func (k *Kernel) logger() *slog.Logger {
 // log logs a failed request: 5xx problems as errors, with err (and a panic's
 // stack), and the others at debug level.
 //
-//line kernel.ego:344
+//line kernel.ego:366
 func (k *Kernel) log(r *http.Request, err error, p Problem) {
 	attrs := []slog.Attr{slog.Int("status", p.status())}
 	if pe, ok := errors.AsType[*scope.Panic](err); ok {
@@ -430,7 +457,7 @@ func routeOf(r *http.Request) string {
 
 // debugProblem adds what went wrong to a 5xx problem, for development.
 //
-//line kernel.ego:377
+//line kernel.ego:399
 func debugProblem(p Problem, err error) Problem {
 	if pe, ok := errors.AsType[*scope.Panic](err); ok {
 		p.Detail = fmt.Sprintf("panic: %v", pe.Value)
@@ -438,7 +465,7 @@ func debugProblem(p Problem, err error) Problem {
 		if ext == nil {
 			ext = map[string]any{}
 		}
-//line kernel.ego:381
+//line kernel.ego:403
 		ext["stack"] = strings.Split(strings.TrimSpace(string(pe.Stack)), "\n")
 		p.Extensions = ext
 	} else if p.Detail == "" {
@@ -475,17 +502,17 @@ func (u unmatched) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.ServeHTTP(probe, r)
 	switch probe.status {
 	case http.StatusNotFound:
-//line kernel.ego:416
+//line kernel.ego:438
 		notFound(w, r)
 	case http.StatusMethodNotAllowed:
-//line kernel.ego:417
+//line kernel.ego:439
 		WriteError(w, r, Problem{
 			Status: http.StatusMethodNotAllowed,
 			Detail: fmt.Sprintf("%s isn't allowed on %s", r.Method, r.URL.EscapedPath()),
 			Header: http.Header{"Allow": probe.header.Values("Allow")},
 		})
 	default:
-//line kernel.ego:422
+//line kernel.ego:444
 		u.m.ServeHTTP(w, r)
 	}
 }

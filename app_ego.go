@@ -11,6 +11,7 @@ import (
 
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/cors"
+	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
@@ -23,7 +24,7 @@ import (
 // HTTP configures how an app serves HTTP. Each field's zero value is the
 // default it names.
 //
-//line app.ego:20
+//line app.ego:21
 type HTTP struct {
 	// Addr is the TCP address to listen on; empty means ":8080".
 	Addr string
@@ -80,6 +81,8 @@ type App struct {
 	Logger   *slog.Logger
 	// OpenAPI is the document of the app's API.
 	OpenAPI *openapi.Document
+	// Events dispatches the app's events, and the kernel's.
+	Events *event.Dispatcher
 }
 
 // ServeHTTP serves r with the app's kernel.
@@ -113,7 +116,7 @@ type Check func(ctx context.Context) error
 //
 // where NewConduitRenderer returns an httpkernel.Renderer. NewLogHandler,
 // NewMiddleware, NewRenderer and NewValidator are there to be replaced so.
-var Framework = layer.Set(NewLogHandler, NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewKernel, NewServer, NewOpenAPI, NewApp)
+var Framework = layer.Set(NewLogHandler, NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewDispatcher, NewKernel, NewServer, NewOpenAPI, NewApp)
 
 // NewLogHandler returns where an app's logs go: text or JSON records on
 // stderr, from c.Level up. An app that logs with another library, such as
@@ -156,17 +159,23 @@ func NewValidator() httpkernel.Validator {
 	return validator.New()
 }
 
+// NewDispatcher returns the dispatcher of the app's events, with the
+// listeners of its subscribers, which goncini generate collects.
+func NewDispatcher(subscribers []event.Subscriber) *event.Dispatcher {
+	return event.New(subscribers...)
+}
+
 // NewKernel returns the kernel that serves router: behind the trusted
 // proxies and hosts of c, an access log and CORS, then the app's middleware, with
 // mappers turning errors into problems that renderer writes.
-func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middleware, mappers []httpkernel.ErrorMapper, renderer httpkernel.Renderer, v httpkernel.Validator, logger *slog.Logger) (*httpkernel.Kernel, error) {
+func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middleware, mappers []httpkernel.ErrorMapper, renderer httpkernel.Renderer, v httpkernel.Validator, events *event.Dispatcher, logger *slog.Logger) (*httpkernel.Kernel, error) {
 	var mw []httpkernel.Middleware
 	if len(c.TrustedProxies) > 0 {
 		proxies, err := httpkernel.TrustProxies(c.TrustedProxies...)
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:159
+//line app.ego:168
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -174,7 +183,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:163
+//line app.ego:172
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
@@ -183,7 +192,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:168
+//line app.ego:177
 		mw = append(mw, cors)
 	}
 	return &httpkernel.Kernel{
@@ -196,6 +205,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		StopTimeout:  c.StopTimeout,
 		Logger:       logger,
 		Debug:        c.Debug,
+		Events:       events,
 	}, nil
 }
 
@@ -224,21 +234,21 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 // serves, with the doc comments and errors of a, and serves it on router
 // as c says.
 //
-//line app.ego:201
+//line app.ego:211
 func NewOpenAPI(c openapi.Config, router *routing.Router, kernel *httpkernel.Kernel, a openapi.Annotations) (*openapi.Document, error) {
 	doc, err := openapi.Generate(router.List(), kernel, c, a)
 	if err != nil {
 		return nil, err
 	}
-//line app.ego:203
+//line app.ego:213
 	if err := openapi.Mount(router, doc, c); err != nil {
 		return nil, err
 	}
-//line app.ego:204
+//line app.ego:214
 	return doc, nil
 }
 
 // NewApp returns the app made of these parts.
-func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger, doc *openapi.Document) *App {
-	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger, OpenAPI: doc}
+func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger, doc *openapi.Document, events *event.Dispatcher) *App {
+	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger, OpenAPI: doc, Events: events}
 }

@@ -35,10 +35,12 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v4 := autoProblems()
 	renderer := goncini.NewRenderer()
 	validator := goncini.NewValidator()
+	v5 := autoSubscribers()
+	dispatcher := goncini.NewDispatcher(v5)
 	log := autoConfigLog(cfg)
 	handler := goncini.NewLogHandler(log)
 	logger := goncini.NewLogger(handler)
-	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, logger)
+	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, dispatcher, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
@@ -48,16 +50,16 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v5 := autoCommands(slugCommand, migrator2)
-	v6 := autoChecks(db2)
-	v7 := autoServices()
+	v6 := autoCommands(slugCommand, migrator2)
+	v7 := autoChecks(db2)
+	v8 := autoServices()
 	config3 := autoDefaultOpenapiConfig()
 	annotations := autoOpenAPI()
 	document, err := goncini.NewOpenAPI(config3, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
-	app := goncini.NewApp(kernel, server, router, v5, v6, v7, logger, document)
+	app := goncini.NewApp(kernel, server, router, v6, v7, v8, logger, document, dispatcher)
 	return app, nil
 }
 
@@ -79,10 +81,12 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	v3 := autoProblems()
 	renderer := goncini.NewRenderer()
 	validator := goncini.NewValidator()
+	v4 := autoSubscribers()
+	dispatcher := goncini.NewDispatcher(v4)
 	log := autoConfigLog(cfg)
 	handler := goncini.NewLogHandler(log)
 	logger := goncini.NewLogger(handler)
-	kernel, err := goncini.NewKernel(http, router, v2, v3, renderer, validator, logger)
+	kernel, err := goncini.NewKernel(http, router, v2, v3, renderer, validator, dispatcher, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
@@ -92,15 +96,15 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v4 := autoCommands(slugCommand, migrator2)
-	v5 := autoChecks(db2)
-	v6 := autoServices()
+	v5 := autoCommands(slugCommand, migrator2)
+	v6 := autoChecks(db2)
+	v7 := autoServices()
 	config3 := autoDefaultOpenapiConfig()
 	annotations := autoOpenAPI()
 	document, err := goncini.NewOpenAPI(config3, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
-	app := goncini.NewApp(kernel, server, router, v4, v5, v6, logger, document)
+	app := goncini.NewApp(kernel, server, router, v5, v6, v7, logger, document, dispatcher)
 	return app, nil
 }

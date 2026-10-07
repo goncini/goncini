@@ -1,0 +1,93 @@
+package event_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini/event"
+)
+
+type published struct {
+	Slug string
+	seen []string
+}
+
+type deleted struct{ Slug string }
+
+// feed subscribes to published articles.
+type feed struct{}
+
+func (f feed) Subscribe(d *event.Dispatcher) {
+	event.On(d, f.onPublished)
+}
+
+func (feed) onPublished(ctx context.Context, e *published) error {
+	e.seen = append(e.seen, "feed")
+	return nil
+}
+
+func TestDispatch(t *testing.T) {
+	d := event.New(feed{})
+	event.On(d, func(ctx context.Context, e *published) error {
+		e.seen = append(e.seen, "late")
+		return nil
+	}, event.Priority(-10))
+	event.On(d, func(ctx context.Context, e *published) error {
+		e.seen = append(e.seen, "first")
+		return nil
+	}, event.Priority(10))
+	event.On(d, func(ctx context.Context, e *published) error {
+		e.seen = append(e.seen, "second")
+		return nil
+	})
+	e := &published{Slug: "hello"}
+	must event.Dispatch(context.Background(), d, e)
+	if got := strings.Join(e.seen, " "); got != "first feed second late" {
+		t.Errorf("listeners ran as %q", got)
+	}
+	if !event.Has[published](d) || event.Has[deleted](d) {
+		t.Error("Has is wrong")
+	}
+	must event.Dispatch(context.Background(), d, &deleted{}) // no listener
+	must event.Dispatch[published](context.Background(), nil, &published{})
+}
+
+func TestStopAndErrors(t *testing.T) {
+	d := event.New()
+	boom := errors.New("boom")
+	var ran []string
+	event.On(d, func(ctx context.Context, e *published) error {
+		ran = append(ran, e.Slug)
+		return if e.Slug == "stop" { event.Stop } else if e.Slug == "fail" { boom } else { nil }
+	})
+	event.On(d, func(ctx context.Context, e *published) error {
+		ran = append(ran, "after "+e.Slug)
+		return nil
+	})
+	ctx := context.Background()
+	if err := event.Dispatch(ctx, d, &published{Slug: "stop"}); err != nil {
+		t.Errorf("stop: %v", err)
+	}
+	if err := event.Dispatch(ctx, d, &published{Slug: "fail"}); !errors.Is(err, boom) {
+		t.Errorf("fail: %v", err)
+	}
+	if got := strings.Join(ran, ", "); got != "stop, fail" {
+		t.Errorf("ran %q", got)
+	}
+}
+
+func TestList(t *testing.T) {
+	d := event.New(feed{})
+	event.On(d, func(ctx context.Context, e *deleted) error { return nil }, event.Priority(5))
+	var b strings.Builder
+	must event.WriteTable(&b, d.List())
+	want := "" +
+		"EVENT                 PRIORITY  LISTENER\n" +
+		"event_test.deleted    5         event_test.TestList.func1\n" +
+		"event_test.published  0         event_test.feed.onPublished\n"
+	if b.String() != want {
+		t.Errorf("table:\n%s", b.String())
+	}
+}

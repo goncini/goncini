@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
@@ -39,7 +40,7 @@ import (
 // exits with status 2. Anything else that fails is logged, and exits with
 // status 1.
 //
-//line main.ego:37
+//line main.ego:38
 func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C) (*App, error)) {
 	env, cfg, err := Load(ProjectDir(), "", load)
 	if err != nil {
@@ -60,7 +61,7 @@ func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C)
 		}
 		return err
 	})
-//line main.ego:54
+//line main.ego:55
 	if usage != nil {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
@@ -76,12 +77,12 @@ func Load[C any](dir, name string, load func(*Env) C) (*Env, C, error) {
 	if err != nil {
 		return nil, *new(C), err
 	}
-//line main.ego:66
+//line main.ego:67
 	cfg = load(env)
 	if err := env.Err(); err != nil {
 		return nil, *new(C), err
 	}
-//line main.ego:68
+//line main.ego:69
 	return env, cfg, nil
 }
 
@@ -94,7 +95,7 @@ func ProjectDir() string {
 	if err != nil {
 		wd = "."
 	}
-//line main.ego:77
+//line main.ego:78
 	for dir := wd; ; dir = filepath.Dir(dir) {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
@@ -113,6 +114,7 @@ func ProjectDir() string {
 //     of the config, for a developer whose port is taken;
 //   - debug:router, which lists the routes;
 //   - openapi:dump, which prints the app's OpenAPI document;
+//   - debug:event-dispatcher, which lists the listeners of each event;
 //   - debug:container, which lists the app's services, as goncini generate
 //     describes them;
 //   - debug:config, which prints cfg as JSON, with the values of env's
@@ -125,6 +127,9 @@ func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, a
 			return routing.WriteTable(out, app.Router.List())
 		}),
 		console.New("openapi:dump", "Prints the OpenAPI document", func(ctx context.Context, out io.Writer, args []string) error { return writeDocument(out, app.OpenAPI) }),
+		console.New("debug:event-dispatcher", "Lists the listeners of each event", func(ctx context.Context, out io.Writer, args []string) error {
+			return event.WriteTable(out, app.Events.List())
+		}),
 		console.New("debug:config", "Prints the config, with secrets masked", func(ctx context.Context, out io.Writer, args []string) error { return writeConfig(out, env, cfg) }),
 		console.New("debug:container", "Lists the app's services", func(ctx context.Context, out io.Writer, args []string) error { return writeServices(out, app.Services) }),
 	}
@@ -137,7 +142,7 @@ func writeDocument(out io.Writer, doc *openapi.Document) error {
 	if err2 != nil {
 		return err2
 	}
-//line main.ego:114
+//line main.ego:117
 	_, err := fmt.Fprintf(out, "%s\n", b)
 	return err
 }
@@ -190,7 +195,7 @@ func writeConfig(out io.Writer, env *Env, cfg any) error {
 	if err != nil {
 		return err
 	}
-//line main.ego:163
+//line main.ego:166
 	dec := jsontext.NewDecoder(bytes.NewReader(b))
 	enc := jsontext.NewEncoder(out, jsontext.WithIndent("  "))
 	for {
@@ -201,7 +206,7 @@ func writeConfig(out io.Writer, env *Env, cfg any) error {
 		if err != nil {
 			return err
 		}
-//line main.ego:171
+//line main.ego:174
 		if tok.Kind() == '"' {
 			s := tok.String()
 			for _, secret := range env.read {

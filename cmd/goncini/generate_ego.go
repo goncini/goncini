@@ -124,6 +124,7 @@ var kinds = []kind{
 	{"autoCommands", "console.Command", "autoCommands are the services that are console commands, and the commands of the migrator."},
 	{"autoChecks", "goncini.Check", "autoChecks ping the services that can be pinged, such as the database, before serving."},
 	{"autoVoters", "security.Voter", "autoVoters are the services that are security voters."},
+	{"autoSubscribers", "event.Subscriber", "autoSubscribers are the services that subscribe to events."},
 }
 
 // sections are the config sections that goncini's providers take.
@@ -155,7 +156,7 @@ func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 	if err2 != nil {
 		return nil, err2
 	}
-//line generate.ego:117
+//line generate.ego:118
 	var b strings.Builder
 	var names []string
 	for _, k := range kinds {
@@ -230,7 +231,7 @@ func load(root, appDir string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:188
+//line generate.ego:189
 	var errs []error
 	packages.Visit(pkgs, nil, func(p *packages.Package) {
 		for _, e := range p.Errors {
@@ -240,12 +241,12 @@ func load(root, appDir string) (*app, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-//line generate.ego:195
+//line generate.ego:196
 	dir, err := filepath.Abs(filepath.Join(root, appDir))
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:196
+//line generate.ego:197
 	a := &app{all: pkgs, imports: map[string]string{}}
 	for _, p := range pkgs {
 		if len(p.GoFiles) > 0 && filepath.Dir(p.GoFiles[0]) == dir {
@@ -258,7 +259,7 @@ func load(root, appDir string) (*app, error) {
 	if err := a.findProviders(); err != nil {
 		return nil, err
 	}
-//line generate.ego:206
+//line generate.ego:207
 	return a, nil
 }
 
@@ -330,7 +331,7 @@ func isFunc(info *types.Info, x ast.Expr, path, name string) bool {
 
 // ident is the name in x, an identifier or a selector, or nil.
 //
-//line generate.ego:270
+//line generate.ego:271
 func ident(x ast.Expr) *ast.Ident {
 	switch x := x.(type) {
 	case *ast.Ident:
@@ -421,7 +422,7 @@ func (a *app) lookup(name string) types.Type {
 	} else {
 		path = gonciniPath + "/" + pkgName
 	}
-//line generate.ego:355
+//line generate.ego:356
 	var found types.Type
 	packages.Visit(a.all, nil, func(p *packages.Package) {
 		if found == nil && p.PkgPath == path {
@@ -444,14 +445,14 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 	switch k.name {
 	case "autoProblems":
 
-//line generate.ego:376
+//line generate.ego:377
 		for _, v := range a.mappers(elem) {
 			items = append(items, a.qualify(v.Pkg())+"."+v.Name())
 		}
 
 	case "autoChecks":
 
-//line generate.ego:381
+//line generate.ego:382
 		for _, t := range a.provided {
 			if m := pinger(t); m != "" {
 				add(t, "$."+m)
@@ -460,7 +461,7 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 
 	default:
 
-//line generate.ego:388
+//line generate.ego:389
 		iface, _ := elem.Underlying().(*types.Interface)
 		for _, t := range a.provided {
 			if iface != nil && types.Implements(t, iface) && !types.IsInterface(t) {
@@ -483,7 +484,7 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 			return params, v2
 		}
 	}
-//line generate.ego:404
+//line generate.ego:405
 	return params, list
 }
 
@@ -596,7 +597,7 @@ func describe(root, appDir string) ([]service, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:513
+//line generate.ego:514
 	if len(pkgs) != 1 || len(pkgs[0].Errors) > 0 {
 		return nil, nil
 	}
@@ -624,7 +625,7 @@ func describe(root, appDir string) ([]service, error) {
 		}
 		return v
 	}
-//line generate.ego:532
+//line generate.ego:533
 	var services []service
 	for _, stmt := range build.Body.List {
 		assign, ok := stmt.(*ast.AssignStmt)

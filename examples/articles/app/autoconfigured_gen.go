@@ -10,6 +10,7 @@ import (
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/examples/articles/articles"
 	"github.com/goncini/goncini/examples/articles/config"
 	"github.com/goncini/goncini/httpkernel"
@@ -19,7 +20,7 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoDefaultOpenapiConfig)
+var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoSubscribers, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoDefaultOpenapiConfig)
 
 // autoRoutes are the services that have routes, in the order they are provided.
 func autoRoutes(p1 *articles.Articles) []routing.Routes {
@@ -41,6 +42,11 @@ func autoChecks(p1 *sql.DB) []goncini.Check {
 	return []goncini.Check{p1.PingContext}
 }
 
+// autoSubscribers are the services that subscribe to events.
+func autoSubscribers() []event.Subscriber {
+	return []event.Subscriber{}
+}
+
 // autoServices describes the app's services, for debug:container.
 func autoServices() []goncini.Service {
 	return []goncini.Service{
@@ -57,10 +63,12 @@ func autoServices() []goncini.Service {
 		{Type: "[]httpkernel.ErrorMapper", Provider: "autoProblems", Needs: []string{}},
 		{Type: "httpkernel.Renderer", Provider: "goncini.NewRenderer", Needs: []string{}},
 		{Type: "httpkernel.Validator", Provider: "goncini.NewValidator", Needs: []string{}},
+		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{}},
+		{Type: "*event.Dispatcher", Provider: "goncini.NewDispatcher", Needs: []string{"[]event.Subscriber"}},
 		{Type: "goncini.Log", Provider: "autoConfigLog", Needs: []string{"config.Config"}},
 		{Type: "slog.Handler", Provider: "goncini.NewLogHandler", Needs: []string{"goncini.Log"}},
 		{Type: "*slog.Logger", Provider: "goncini.NewLogger", Needs: []string{"slog.Handler"}},
-		{Type: "*httpkernel.Kernel", Provider: "goncini.NewKernel", Needs: []string{"goncini.HTTP", "*routing.Router", "[]httpkernel.Middleware", "[]httpkernel.ErrorMapper", "httpkernel.Renderer", "httpkernel.Validator", "*slog.Logger"}},
+		{Type: "*httpkernel.Kernel", Provider: "goncini.NewKernel", Needs: []string{"goncini.HTTP", "*routing.Router", "[]httpkernel.Middleware", "[]httpkernel.ErrorMapper", "httpkernel.Renderer", "httpkernel.Validator", "*event.Dispatcher", "*slog.Logger"}},
 		{Type: "*httpkernel.Server", Provider: "goncini.NewServer", Needs: []string{"goncini.HTTP", "*httpkernel.Kernel", "*slog.Logger"}},
 		{Type: "*articles.SlugCommand", Provider: "articles.NewSlugCommand", Needs: []string{"*articles.Articles"}},
 		{Type: "db.Migrator", Provider: "migrator", Needs: []string{"*sql.DB"}},
@@ -70,7 +78,7 @@ func autoServices() []goncini.Service {
 		{Type: "openapi.Config", Provider: "autoDefaultOpenapiConfig", Needs: []string{}},
 		{Type: "openapi.Annotations", Provider: "autoOpenAPI", Needs: []string{}},
 		{Type: "*openapi.Document", Provider: "goncini.NewOpenAPI", Needs: []string{"openapi.Config", "*routing.Router", "*httpkernel.Kernel", "openapi.Annotations"}},
-		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger", "*openapi.Document"}},
+		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger", "*openapi.Document", "*event.Dispatcher"}},
 	}
 }
 

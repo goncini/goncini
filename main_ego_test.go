@@ -53,7 +53,7 @@ func load(env *goncini.Env) config {
 func build(c goncini.HTTP, routes []routing.Routes, commands []console.Command) *goncini.App {
 	logger := slog.New(slog.DiscardHandler)
 	router := goncini.NewRouter(routes)
-	kernel, err := goncini.NewKernel(c, router, nil, nil, goncini.NewRenderer(), goncini.NewValidator(), logger)
+	kernel, err := goncini.NewKernel(c, router, nil, nil, goncini.NewRenderer(), goncini.NewValidator(), nil, logger)
 	if err != nil {
 		panic(err)
 	}
@@ -64,7 +64,7 @@ func build(c goncini.HTTP, routes []routing.Routes, commands []console.Command) 
 		panic(err)
 	}
 //line main_test.ego:49
-	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, services, logger, doc)
+	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, services, logger, doc, goncini.NewDispatcher(nil))
 }
 
 // routes registers a route.
@@ -119,6 +119,7 @@ func TestRun(t *testing.T) {
 			"NAME     METHOD  PATH           HANDLER\n" +
 			"hello    GET     /hello         http.HandlerFunc\n" +
 			"openapi  GET     /openapi.json  openapi.Handler\n",
+		"debug:event-dispatcher": "EVENT  PRIORITY  LISTENER\n",
 		"openapi:dump": "" +
 			"{\n" +
 			"  \"openapi\": \"3.1.0\",\n" +
@@ -147,7 +148,7 @@ func TestRun(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:123
+//line main_test.ego:124
 	for _, name := range []string{"serve", "debug:router", "debug:config", "greet"} {
 		if !strings.Contains(list, "\n"+name+" ") {
 			t.Errorf("list doesn't have %s:\n%s", name, list)
@@ -212,11 +213,11 @@ func TestNewKernel(t *testing.T) {
 		})
 	}
 	logger := slog.New(slog.DiscardHandler)
-	k, err := goncini.NewKernel(goncini.HTTP{TrustedHosts: []string{"api.example.com"}}, routing.New(), []httpkernel.Middleware{mw}, nil, nil, nil, logger)
+	k, err := goncini.NewKernel(goncini.HTTP{TrustedHosts: []string{"api.example.com"}}, routing.New(), []httpkernel.Middleware{mw}, nil, nil, nil, nil, logger)
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:186
+//line main_test.ego:187
 	rec := httptest.NewRecorder()
 	k.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://evil.example/", nil))
 	if rec.Code != 400 || rec.Header().Get("X-App") != "" {
@@ -229,7 +230,7 @@ func TestNewKernel(t *testing.T) {
 	}
 
 	for _, c := range []goncini.HTTP{{TrustedProxies: []string{"lb.internal"}}, {TrustedHosts: []string{"api.example.com:443"}}, {CORS: cors.Config{AllowOrigins: []string{"*"}, AllowCredentials: true}}} {
-		if _, err := goncini.NewKernel(c, routing.New(), nil, nil, nil, nil, slog.New(slog.DiscardHandler)); err == nil {
+		if _, err := goncini.NewKernel(c, routing.New(), nil, nil, nil, nil, nil, slog.New(slog.DiscardHandler)); err == nil {
 			t.Errorf("NewKernel(%+v) accepted it", c)
 		}
 	}
@@ -242,7 +243,7 @@ func TestDebugContainerWithoutServices(t *testing.T) {
 	if err := goncini.Run(context.Background(), &out, goncini.NewEnv("dev", nil), config{}, app, []string{"debug:container"}); err != nil {
 		panic(err)
 	}
-//line main_test.ego:209
+//line main_test.ego:210
 	if out.String() != "no services are described: run goncini generate\n" {
 		t.Errorf("debug:container: %q", out.String())
 	}
@@ -260,7 +261,7 @@ func TestDebugConfigMasksStringsOnly(t *testing.T) {
 	if err := goncini.Run(context.Background(), &out, env, cfg, build(goncini.HTTP{}, nil, nil), []string{"debug:config"}); err != nil {
 		panic(err)
 	}
-//line main_test.ego:224
+//line main_test.ego:225
 	if want := "{\n  \"Limit\": 51,\n  \"URL\": \"db://u:******@h\"\n}\n"; out.String() != want {
 		t.Errorf("debug:config:\n%s\nwant:\n%s", out.String(), want)
 	}
@@ -288,12 +289,12 @@ func TestLoggerOnAnotherHandler(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:248
+//line main_test.ego:249
 	sid, err := trace.SpanIDFromHex("0102030405060708")
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:249
+//line main_test.ego:250
 	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid}))
 	goncini.NewLogger(h).InfoContext(ctx, "hello", "k", "v")
 	if h.attrs["k"] != "v" || h.attrs["trace_id"] != tid.String() || h.attrs["span_id"] != sid.String() {

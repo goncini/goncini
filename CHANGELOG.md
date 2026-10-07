@@ -260,6 +260,33 @@ and `Sort[O]` binds `?sort=-createdAt,title` against the fields an `Order`
 allows, for an `ORDER BY` that can't be injected. The articles example lists
 with them.
 
+### event
+
+Symfony's EventDispatcher, with typed events: `event.On(d, func(ctx,
+*ArticlePublished) error)` adds a listener, with an optional priority, and
+`event.Dispatch(ctx, d, &ArticlePublished{…})` calls them in order, until
+one fails or returns `event.Stop`. A `Subscriber` registers listeners, and
+`goncini generate` collects the app's subscribers into its dispatcher;
+`debug:event-dispatcher` lists the listeners.
+
+The kernel dispatches its own events: `RequestEvent` before the
+middleware, whose listener's error answers the request (a maintenance
+503); `ErrorEvent` before a problem is rendered, whose listeners may
+change it; and `ResponseEvent` once the response is written, for metrics
+and audit logs.
+
+### lock
+
+Symfony's Lock component: a `Factory` makes locks of a key, each with an
+owner of its own, which `Acquire` without waiting, `Wait` for, `Refresh`
+and `Release`; `Run` holds one while a function runs, refreshing it, and
+cancels the function if the lock is lost. Locks expire after their TTL, so
+that a dead process holds none. `MemoryStore` keeps them in a process, and
+`SQLStore` in a table of a SQLite or PostgreSQL database, created when
+first needed, with one upsert per acquisition. `db.DialectOf` tells the
+two apart by their driver, and `Dialect.Rebind` numbers placeholders for
+PostgreSQL.
+
 ### The RealWorld app
 
 [`examples/realworld`](examples/realworld) is the RealWorld "Conduit" API,

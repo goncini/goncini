@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
@@ -92,6 +93,7 @@ func ProjectDir() string {
 //     of the config, for a developer whose port is taken;
 //   - debug:router, which lists the routes;
 //   - openapi:dump, which prints the app's OpenAPI document;
+//   - debug:event-dispatcher, which lists the listeners of each event;
 //   - debug:container, which lists the app's services, as goncini generate
 //     describes them;
 //   - debug:config, which prints cfg as JSON, with the values of env's
@@ -102,6 +104,7 @@ func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, a
 		serveCommand{app.Server, app.Checks},
 		console.New("debug:router", "Lists the routes", (ctx context.Context, out io.Writer, args []string) => routing.WriteTable(out, app.Router.List())),
 		console.New("openapi:dump", "Prints the OpenAPI document", (ctx context.Context, out io.Writer, args []string) => writeDocument(out, app.OpenAPI)),
+		console.New("debug:event-dispatcher", "Lists the listeners of each event", (ctx context.Context, out io.Writer, args []string) => event.WriteTable(out, app.Events.List())),
 		console.New("debug:config", "Prints the config, with secrets masked", (ctx context.Context, out io.Writer, args []string) => writeConfig(out, env, cfg)),
 		console.New("debug:container", "Lists the app's services", (ctx context.Context, out io.Writer, args []string) => writeServices(out, app.Services)),
 	}

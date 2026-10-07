@@ -86,6 +86,7 @@ var kinds = []kind{
 	{"autoCommands", "console.Command", "autoCommands are the services that are console commands, and the commands of the migrator."},
 	{"autoChecks", "goncini.Check", "autoChecks ping the services that can be pinged, such as the database, before serving."},
 	{"autoVoters", "security.Voter", "autoVoters are the services that are security voters."},
+	{"autoSubscribers", "event.Subscriber", "autoSubscribers are the services that subscribe to events."},
 }
 
 // sections are the config sections that goncini's providers take.
