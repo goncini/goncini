@@ -2858,6 +2858,7 @@
           "Users"
         ],
         "summary": "Returns the user with an email and a password, with a new token.",
+        "description": "Each email has a few attempts a minute from each address, which a\nsuccessful one gives back.",
         "operationId": "user_login",
         "requestBody": {
           "required": true,
@@ -3029,6 +3030,35 @@
                       "errors": {
                         "email": [
                           "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "TooManyLogins": {
+                    "summary": "too many failed logins",
+                    "value": {
+                      "errors": {
+                        "credentials": [
+                          "too many failed attempts"
                         ]
                       }
                     }

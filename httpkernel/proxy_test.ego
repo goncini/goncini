@@ -98,10 +98,13 @@ func TestProxies(t *testing.T) {
 	}
 }
 
+// TestBaseURL checks BaseURL and ClientIPOf, which give endpoints what
+// trusted proxies reported.
 func TestBaseURL(t *testing.T) {
 	var got string
+	var ip netip.Addr
 	endpoint := httpkernel.Endpoint(func(ctx context.Context, in struct{}) (httpkernel.NoContent, error) {
-		got = httpkernel.BaseURL(ctx)
+		got, ip = httpkernel.BaseURL(ctx), httpkernel.ClientIPOf(ctx)
 		return httpkernel.NoContent{}, nil
 	})
 	proxies := must httpkernel.TrustProxies("10.0.0.0/8")
@@ -123,8 +126,14 @@ func TestBaseURL(t *testing.T) {
 			t.Errorf("BaseURL = %q, want %q", got, want)
 		}
 	}
+	if ip.String() != "198.51.100.9" {
+		t.Errorf("ClientIPOf = %v", ip)
+	}
 	if base := httpkernel.BaseURL(context.Background()); base != "" {
 		t.Errorf("BaseURL outside a kernel = %q", base)
+	}
+	if ip := httpkernel.ClientIPOf(context.Background()); ip.IsValid() {
+		t.Errorf("ClientIPOf outside a kernel = %v", ip)
 	}
 }
 

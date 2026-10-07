@@ -14,6 +14,7 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/goosedb"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
 
@@ -26,11 +27,11 @@ import (
 
 // Services is the app's own services.
 //
-//line services.ego:24
+//line services.ego:25
 var Services = layer.Set(
 	db.Open, db.NewSQL, migrator,
 	security.NewTokens, hasher, firewall,
-	users.NewStore, users.NewUsers,
+	users.NewStore, users.NewUsers, logins,
 	articles.NewStore, articles.NewArticles,
 	routes, clock,
 )
@@ -57,6 +58,11 @@ func firewall(c security.Config, tokens *security.Tokens, store *users.Store) *s
 // middleware puts the firewall in the kernel.
 func middleware(f *security.Firewall[*users.User]) []httpkernel.Middleware {
 	return []httpkernel.Middleware{f.Middleware}
+}
+
+// logins limits the logins of each email from each address: 5 a minute.
+func logins(now func() time.Time) *ratelimit.Limiter {
+	return &ratelimit.Limiter{Policy: ratelimit.SlidingWindow{Limit: 5, Interval: time.Minute}, Now: now}
 }
 
 // clock is the app's clock: the system's.

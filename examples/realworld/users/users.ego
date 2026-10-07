@@ -5,8 +5,10 @@ package users
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/security"
 
 	"github.com/goncini/goncini/examples/realworld/conduit"
@@ -36,6 +38,9 @@ error UserError {
 	Taken{ Field string } "{Field} has already been taken"
 	// BadCredentials means that no user has the email and password.
 	BadCredentials{} "invalid credentials"
+	// TooManyLogins means that the email had too many failed logins from
+	// the client's address: it may try again after RetryAfter.
+	TooManyLogins{ RetryAfter time.Duration } "too many failed logins"
 	// NoProfile means that no user has the username.
 	NoProfile{ Username string } "no user {Username}"
 	// Unavailable means that the store failed.
@@ -48,9 +53,17 @@ func Problem(err UserError) httpkernel.Problem {
 		nil               => httpkernel.Problem{}
 		Taken(e)          => conduit.Problem(http.StatusConflict, e.Field, "has already been taken")
 		BadCredentials(_) => conduit.Problem(http.StatusUnauthorized, "credentials", "invalid")
+		TooManyLogins(e)  => tooManyLogins(e)
 		NoProfile(_)      => conduit.Problem(http.StatusNotFound, "profile", "not found")
 		Unavailable(_)    => httpkernel.Problem{Status: http.StatusServiceUnavailable}
 	}
+}
+
+// tooManyLogins is a 429, with ratelimit's Retry-After header.
+func tooManyLogins(e TooManyLogins) httpkernel.Problem {
+	p := conduit.Problem(http.StatusTooManyRequests, "credentials", "too many failed attempts")
+	p.Header = ratelimit.Exceeded{RetryAfter: e.RetryAfter}.Problem().Header
+	return p
 }
 
 // Problems is what a kernel registers to answer UserErrors.

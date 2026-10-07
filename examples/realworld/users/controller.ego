@@ -2,8 +2,10 @@ package users
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
 )
@@ -13,10 +15,11 @@ type Users struct {
 	store  *Store
 	hasher security.Hasher
 	tokens *security.Tokens
+	logins *ratelimit.Limiter // by email and client address
 }
 
-func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens) *Users {
-	return &Users{store: store, hasher: hasher, tokens: tokens}
+func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins *ratelimit.Limiter) *Users {
+	return &Users{store: store, hasher: hasher, tokens: tokens, logins: logins}
 }
 
 // Routes registers the endpoints.
@@ -83,7 +86,14 @@ type LoginInput struct {
 }
 
 // Login returns the user with an email and a password, with a new token.
+// Each email has a few attempts a minute from each address, which a
+// successful one gives back.
 effect (u *Users) Login(in LoginInput) (UserBody, UserError) {
+	key := strings.ToLower(in.Body.User.Email) + " " + httpkernel.ClientIPOf(ctx).String()
+	attempt := check u.logins.Take(ctx, key, 1) as Unavailable
+	if !attempt.Allowed {
+		fail TooManyLogins{RetryAfter: attempt.RetryAfter}
+	}
 	user, ok := check u.store.ByEmail(in.Body.User.Email) as Unavailable
 	if !ok {
 		fail BadCredentials{}
@@ -92,6 +102,7 @@ effect (u *Users) Login(in LoginInput) (UserBody, UserError) {
 	if !valid {
 		fail BadCredentials{}
 	}
+	check u.logins.Reset(ctx, key) as Unavailable
 	body := check u.body(user) as Unavailable
 	return body, nil
 }

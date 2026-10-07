@@ -213,6 +213,18 @@ func ClientIP(r *http.Request) netip.Addr {
 	return if c.ip.IsValid() { c.ip } else { remoteAddr(r) }
 }
 
+// ClientIPOf returns the address of the client that sent the request ctx
+// belongs to, as ClientIP does, for handlers that don't see the request,
+// such as typed endpoints. It is the zero Addr outside a Kernel, which
+// keeps the request for it.
+func ClientIPOf(ctx context.Context) netip.Addr {
+	st := stateOf(ctx)
+	if st?.request == nil {
+		return netip.Addr{}
+	}
+	return ClientIP(st.request)
+}
+
 // Scheme returns "https" or "http": as reported by trusted proxies, or else
 // depending on whether r came over TLS.
 func Scheme(r *http.Request) string {

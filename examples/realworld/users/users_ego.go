@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/security"
 
 	"github.com/goncini/goncini/examples/realworld/conduit"
@@ -18,7 +20,7 @@ import (
 
 // User is a user, as stored.
 //
-//line users.ego:16
+//line users.ego:18
 type User struct {
 	ID           int64
 	Username     string
@@ -74,6 +76,23 @@ func (e BadCredentials) As(target any) bool {
 	return false
 }
 
+// TooManyLogins means that the email had too many failed logins from
+// the client's address: it may try again after RetryAfter.
+type TooManyLogins struct{ RetryAfter time.Duration }
+
+func (TooManyLogins) isUserError() {}
+
+func (e TooManyLogins) Error() string { return "too many failed logins" }
+
+// As lets pointers to TooManyLogins match as TooManyLogins.
+func (e TooManyLogins) As(target any) bool {
+	if t, ok := target.(*TooManyLogins); ok {
+		*t = e
+		return true
+	}
+	return false
+}
+
 // NoProfile means that no user has the username.
 type NoProfile struct{ Username string }
 
@@ -110,7 +129,7 @@ func (e Unavailable) As(target any) bool {
 
 // Problem says what each UserError looks like over HTTP.
 //
-//line users.ego:46
+//line users.ego:51
 func Problem(err error) httpkernel.Problem {
 	var v httpkernel.Problem
 	if err == nil {
@@ -119,6 +138,8 @@ func Problem(err error) httpkernel.Problem {
 		v = conduit.Problem(http.StatusConflict, e.Field, "has already been taken")
 	} else if _, ok := errors.AsType[BadCredentials](err); ok {
 		v = conduit.Problem(http.StatusUnauthorized, "credentials", "invalid")
+	} else if e, ok := errors.AsType[TooManyLogins](err); ok {
+		v = tooManyLogins(e)
 	} else if _, ok := errors.AsType[NoProfile](err); ok {
 		v = conduit.Problem(http.StatusNotFound, "profile", "not found")
 	} else if _, ok := errors.AsType[Unavailable](err); ok {
@@ -129,9 +150,16 @@ func Problem(err error) httpkernel.Problem {
 	return v
 }
 
-// Problems is what a kernel registers to answer UserErrors.
+// tooManyLogins is a 429, with ratelimit's Retry-After header.
 //
-//line users.ego:57
+//line users.ego:63
+func tooManyLogins(e TooManyLogins) httpkernel.Problem {
+	p := conduit.Problem(http.StatusTooManyRequests, "credentials", "too many failed attempts")
+	p.Header = ratelimit.Exceeded{RetryAfter: e.RetryAfter}.Problem().Header
+	return p
+}
+
+// Problems is what a kernel registers to answer UserErrors.
 var Problems = httpkernel.Map[UserError](Problem)
 
 // Current returns the user that the request ctx belongs to was
@@ -142,7 +170,7 @@ func Current(ctx context.Context) *User {
 	if err != nil {
 		panic(err)
 	}
-//line users.ego:64
+//line users.ego:77
 	return u
 }
 

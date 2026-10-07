@@ -429,12 +429,18 @@ type ClientInterface interface {
 
 	// UserLoginWithBody Returns the user with an email and a password, with a new token.
 	//
+	// Each email has a few attempts a minute from each address, which a
+	// successful one gives back.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /api/users/login (the `UserLogin` operationId).
 	UserLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UserLogin Returns the user with an email and a password, with a new token.
+	//
+	// Each email has a few attempts a minute from each address, which a
+	// successful one gives back.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -813,6 +819,9 @@ func (c *Client) UserRegister(ctx context.Context, body UserRegisterJSONRequestB
 
 // UserLoginWithBody Returns the user with an email and a password, with a new token.
 //
+// Each email has a few attempts a minute from each address, which a
+// successful one gives back.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /api/users/login (the `UserLogin` operationId).
@@ -829,6 +838,9 @@ func (c *Client) UserLoginWithBody(ctx context.Context, contentType string, body
 }
 
 // UserLogin Returns the user with an email and a password, with a new token.
+//
+// Each email has a few attempts a minute from each address, which a
+// successful one gives back.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1845,12 +1857,18 @@ type ClientWithResponsesInterface interface {
 
 	// UserLoginWithBodyWithResponse Returns the user with an email and a password, with a new token.
 	//
+	// Each email has a few attempts a minute from each address, which a
+	// successful one gives back.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /api/users/login (the `UserLogin` operationId).
 	UserLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UserLoginResponse, error)
 
 	// UserLoginWithResponse Returns the user with an email and a password, with a new token.
+	//
+	// Each email has a few attempts a minute from each address, which a
+	// successful one gives back.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -3259,6 +3277,11 @@ type UserLoginResponse401Headers struct {
 	WwwAuthenticate *string
 }
 
+// UserLoginResponse429Headers the declared response headers of an HTTP 429 response for UserLogin
+type UserLoginResponse429Headers struct {
+	RetryAfter *string
+}
+
 type UserLoginResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -3274,10 +3297,14 @@ type UserLoginResponse struct {
 	JSON415 *Errors
 	// JSON422 the response for an HTTP 422 `application/json` response
 	JSON422 *Errors
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *Errors
 	// JSON503 the response for an HTTP 503 `application/json` response
 	JSON503 *Errors
 	// Headers401 the parsed response headers for an HTTP 401 response
 	Headers401 *UserLoginResponse401Headers
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *UserLoginResponse429Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -3308,6 +3335,11 @@ func (r UserLoginResponse) GetJSON415() *Errors {
 // GetJSON422 returns the response for an HTTP 422 `application/json` response
 func (r UserLoginResponse) GetJSON422() *Errors {
 	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r UserLoginResponse) GetJSON429() *Errors {
+	return r.JSON429
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
@@ -3649,6 +3681,9 @@ func (c *ClientWithResponses) UserRegisterWithResponse(ctx context.Context, body
 
 // UserLoginWithBodyWithResponse Returns the user with an email and a password, with a new token.
 //
+// Each email has a few attempts a minute from each address, which a
+// successful one gives back.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /api/users/login (the `UserLogin` operationId).
@@ -3661,6 +3696,9 @@ func (c *ClientWithResponses) UserLoginWithBodyWithResponse(ctx context.Context,
 }
 
 // UserLoginWithResponse Returns the user with an email and a password, with a new token.
+//
+// Each email has a few attempts a minute from each address, which a
+// successful one gives back.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -4969,6 +5007,13 @@ func ParseUserLoginResponse(rsp *http.Response) (*UserLoginResponse, error) {
 		}
 		response.JSON422 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Errors
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Errors
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -4989,6 +5034,16 @@ func ParseUserLoginResponse(rsp *http.Response) (*UserLoginResponse, error) {
 			headers.WwwAuthenticate = &value
 		}
 		response.Headers401 = &headers
+	case rsp.StatusCode == 429:
+		var headers UserLoginResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
 	}
 
 	return response, nil

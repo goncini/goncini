@@ -211,6 +211,23 @@ exact or with a wildcard subdomain (`https://*.example.com`), with the
 methods, headers, exposed headers, credentials and max age it says. A
 goncini app sets it in `goncini.HTTP.CORS`; RealWorld allows any origin.
 
+### ratelimit
+
+Symfony's RateLimiter: a `Limiter` applies a policy to the state of each
+key, which a `Store` keeps.
+
+- **Policies:** `FixedWindow`, `SlidingWindow` and `TokenBucket`. Taking
+  tokens returns a `Result` with what's left, when to retry, and when the
+  limit is whole again; `Err` makes it an `Exceeded`, a 429 with
+  `Retry-After`.
+- **Stores:** `MemoryStore`, the default, for one process; the `Store`
+  interface is what shared stores implement.
+- **`Middleware`** limits requests by a key, such as `ByIP`, sets the
+  `RateLimit-*` headers, and documents its 429 in the OpenAPI document.
+- RealWorld throttles logins as Symfony's security does: 5 a minute per
+  email and client address, which a successful login gives back. Endpoints
+  get the client's address with `httpkernel.ClientIPOf(ctx)`.
+
 ### The RealWorld app
 
 [`examples/realworld`](examples/realworld) is the RealWorld "Conduit" API,

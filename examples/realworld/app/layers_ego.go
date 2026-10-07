@@ -36,8 +36,9 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("security.NewTokens: %w", err)
 	}
-	users2 := users.NewUsers(store, hasher2, tokens)
 	v := clock()
+	limiter := logins(v)
+	users2 := users.NewUsers(store, hasher2, tokens, limiter)
 	store2 := articles.NewStore(sql2, v)
 	articles2 := articles.NewArticles(store2)
 	v2 := routes(users2, articles2)

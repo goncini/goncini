@@ -105,17 +105,20 @@ func TestProxies(t *testing.T) {
 	}
 }
 
+// TestBaseURL checks BaseURL and ClientIPOf, which give endpoints what
+// trusted proxies reported.
 func TestBaseURL(t *testing.T) {
 	var got string
+	var ip netip.Addr
 	endpoint := httpkernel.Endpoint(func(ctx context.Context, in struct{}) (httpkernel.NoContent, error) {
-		got = httpkernel.BaseURL(ctx)
+		got, ip = httpkernel.BaseURL(ctx), httpkernel.ClientIPOf(ctx)
 		return httpkernel.NoContent{}, nil
 	})
 	proxies, err := httpkernel.TrustProxies("10.0.0.0/8")
 	if err != nil {
 		panic(err)
 	}
-//line proxy_test.ego:108
+//line proxy_test.ego:111
 	k := &httpkernel.Kernel{Handler: endpoint, Middleware: []httpkernel.Middleware{proxies.Middleware}}
 
 	proxied := httptest.NewRequest(http.MethodGet, "http://lb.internal/x", nil)
@@ -134,8 +137,14 @@ func TestBaseURL(t *testing.T) {
 			t.Errorf("BaseURL = %q, want %q", got, want)
 		}
 	}
+	if ip.String() != "198.51.100.9" {
+		t.Errorf("ClientIPOf = %v", ip)
+	}
 	if base := httpkernel.BaseURL(context.Background()); base != "" {
 		t.Errorf("BaseURL outside a kernel = %q", base)
+	}
+	if ip := httpkernel.ClientIPOf(context.Background()); ip.IsValid() {
+		t.Errorf("ClientIPOf outside a kernel = %v", ip)
 	}
 }
 
@@ -144,7 +153,7 @@ func TestProxiesIPv4MappedRange(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line proxy_test.ego:133
+//line proxy_test.ego:142
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "[::ffff:10.0.0.5]:80"
 	r.Header.Set("X-Forwarded-For", "198.51.100.9")
@@ -162,7 +171,7 @@ func TestPrivateProxies(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line proxy_test.ego:147
+//line proxy_test.ego:156
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "[::ffff:172.17.0.2]:5000" // Docker's bridge, as IPv4-mapped IPv6
 	r.Header.Set("X-Forwarded-For", "198.51.100.9")

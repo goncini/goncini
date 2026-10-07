@@ -234,10 +234,27 @@ func ClientIP(r *http.Request) netip.Addr {
 	return v
 }
 
+// ClientIPOf returns the address of the client that sent the request ctx
+// belongs to, as ClientIP does, for handlers that don't see the request,
+// such as typed endpoints. It is the zero Addr outside a Kernel, which
+// keeps the request for it.
+//
+//line proxy.ego:220
+func ClientIPOf(ctx context.Context) netip.Addr {
+	st := stateOf(ctx)
+	var v *http.Request
+	if st != nil {
+		v = st.request
+	}
+	if v == nil {
+		return netip.Addr{}
+	}
+//line proxy.ego:225
+	return ClientIP(st.request)
+}
+
 // Scheme returns "https" or "http": as reported by trusted proxies, or else
 // depending on whether r came over TLS.
-//
-//line proxy.ego:218
 func Scheme(r *http.Request) string {
 	return schemeOf(clientOf(r.Context()), r)
 }
@@ -267,7 +284,7 @@ func BaseURL(ctx context.Context) string {
 	if st != nil {
 		r = st.request
 	}
-//line proxy.ego:244
+//line proxy.ego:256
 	if r == nil {
 		return ""
 	}
@@ -287,7 +304,7 @@ func schemeOf(c client, r *http.Request) string {
 	return v
 }
 
-//line proxy.ego:255
+//line proxy.ego:267
 func hostOf(c client, r *http.Request) string {
 	var v string
 	if c.host != "" {
@@ -301,7 +318,7 @@ func hostOf(c client, r *http.Request) string {
 // clientOf is what trusted proxies reported about the request ctx belongs
 // to: nothing, outside Proxies.Middleware.
 //
-//line proxy.ego:261
+//line proxy.ego:273
 func clientOf(ctx context.Context) client {
 	v, ok := ctx.Value(clientKey{}).(client)
 	if !ok {
@@ -312,7 +329,7 @@ func clientOf(ctx context.Context) client {
 
 // remoteAddr is the address r came from, without the port.
 //
-//line proxy.ego:266
+//line proxy.ego:278
 func remoteAddr(r *http.Request) netip.Addr {
 	return parseNode(r.RemoteAddr)
 }
@@ -347,7 +364,7 @@ func parseNode(node string) netip.Addr {
 	if err != nil {
 		ap = netip.AddrPort{}
 	}
-//line proxy.ego:297
+//line proxy.ego:309
 	if ap.IsValid() {
 		return ap.Addr().Unmap()
 	}
@@ -355,7 +372,7 @@ func parseNode(node string) netip.Addr {
 	if err != nil {
 		a = netip.Addr{}
 	}
-//line proxy.ego:301
+//line proxy.ego:313
 	return a.Unmap()
 }
 

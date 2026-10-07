@@ -1,0 +1,153 @@
+package ratelimit_test
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/openapi"
+	"github.com/goncini/goncini/ratelimit"
+	"github.com/goncini/goncini/routing"
+)
+
+// clock is a fake clock that tests move.
+type clock struct{ now time.Time }
+
+func (c *clock) Now() time.Time          { return c.now }
+func (c *clock) advance(d time.Duration) { c.now = c.now.Add(d) }
+func newClock() *clock                   { return &clock{time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)} }
+
+// step is a take of n tokens after a wait, and what it should do.
+type step struct {
+	wait       time.Duration
+	n          int
+	allowed    bool
+	remaining  int
+	retryAfter time.Duration
+}
+
+func run(t *testing.T, name string, p ratelimit.Policy, steps []step) {
+	t.Helper()
+	c := newClock()
+	l := &ratelimit.Limiter{Policy: p, Now: c.Now}
+	for i, s := range steps {
+		c.advance(s.wait)
+		res := must l.Take(context.Background(), "k", s.n)
+		if res.Allowed != s.allowed || res.Remaining != s.remaining || res.RetryAfter != s.retryAfter {
+			t.Errorf("%s, step %d: %+v, want allowed %v, remaining %d, retry after %v", name, i, res, s.allowed, s.remaining, s.retryAfter)
+		}
+	}
+}
+
+func TestPolicies(t *testing.T) {
+	run(t, "fixed window", ratelimit.FixedWindow{Limit: 3, Interval: time.Minute}, []step{
+		{0, 2, true, 1, 0},
+		{10 * time.Second, 1, true, 0, 0},
+		{10 * time.Second, 1, false, 0, 40 * time.Second},
+		{40 * time.Second, 1, true, 2, 0}, // a new window
+		{0, 4, false, 2, time.Minute},     // more than the limit, ever
+	})
+	run(t, "sliding window", ratelimit.SlidingWindow{Limit: 4, Interval: time.Minute}, []step{
+		{0, 4, true, 0, 0},
+		{30 * time.Second, 1, false, 0, 45 * time.Second}, // the 4 slide out of the next window
+		{30 * time.Second, 1, false, 0, 15 * time.Second}, // 4 still count fully at its start
+		{15 * time.Second, 1, true, 0, 0},                 // 4 × 3/4 + 1
+		{45 * time.Second, 2, true, 1, 0},                 // 1 × 1 + 2 at the next window's start
+	})
+	run(t, "token bucket", ratelimit.TokenBucket{Burst: 4, Rate: 1, Interval: 10 * time.Second}, []step{
+		{0, 4, true, 0, 0},
+		{0, 1, false, 0, 10 * time.Second},
+		{25 * time.Second, 2, true, 0, 0}, // 2.5 refilled
+		{0, 1, false, 0, 5 * time.Second},
+		{time.Hour, 1, true, 3, 0}, // never more than the burst
+	})
+}
+
+func TestReset(t *testing.T) {
+	l := &ratelimit.Limiter{Policy: ratelimit.FixedWindow{Limit: 1, Interval: time.Hour}}
+	ctx := context.Background()
+	must l.Take(ctx, "alice", 1)
+	again := must l.Take(ctx, "alice", 1)
+	bob := must l.Take(ctx, "bob", 1)
+	must l.Reset(ctx, "alice")
+	reset := must l.Take(ctx, "alice", 1)
+	if again.Allowed || !bob.Allowed || !reset.Allowed {
+		t.Errorf("alice again %v, bob %v, alice after a reset %v", again.Allowed, bob.Allowed, reset.Allowed)
+	}
+}
+
+func TestConcurrentTakes(t *testing.T) {
+	l := &ratelimit.Limiter{Policy: ratelimit.FixedWindow{Limit: 50, Interval: time.Hour}}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	allowed := 0
+	for range 100 {
+		wg.Go(() => {
+			res := must l.Take(context.Background(), "k", 1)
+			mu.Lock()
+			defer mu.Unlock()
+			if res.Allowed {
+				allowed++
+			}
+		})
+	}
+	wg.Wait()
+	if allowed != 50 {
+		t.Errorf("%d allowed, want 50", allowed)
+	}
+}
+
+func TestMiddleware(t *testing.T) {
+	l := &ratelimit.Limiter{Policy: ratelimit.FixedWindow{Limit: 2, Interval: time.Minute}}
+	k := &httpkernel.Kernel{Handler: l.Middleware(ratelimit.ByIP)(http.HandlerFunc((w http.ResponseWriter, r *http.Request) => {
+	}))}
+	get := func(addr string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = addr + ":1234"
+		w := httptest.NewRecorder()
+		k.ServeHTTP(w, r)
+		return w
+	}
+	if w := get("192.0.2.1"); w.Code != 200 || w.Header().Get("RateLimit-Remaining") != "1" || w.Header().Get("RateLimit-Limit") != "2" {
+		t.Errorf("first: %d %v", w.Code, w.Header())
+	}
+	get("192.0.2.1")
+	w := get("192.0.2.1")
+	if w.Code != 429 || w.Header().Get("Retry-After") != "60" {
+		t.Errorf("third: %d, Retry-After %q", w.Code, w.Header().Get("Retry-After"))
+	}
+	if w := get("192.0.2.2"); w.Code != 200 {
+		t.Errorf("another client: %d", w.Code)
+	}
+}
+
+func TestErr(t *testing.T) {
+	if err := (ratelimit.Result{Allowed: true}).Err(); err != nil {
+		t.Error(err)
+	}
+	err := ratelimit.Result{Limit: 5, RetryAfter: 1500 * time.Millisecond}.Err()
+	e, ok := errors.AsType[ratelimit.Exceeded](err)
+	if !ok || e.Problem().Status != 429 || e.Problem().Header.Get("Retry-After") != "2" {
+		t.Errorf("%v", err)
+	}
+}
+
+// TestDocumented checks that the operations behind the middleware document
+// its 429.
+func TestDocumented(t *testing.T) {
+	l := &ratelimit.Limiter{Policy: ratelimit.FixedWindow{Limit: 2, Interval: time.Minute}}
+	r := routing.New()
+	r.With(l.Middleware(ratelimit.ByIP)).Get("/", httpkernel.Endpoint(func(ctx context.Context, in struct{}) (httpkernel.NoContent, error) {
+		return httpkernel.NoContent{}, nil
+	}))
+	doc := must openapi.Generate(r.List(), nil, openapi.Config{}, openapi.Annotations{})
+	res := doc.Paths["/"].Get.Responses["429"]
+	if res == nil || res.Headers["Retry-After"] == nil {
+		t.Errorf("429: %+v", res)
+	}
+}
