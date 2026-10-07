@@ -322,6 +322,18 @@ runs in one instance of an app: the one that takes the tick's lock.
 next runs. Lock stores now prune expired locks, which keys used once, as
 ticks are, would leave.
 
+### httpclient (M4)
+
+Symfony's HttpClient, on `net/http`: a `Client` of an API, with a base URL
+and default headers, retries on an effect-go schedule, and a span per
+request that carries the trace context to the API called. It retries
+connection failures, timeouts, 408, 425, 429 and 5xx but 501, of requests
+whose method is idempotent or that carry an `Idempotency-Key`, waiting at
+least what `Retry-After` asks, up to a cap. `Get` and `Send` encode and
+decode JSON, and fail with a `StatusError` for a status that isn't 2xx.
+`Handler` serves requests with an `http.Handler` in the process, for tests,
+as Symfony's MockHttpClient does.
+
 ### cache (M4)
 
 Symfony's Cache, with tags: `cache.Get(ctx, c, key, compute)` returns the

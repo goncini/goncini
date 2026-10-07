@@ -1,0 +1,305 @@
+// Package httpclient calls other HTTP APIs, as Symfony's HttpClient does:
+// the net/http client, with a base URL and default headers, retries on a
+// schedule, a span per request carrying the trace to the API called, and
+// JSON in and out.
+//
+//	gh := httpclient.New(httpclient.Config{BaseURL: "https://api.github.com", Header: map[string]string{"Accept": "application/vnd.github+json"}})
+//	repo := check httpclient.Get[Repo](ctx, gh, "/repos/goncini/goncini") ""
+//
+// A failed request is retried when it can be safely: connection failures,
+// 429s and 5xxs but 501, of requests whose method is idempotent, or that
+// carry an Idempotency-Key header. A Retry-After header makes the next
+// attempt wait at least that long.
+//
+// Tests replace the network with Handler, which serves requests with an
+// http.Handler in the process, as Symfony's MockHttpClient does.
+package httpclient
+
+import (
+	"bytes"
+	"cmp"
+	"context"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/effect-go/effect-go/schedule"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+)
+
+// Config configures a client of an API.
+type Config struct {
+	// BaseURL is put before the paths of requests: https://api.example.com.
+	BaseURL string
+	// Header is sent with each request, unless the request has the header.
+	Header map[string]string
+	// Timeout bounds each attempt; zero means 30 seconds.
+	Timeout time.Duration
+	// Retries is how many times a failed request is retried; zero means 3,
+	// and a negative number none. They wait 100ms, then twice as long each
+	// time.
+	Retries int
+	// MaxRetryAfter caps the wait that a Retry-After header asks for; zero
+	// means a minute. A longer one fails the request instead.
+	MaxRetryAfter time.Duration
+}
+
+// Client calls an API.
+type Client struct {
+	Config Config
+	// Transport sends the requests; nil means http.DefaultTransport.
+	// Handler makes one that serves them in the process, for tests.
+	Transport http.RoundTripper
+	// Retry is the schedule of retries, from Config.Retries.
+	Retry schedule.Schedule
+}
+
+// New returns a client of the API that c configures.
+func New(c Config) *Client {
+	retries := if c.Retries == 0 { 3 } else { max(c.Retries, 0) }
+	return &Client{Config: c, Retry: schedule.Max(schedule.Exponential(100*time.Millisecond), schedule.Recurs(retries))}
+}
+
+// Instrumentation is the instrumentation scope of the client's spans.
+const Instrumentation = "github.com/goncini/goncini/httpclient"
+
+// Do sends req, with the client's base URL and headers, retrying it as the
+// package says. The response of the last attempt is returned whatever its
+// status: StatusError is for JSON's helpers. req's body must be replayable,
+// as http.NewRequest makes it for bytes and strings, for it to be retried.
+func (c *Client) Do(req *http.Request) (*http.Response, error) {
+	if c.Config.BaseURL != "" && req.URL.Host == "" {
+		u := check req.URL.Parse(strings.TrimSuffix(c.Config.BaseURL, "/") + "/" + strings.TrimPrefix(req.URL.String(), "/")) ""
+		req.URL, req.Host = u, u.Host
+	}
+	for name, value := range c.Config.Header {
+		if req.Header.Get(name) == "" {
+			req.Header.Set(name, value)
+		}
+	}
+	ctx, span := otel.Tracer(Instrumentation).Start(req.Context(), req.Method, trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attribute.String("http.request.method", req.Method), attribute.String("url.full", req.URL.Redacted())))
+	defer span.End()
+	req = req.WithContext(ctx)
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
+	for attempt := 1; ; attempt++ {
+		res, err := c.attempt(req)
+		wait, again := c.retryable(req, res, err, attempt)
+		if !again {
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+			} else {
+				span.SetAttributes(attribute.Int("http.response.status_code", res.StatusCode))
+				if res.StatusCode >= 500 {
+					span.SetStatus(codes.Error, res.Status)
+				}
+			}
+			return res, err
+		}
+		if res != nil {
+			io.Copy(io.Discard, io.LimitReader(res.Body, 1<<16)) // so that the connection is reused
+			res.Body.Close()
+		}
+		span.AddEvent("retry", trace.WithAttributes(attribute.Int("attempt", attempt), attribute.String("wait", wait.String())))
+		select {
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		case <-time.After(wait):
+		}
+		if req.GetBody != nil {
+			req.Body = check req.GetBody() ""
+		}
+	}
+}
+
+// attempt sends req once, within the timeout.
+func (c *Client) attempt(req *http.Request) (*http.Response, error) {
+	timeout := if c.Config.Timeout > 0 { c.Config.Timeout } else { 30 * time.Second }
+	ctx, cancel := context.WithTimeout(req.Context(), timeout)
+	res, err := (c.Transport ?? http.DefaultTransport).RoundTrip(req.WithContext(ctx))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	res.Body = cancelOnClose{res.Body, cancel}
+	return res, nil
+}
+
+// cancelOnClose is a body that cancels its attempt's context once closed.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b cancelOnClose) Close() error {
+	defer b.cancel()
+	return b.ReadCloser.Close()
+}
+
+// retryableStatus are the statuses worth trying again.
+var retryableStatus = []int{http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests,
+	http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout}
+
+// retryable returns how long to wait before trying req again, after the
+// attempt'th gave res or err, and whether to.
+func (c *Client) retryable(req *http.Request, res *http.Response, err error, attempt int) (time.Duration, bool) {
+	if req.Context().Err() != nil || !idempotent(req) || req.Body != nil && req.Body != http.NoBody && req.GetBody == nil {
+		return 0, false
+	}
+	switch {
+	case err != nil:
+		// A connection that failed, or an attempt that timed out.
+	case slices.Contains(retryableStatus, res.StatusCode):
+	default:
+		return 0, false
+	}
+	wait, again := c.Retry.Next(attempt, err ?? errors.New(res.Status))
+	if !again {
+		return 0, false
+	}
+	if res != nil {
+		if after, ok := retryAfter(res.Header.Get("Retry-After")); ok {
+			limit := if c.Config.MaxRetryAfter > 0 { c.Config.MaxRetryAfter } else { time.Minute }
+			if after > limit {
+				return 0, false // the API asks for too long a pause
+			}
+			wait = max(wait, after)
+		}
+	}
+	return wait, true
+}
+
+// idempotent reports whether sending req twice does what sending it once
+// does: its method says so, or its Idempotency-Key header.
+func idempotent(req *http.Request) bool {
+	switch req.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace, http.MethodPut, http.MethodDelete:
+		return true
+	}
+	return req.Header.Get("Idempotency-Key") != ""
+}
+
+// retryAfter parses a Retry-After header: seconds, or an HTTP date.
+func retryAfter(h string) (time.Duration, bool) {
+	if h == "" {
+		return 0, false
+	}
+	if s, err := strconv.Atoi(h); err == nil && s >= 0 {
+		return time.Duration(s) * time.Second, true
+	}
+	if t, err := http.ParseTime(h); err == nil {
+		return max(time.Until(t), 0), true
+	}
+	return 0, false
+}
+
+// StatusError is the error of a response whose status isn't 2xx, with the
+// start of its body.
+type StatusError struct {
+	Status int
+	Body   string
+}
+
+func (e *StatusError) Error() string {
+	return f"httpclient: {e.Status} {http.StatusText(e.Status)}: {e.Body}"
+}
+
+// Get sends a GET request for path, and decodes the response's JSON body.
+func Get[T any](ctx context.Context, c *Client, path string) (T, error) {
+	return Send[T](ctx, c, http.MethodGet, path, nil)
+}
+
+// Send sends a request with the method for path, with body encoded as JSON
+// unless it is nil, and decodes the response's JSON body into a T, unless
+// T is struct{}. A response whose status isn't 2xx is a *StatusError.
+func Send[T any](ctx context.Context, c *Client, method, path string, body any) (T, error) {
+	var out T
+	var r io.Reader
+	if body != nil {
+		b := check json.Marshal(body) ""
+		r = bytes.NewReader(b)
+	}
+	req := check http.NewRequestWithContext(ctx, method, path, r) ""
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	res := check c.Do(req) ""
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		b, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+		return out, &StatusError{Status: res.StatusCode, Body: string(b)}
+	}
+	if _, empty := any(out).(struct{}); empty || res.StatusCode == http.StatusNoContent {
+		return out, nil
+	}
+	if err := json.UnmarshalRead(res.Body, &out); err != nil {
+		return out, fmt.Errorf("httpclient: decoding the response of %s %s: %w", method, path, err)
+	}
+	return out, nil
+}
+
+// Handler returns a transport that serves requests with h, in the process:
+// for tests, in place of the API called.
+func Handler(h http.Handler) http.RoundTripper {
+	return handlerTransport{h}
+}
+
+type handlerTransport struct {
+	h http.Handler
+}
+
+func (t handlerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if err := req.Context().Err(); err != nil {
+		return nil, err
+	}
+	if req.Body == nil {
+		req = req.Clone(req.Context())
+		req.Body = http.NoBody // as a server gives handlers
+	}
+	rec := &recorder{header: http.Header{}}
+	t.h.ServeHTTP(rec, req)
+	status := cmp.Or(rec.status, http.StatusOK)
+	return &http.Response{
+		Status:        f"{status} {http.StatusText(status)}",
+		StatusCode:    status,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Header:        rec.header,
+		Body:          io.NopCloser(&rec.body),
+		ContentLength: int64(rec.body.Len()),
+		Request:       req,
+	}, nil
+}
+
+// recorder records what a handler writes.
+type recorder struct {
+	header http.Header
+	status int
+	body   bytes.Buffer
+}
+
+func (r *recorder) Header() http.Header { return r.header }
+
+func (r *recorder) WriteHeader(status int) {
+	if r.status == 0 {
+		r.status = status
+	}
+}
+
+func (r *recorder) Write(b []byte) (int, error) {
+	r.WriteHeader(http.StatusOK)
+	return r.body.Write(b)
+}
