@@ -46,7 +46,7 @@ func TestEditComment(t *testing.T) {
 	synctest.Test(t, (t *testing.T) => {
 		a := webtest.Boot(t, config.Load, app.Build)
 		webtest.Run(t, a, "db:migrate")
-		c := webtest.NewClient(t, a.Kernel)
+		c := webtest.NewClient(t, a)
 		ann, bob := register(t, c, "ann"), register(t, c, "bob")
 
 		var art struct {

@@ -1,0 +1,278 @@
+package openapi
+
+import (
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"math"
+	"mime"
+	"net/http"
+	"reflect"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+)
+
+// Exchange is a request and its response, for Check.
+type Exchange struct {
+	Method string
+	// Path is the request's path, escaped as in the request line.
+	Path        string
+	RequestType string // the request's Content-Type
+	RequestBody []byte
+	Status      int
+	Header      http.Header // the response's
+	Body        []byte      // the response's
+}
+
+// Check reports how an exchange breaks the document: a response whose
+// status, media type or body the operation doesn't declare, or a
+// successful request whose body the operation doesn't allow. A request
+// that the API refused isn't checked, since the client may have meant to
+// break the rules. Nor is a request for none of the document's operations.
+func (d *Document) Check(x Exchange) error {
+	op, template := d.find(x.Method, x.Path)
+	if op == nil {
+		return nil
+	}
+	what := f"{x.Method} {template}"
+	var errs []error
+	if x.Status >= 200 && x.Status < 300 && op.RequestBody != nil {
+		if len(x.RequestBody) == 0 {
+			if op.RequestBody.Required {
+				errs = append(errs, errors.New(f"{what}: the request has no body, which the document requires"))
+			}
+		} else if err := d.checkContent(op.RequestBody.Content, x.RequestType, x.RequestBody); err != nil {
+			errs = append(errs, errors.New(f"{what}: the request body: {err}"))
+		}
+	}
+	res := op.Responses[strconv.Itoa(x.Status)] ?? op.Responses[f"{x.Status / 100}XX"] ?? op.Responses["default"]
+	if res == nil {
+		errs = append(errs, errors.New(f"{what}: the document has no {x.Status} response"))
+	} else if res = d.response(res); len(x.Body) > 0 || len(res.Content) > 0 {
+		if err := d.checkContent(res.Content, x.Header.Get("Content-Type"), x.Body); err != nil {
+			errs = append(errs, errors.New(f"{what}: the {x.Status} response: {err}"))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// find returns the operation of the method on the path, and the path's
+// template. Of the templates that match, the one with the most literal
+// segments wins, as with ServeMux: /articles/feed over /articles/{slug}.
+func (d *Document) find(method, path string) (*Operation, string) {
+	segments := strings.Split(path, "/")
+	var best *Operation
+	var bestTemplate string
+	bestLiterals := -1
+	for template, item := range d.Paths {
+		parts := strings.Split(template, "/")
+		if len(parts) != len(segments) {
+			continue
+		}
+		literals := 0
+		for i, p := range parts {
+			if strings.HasPrefix(p, "{") && strings.HasSuffix(p, "}") {
+				if segments[i] == "" {
+					literals = -1
+					break
+				}
+				continue
+			}
+			if p != segments[i] {
+				literals = -1
+				break
+			}
+			literals++
+		}
+		field := item.Operation(method)
+		if literals > bestLiterals && field != nil && *field != nil {
+			best, bestTemplate, bestLiterals = *field, template, literals
+		}
+	}
+	return best, bestTemplate
+}
+
+// response returns r, or the component it refers to.
+func (d *Document) response(r *Response) *Response {
+	if name, ok := strings.CutPrefix(r.Ref, "#/components/responses/"); ok {
+		return d.Components.Responses[name] ?? &Response{}
+	}
+	return r
+}
+
+// checkContent checks a body of the media type against the content that
+// allows it.
+func (d *Document) checkContent(content map[string]*MediaType, contentType string, body []byte) error {
+	mediaType, _, _ := mime.ParseMediaType(contentType)
+	mt, ok := content[mediaType]
+	if !ok {
+		if len(content) == 0 {
+			return errors.New(f"its {mediaType} body isn't declared")
+		}
+		return errors.New(f"its media type {mediaType:q} isn't declared")
+	}
+	if mt.Schema == nil || mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json") {
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return errors.New(f"its body isn't JSON: {err}")
+	}
+	c := &checker{doc: d}
+	c.value(mt.Schema, v, "")
+	return errors.Join(c.errs...)
+}
+
+// checker checks values against schemas, collecting what's wrong.
+type checker struct {
+	doc  *Document
+	errs []error
+}
+
+func (c *checker) fail(at, format string, args ...any) {
+	if at == "" {
+		at = "/"
+	}
+	c.errs = append(c.errs, fmt.Errorf("%s: %s", at, fmt.Sprintf(format, args...)))
+}
+
+// value checks v, decoded from JSON, against s, at the JSON pointer at.
+func (c *checker) value(s *Schema, v any, at string) {
+	if s == nil {
+		return
+	}
+	if s.Ref != "" {
+		name, ok := strings.CutPrefix(s.Ref, "#/components/schemas/")
+		target := c.doc.Components.Schemas[name]
+		if !ok || target == nil {
+			c.fail(at, "unknown schema %s", s.Ref)
+			return
+		}
+		c.value(target, v, at)
+	}
+	if len(s.AnyOf) > 0 {
+		matched := false
+		for _, alt := range s.AnyOf {
+			sub := &checker{doc: c.doc}
+			sub.value(alt, v, at)
+			if len(sub.errs) == 0 {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			c.fail(at, "%s matches none of the schemas it may", describe(v))
+		}
+	}
+	if len(s.Type) > 0 && !s.Type.Is(kindOf(v)) && !(kindOf(v) == "integer" && s.Type.Is("number")) {
+		c.fail(at, "expected %s, got %s", strings.Join(s.Type, " or "), describe(v))
+		return
+	}
+	if len(s.Enum) > 0 && !inEnum(s.Enum, v) {
+		c.fail(at, "%s isn't one of %v", describe(v), s.Enum)
+	}
+	match v {
+		string(str) => c.text(s, str, at)
+		float64(n) => c.number(s, n, at)
+		[]any(items) => {
+			if s.MinItems != nil && len(items) < *s.MinItems || s.MaxItems != nil && len(items) > *s.MaxItems {
+				c.fail(at, "has %d items, out of bounds", len(items))
+			}
+			for i, item := range items {
+				c.value(s.Items, item, f"{at}/{i}")
+			}
+		}
+		map[string]any(members) => {
+			for _, name := range s.Required {
+				if _, ok := members[name]; !ok {
+					c.fail(at, "the required member %q is missing", name)
+				}
+			}
+			for name, m := range members {
+				p := s.Properties[name] ?? s.AdditionalProperties
+				c.value(p, m, at+"/"+strings.ReplaceAll(strings.ReplaceAll(name, "~", "~0"), "/", "~1"))
+			}
+		}
+		_ => {}
+	}
+}
+
+// text checks a string's length, pattern and date-time format.
+func (c *checker) text(s *Schema, str, at string) {
+	n := utf8.RuneCountInString(str)
+	if s.MinLength != nil && n < *s.MinLength || s.MaxLength != nil && n > *s.MaxLength {
+		c.fail(at, "has %d characters, out of bounds", n)
+	}
+	if s.Pattern != "" && !compiled(s.Pattern).MatchString(str) {
+		c.fail(at, "%q doesn't match %s", str, s.Pattern)
+	}
+	if s.Format == "date-time" {
+		if _, err := time.Parse(time.RFC3339Nano, str); err != nil {
+			c.fail(at, "%q isn't a date-time", str)
+		}
+	}
+}
+
+// number checks a number's bounds.
+func (c *checker) number(s *Schema, n float64, at string) {
+	if s.Minimum != nil && n < *s.Minimum || s.Maximum != nil && n > *s.Maximum ||
+		s.ExclusiveMinimum != nil && n <= *s.ExclusiveMinimum || s.ExclusiveMaximum != nil && n >= *s.ExclusiveMaximum {
+		c.fail(at, "%v is out of bounds", n)
+	}
+}
+
+// kindOf is the JSON Schema type of v: integer for a whole number.
+func kindOf(v any) string {
+	return match v {
+		nil => "null"
+		bool(_) => "boolean"
+		float64(n) => if n == math.Trunc(n) { "integer" } else { "number" }
+		string(_) => "string"
+		[]any(_) => "array"
+		map[string]any(_) => "object"
+		_ => "unknown"
+	}
+}
+
+// describe shows v in a message.
+func describe(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil || len(b) > 40 {
+		return kindOf(v)
+	}
+	return string(b)
+}
+
+// inEnum reports whether v is one of the values, comparing numbers by
+// value.
+func inEnum(values []any, v any) bool {
+	for _, e := range values {
+		a, _ := json.Marshal(e)
+		var ev any
+		json.Unmarshal(a, &ev)
+		if reflect.DeepEqual(ev, v) {
+			return true
+		}
+	}
+	return false
+}
+
+var patterns sync.Map // pattern -> *regexp.Regexp
+
+// compiled returns the regular expression of a pattern, compiled once; one
+// that doesn't compile matches anything.
+func compiled(pattern string) *regexp.Regexp {
+	if re, ok := patterns.Load(pattern); ok {
+		return re.(*regexp.Regexp)
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		re = regexp.MustCompile("")
+	}
+	patterns.Store(pattern, re)
+	return re
+}

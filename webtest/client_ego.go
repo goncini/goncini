@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/httpkernel"
 )
 
@@ -23,7 +24,7 @@ import (
 // that a test sees every check that fails, and return the response for
 // more checks.
 //
-//line client.ego:23
+//line client.ego:24
 type Client struct {
 	t       testing.TB
 	handler http.Handler
@@ -31,8 +32,16 @@ type Client struct {
 	header  http.Header
 }
 
-// NewClient returns a client of h.
+// NewClient returns a client of h. A client of an app, a *goncini.App,
+// checks each response against the app's OpenAPI document, as Contract
+// does; a client of its kernel doesn't.
 func NewClient(t testing.TB, h http.Handler) *Client {
+	if app, ok := h.(*goncini.App); ok {
+		h = app.Kernel
+		if app.OpenAPI != nil {
+			h = Contract(t, app.OpenAPI, h)
+		}
+	}
 	return &Client{t: t, handler: h, header: http.Header{}}
 }
 
@@ -269,7 +278,7 @@ func describe(vs []httpkernel.Violation) string {
 		} else {
 			where = v.Header
 		}
-//line client.ego:261
+//line client.ego:270
 		parts = append(parts, fmt.Sprintf("%s: %q", where, v.Detail))
 	}
 	return strings.Join(parts, ", ")

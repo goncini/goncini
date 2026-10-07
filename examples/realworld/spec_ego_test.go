@@ -18,9 +18,10 @@ import (
 )
 
 // TestSpec runs RealWorld's official Hurl suite, in testdata/hurl, against
-// the app, as it serves over HTTP. It needs hurl (https://hurl.dev).
+// the app, as it serves over HTTP, and checks every exchange against the
+// app's OpenAPI document. It needs hurl (https://hurl.dev).
 //
-//line spec_test.ego:20
+//line spec_test.ego:21
 func TestSpec(t *testing.T) {
 	hurl, err := exec.LookPath("hurl")
 	if err != nil && os.Getenv("CI") != "" {
@@ -31,14 +32,14 @@ func TestSpec(t *testing.T) {
 	}
 	a := webtest.Boot(t, config.Load, app.Build)
 	webtest.Run(t, a, "db:migrate")
-	srv := httptest.NewServer(a.Kernel)
+	srv := httptest.NewServer(webtest.Contract(t, a.OpenAPI, a.Kernel))
 	defer srv.Close()
 
 	files, err2 := filepath.Glob("testdata/hurl/*.hurl")
 	if err2 != nil {
 		panic(err2)
 	}
-//line spec_test.ego:34
+//line spec_test.ego:35
 	args := []string{"--test", "--jobs", "1", "--variable", "host=" + srv.URL, "--variable", "uid=" + strconv.FormatInt(time.Now().UnixNano(), 36)}
 	out, err := exec.CommandContext(t.Context(), hurl, append(args, files...)...).CombinedOutput()
 	if err != nil {

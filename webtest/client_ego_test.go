@@ -14,6 +14,7 @@ import (
 
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/webtest"
 
@@ -22,7 +23,7 @@ import (
 
 // echo answers JSON describing the request.
 //
-//line client_test.ego:20
+//line client_test.ego:21
 var echo = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	w.Header().Set("Content-Type", "application/json")
@@ -63,7 +64,7 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:57
+//line client_test.ego:58
 	req.Header.Set("Authorization", "Token bob")
 	alice.Do(req).HasHeader("X-Seen", "Token bob") // the request's own header wins
 }
@@ -137,7 +138,7 @@ func TestFailedChecks(t *testing.T) {
 			t.Errorf("check %d: failures %q", i, rec.failures)
 		}
 	}
-//line client_test.ego:112
+//line client_test.ego:113
 	rec.failures = nil
 	problem.Get("/x").Problem(404).HasDetail("no route matches GET /x")
 	if rec.failures != nil {
@@ -159,7 +160,7 @@ func (i *isolator) Isolate(ctx context.Context) (context.Context, func() error, 
 	}, nil
 }
 
-//line client_test.ego:130
+//line client_test.ego:131
 func TestIsolate(t *testing.T) {
 	iso := &isolator{}
 	t.Run("test", func(t *testing.T) {
@@ -190,7 +191,7 @@ func TestInABubble(t *testing.T) {
 			r.Get("/slow", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				time.Sleep(time.Hour)
 			}))
-//line client_test.ego:158
+//line client_test.ego:159
 			return &goncini.App{Kernel: &httpkernel.Kernel{Handler: r}}, nil
 		}
 		a := webtest.Boot(t, func(env *goncini.Env) string { return env.Name }, build)
@@ -200,4 +201,36 @@ func TestInABubble(t *testing.T) {
 			t.Errorf("the request took %v of fake time", d)
 		}
 	})
+}
+
+type greeting struct {
+	Hello string `json:"hello"`
+}
+
+// TestContract checks that a client of an app checks responses against
+// its OpenAPI document, and a client of its kernel doesn't.
+func TestContract(t *testing.T) {
+	r := routing.New()
+	r.Get("/hello", httpkernel.Endpoint(func(ctx context.Context, in struct{}) (greeting, error) { return greeting{"world"}, nil }))
+	k := &httpkernel.Kernel{Handler: r}
+	doc, err := openapi.Generate(r.List(), k, openapi.Config{}, openapi.Annotations{})
+	if err != nil {
+		panic(err)
+	}
+//line client_test.ego:181
+	app := &goncini.App{Kernel: k, OpenAPI: doc}
+	rec := &recorder{TB: t}
+	webtest.NewClient(rec, app).Get("/hello").Status(200)
+	if rec.failures != nil {
+		t.Errorf("failures %q", rec.failures)
+	}
+	doc.Components.Schemas["greeting"].Required = []string{"bye"}
+	webtest.NewClient(rec, app.Kernel).Get("/hello").Status(200)
+	if rec.failures != nil {
+		t.Errorf("a kernel's client: failures %q", rec.failures)
+	}
+	webtest.NewClient(rec, app).Get("/hello").Status(200)
+	if want := `GET /hello: the 200 response: /: the required member "bye" is missing`; len(rec.failures) != 1 || !strings.Contains(rec.failures[0], want) {
+		t.Errorf("failures %q, want %q", rec.failures, want)
+	}
 }

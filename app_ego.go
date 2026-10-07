@@ -5,6 +5,7 @@ package goncini
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 // HTTP configures how an app serves HTTP. Each field's zero value is the
 // default it names.
 //
-//line app.ego:18
+//line app.ego:19
 type HTTP struct {
 	// Addr is the TCP address to listen on; empty means ":8080".
 	Addr string
@@ -75,6 +76,11 @@ type App struct {
 	Logger   *slog.Logger
 	// OpenAPI is the document of the app's API.
 	OpenAPI *openapi.Document
+}
+
+// ServeHTTP serves r with the app's kernel.
+func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.Kernel.ServeHTTP(w, r)
 }
 
 // Service describes a service of the app, in the order the app builds them,
@@ -156,7 +162,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:149
+//line app.ego:155
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -164,7 +170,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:153
+//line app.ego:159
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
@@ -206,17 +212,17 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 // serves, with the doc comments and errors of a, and serves it on router
 // as c says.
 //
-//line app.ego:187
+//line app.ego:193
 func NewOpenAPI(c openapi.Config, router *routing.Router, kernel *httpkernel.Kernel, a openapi.Annotations) (*openapi.Document, error) {
 	doc, err := openapi.Generate(router.List(), kernel, c, a)
 	if err != nil {
 		return nil, err
 	}
-//line app.ego:189
+//line app.ego:195
 	if err := openapi.Mount(router, doc, c); err != nil {
 		return nil, err
 	}
-//line app.ego:190
+//line app.ego:196
 	return doc, nil
 }
 

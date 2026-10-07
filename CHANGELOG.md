@@ -185,6 +185,13 @@ document generated from the code, with nothing to annotate.
 - **A goncini app** serves its document at `/openapi.json`, a Swagger UI
   page where `openapi.Config.DocsPath` says (in dev, for RealWorld), and
   prints it with `openapi:dump`.
+- **The contract is checked in tests.** `Document.Check` says how an
+  exchange breaks the document: an undeclared status or media type, a
+  body its schema doesn't allow, or an accepted request whose body it
+  doesn't allow. A `webtest` client of an app, `webtest.NewClient(t, a)`,
+  checks every response; `webtest.Contract` is the same as middleware, for
+  an app served over HTTP. RealWorld's Hurl suite runs through it: all 154
+  requests hold.
 - `httpkernel.Describe` says what an endpoint takes and returns, and
   `routing.Info` has the route's middleware.
 

@@ -218,7 +218,7 @@ plain constructors, matched by their result types.
 ```go
 a := webtest.Boot(t, config.Load, app.Build) // the app in the test environment
 webtest.Run(t, a, "db:migrate")              // a new in-memory database
-c := webtest.NewClient(t, a.Kernel)          // a *webtest.Client
+c := webtest.NewClient(t, a)                 // a *webtest.Client, which checks responses against the OpenAPI document
 c.Post("/api/articles", `{"article":{…}}`).Status(201)
 c.Put(path, body).Status(200).JSON(&out)     // decodes the JSON body into out
 c.Get("/api/articles/nope").Status(404).Contains(`"article":["not found"]`) // a substring of the body

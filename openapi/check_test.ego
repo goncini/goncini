@@ -1,0 +1,43 @@
+package openapi_test
+
+import (
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini/openapi"
+)
+
+func TestCheck(t *testing.T) {
+	r, k, a := notesAPI()
+	doc := must openapi.Generate(r.List(), k, openapi.Config{}, a)
+	jsonHeader := http.Header{"Content-Type": {"application/json"}}
+	problemHeader := http.Header{"Content-Type": {"application/problem+json"}}
+	note := `{"note":{"id":1,"title":"Hi","tags":[],"bio":null}}`
+	for _, c := range []struct {
+		name string
+		x    openapi.Exchange
+		want string // in the error; empty for none
+	}{
+		{"a note", openapi.Exchange{Method: "GET", Path: "/notes/1", Status: 200, Header: jsonHeader, Body: []byte(note)}, ""},
+		{"a 404", openapi.Exchange{Method: "GET", Path: "/notes/1", Status: 404, Header: problemHeader, Body: []byte(`{"status":404}`)}, ""},
+		{"an undeclared status", openapi.Exchange{Method: "GET", Path: "/notes/1", Status: 409, Header: problemHeader, Body: []byte(`{}`)}, "GET /notes/{id}: the document has no 409 response"},
+		{"an undeclared media type", openapi.Exchange{Method: "GET", Path: "/notes/1", Status: 200, Header: http.Header{"Content-Type": {"text/plain"}}, Body: []byte("hi")}, `its media type "text/plain" isn't declared`},
+		{"a missing member", openapi.Exchange{Method: "GET", Path: "/notes/1", Status: 200, Header: jsonHeader, Body: []byte(`{"note":{"id":1,"title":"Hi","tags":[]}}`)}, `/note: the required member "bio" is missing`},
+		{"a wrong type", openapi.Exchange{Method: "GET", Path: "/notes/1", Status: 200, Header: jsonHeader, Body: []byte(`{"note":{"id":1.5,"title":"Hi","tags":[],"bio":null}}`)}, "/note/id: expected integer, got 1.5"},
+		{"a list", openapi.Exchange{Method: "GET", Path: "/notes", Status: 200, Header: jsonHeader, Body: []byte(`[` + note[8:len(note)-1] + `]`)}, ""},
+		{"a body without content", openapi.Exchange{Method: "DELETE", Path: "/notes/1", Status: 204, Header: http.Header{}, Body: []byte("{}")}, "body isn't declared"},
+		{"a valid request", openapi.Exchange{Method: "POST", Path: "/notes", RequestType: "application/json", RequestBody: []byte(`{"note":{"title":"Hi"}}`), Status: 201, Header: jsonHeader, Body: []byte(note)}, ""},
+		{"an accepted invalid request", openapi.Exchange{Method: "POST", Path: "/notes", RequestType: "application/json", RequestBody: []byte(`{"note":{"title":"Hi","tags":["a1"]}}`), Status: 201, Header: jsonHeader, Body: []byte(note)}, `the request body: /note/tags/0: "a1" doesn't match ^[a-zA-Z]+$`},
+		{"a refused invalid request", openapi.Exchange{Method: "POST", Path: "/notes", RequestType: "application/json", RequestBody: []byte(`{"note":{}}`), Status: 422, Header: problemHeader, Body: []byte(`{"status":422,"errors":[{"detail":"is required"}]}`)}, ""},
+		{"an unknown path", openapi.Exchange{Method: "GET", Path: "/nope", Status: 404}, ""},
+	} {
+		err := doc.Check(c.x)
+		switch {
+		case c.want == "" && err != nil:
+			t.Errorf("%s: %v", c.name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Errorf("%s: %v, want %q", c.name, err, c.want)
+		}
+	}
+}

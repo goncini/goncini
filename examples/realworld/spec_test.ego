@@ -16,7 +16,8 @@ import (
 )
 
 // TestSpec runs RealWorld's official Hurl suite, in testdata/hurl, against
-// the app, as it serves over HTTP. It needs hurl (https://hurl.dev).
+// the app, as it serves over HTTP, and checks every exchange against the
+// app's OpenAPI document. It needs hurl (https://hurl.dev).
 func TestSpec(t *testing.T) {
 	hurl, err := exec.LookPath("hurl")
 	if err != nil && os.Getenv("CI") != "" {
@@ -27,7 +28,7 @@ func TestSpec(t *testing.T) {
 	}
 	a := webtest.Boot(t, config.Load, app.Build)
 	webtest.Run(t, a, "db:migrate")
-	srv := httptest.NewServer(a.Kernel)
+	srv := httptest.NewServer(webtest.Contract(t, a.OpenAPI, a.Kernel))
 	defer srv.Close()
 
 	files := must filepath.Glob("testdata/hurl/*.hurl")

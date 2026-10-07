@@ -3,6 +3,7 @@ package goncini
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"time"
 
@@ -68,6 +69,11 @@ type App struct {
 	Logger   *slog.Logger
 	// OpenAPI is the document of the app's API.
 	OpenAPI *openapi.Document
+}
+
+// ServeHTTP serves r with the app's kernel.
+func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.Kernel.ServeHTTP(w, r)
 }
 
 // Service describes a service of the app, in the order the app builds them,

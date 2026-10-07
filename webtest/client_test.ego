@@ -12,6 +12,7 @@ import (
 
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/webtest"
 )
@@ -164,4 +165,32 @@ func TestInABubble(t *testing.T) {
 			t.Errorf("the request took %v of fake time", d)
 		}
 	})
+}
+
+type greeting struct {
+	Hello string `json:"hello"`
+}
+
+// TestContract checks that a client of an app checks responses against
+// its OpenAPI document, and a client of its kernel doesn't.
+func TestContract(t *testing.T) {
+	r := routing.New()
+	r.Get("/hello", httpkernel.Endpoint(func(ctx context.Context, in struct{}) (greeting, error) { return greeting{"world"}, nil }))
+	k := &httpkernel.Kernel{Handler: r}
+	doc := must openapi.Generate(r.List(), k, openapi.Config{}, openapi.Annotations{})
+	app := &goncini.App{Kernel: k, OpenAPI: doc}
+	rec := &recorder{TB: t}
+	webtest.NewClient(rec, app).Get("/hello").Status(200)
+	if rec.failures != nil {
+		t.Errorf("failures %q", rec.failures)
+	}
+	doc.Components.Schemas["greeting"].Required = []string{"bye"}
+	webtest.NewClient(rec, app.Kernel).Get("/hello").Status(200)
+	if rec.failures != nil {
+		t.Errorf("a kernel's client: failures %q", rec.failures)
+	}
+	webtest.NewClient(rec, app).Get("/hello").Status(200)
+	if want := `GET /hello: the 200 response: /: the required member "bye" is missing`; len(rec.failures) != 1 || !strings.Contains(rec.failures[0], want) {
+		t.Errorf("failures %q, want %q", rec.failures, want)
+	}
 }

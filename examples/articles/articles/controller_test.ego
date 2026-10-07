@@ -27,7 +27,7 @@ func boot(t *testing.T) *goncini.App {
 }
 
 func TestArticlesAPI(t *testing.T) {
-	c := webtest.NewClient(t, boot(t).Kernel)
+	c := webtest.NewClient(t, boot(t))
 
 	var hello articles.Article
 	c.Post("/articles", `{"title":"Hello, World!","body":"First","tags":["go"]}`).Status(201).
@@ -56,7 +56,7 @@ func TestArticlesAPI(t *testing.T) {
 }
 
 func TestValidation(t *testing.T) {
-	c := webtest.NewClient(t, boot(t).Kernel)
+	c := webtest.NewClient(t, boot(t))
 	c.Post("/articles", `{"title":" ","body":""}`).Problem(422).
 		Violation("#/title", "can't be blank").
 		Violation("#/body", "can't be blank")
@@ -68,7 +68,7 @@ func TestValidation(t *testing.T) {
 }
 
 func TestCreatedLocation(t *testing.T) {
-	c := webtest.NewClient(t, boot(t).Kernel)
+	c := webtest.NewClient(t, boot(t))
 	for title, want := range map[string]string{
 		"Go 1.27":    "/articles/go-1-27",
 		"Café crème": "/articles/caf%C3%A9-cr%C3%A8me",
