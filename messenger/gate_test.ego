@@ -209,4 +209,3 @@ func TestSIGTERMDrains(t *testing.T) {
 		t.Errorf("stopping took %v; %d left, with %d attempts", took, len(list), attempts)
 	}
 }
-
