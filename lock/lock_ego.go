@@ -129,7 +129,9 @@ func (l *Lock) Run(ctx context.Context, f func(ctx context.Context) error) (bool
 			case <-done:
 				return
 			case <-tick.C:
-				if held, err := l.Refresh(ctx); err != nil || !held {
+				// An error may be passing: the next tick tries again, and
+				// the lock runs out if they all fail.
+				if held, err := l.Refresh(ctx); err == nil && !held {
 					cancel(ErrLost)
 					return
 				}

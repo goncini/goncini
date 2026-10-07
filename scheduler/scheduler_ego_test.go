@@ -122,3 +122,49 @@ func TestDebugTable(t *testing.T) {
 		t.Errorf("table:\n%s", out.String())
 	}
 }
+
+// TestCronDaylightSaving checks New York's clock changes: a time the
+// spring skips doesn't happen, and one the fall repeats happens once.
+func TestCronDaylightSaving(t *testing.T) {
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		panic(err)
+	}
+//line scheduler_test.ego:105
+	three, err := scheduler.CronIn("0 3 * * *", ny)
+	if err != nil {
+		panic(err)
+	}
+//line scheduler_test.ego:106
+	if got := three.Next(time.Date(2026, 3, 8, 0, 30, 0, 0, ny)); !got.Equal(time.Date(2026, 3, 8, 3, 0, 0, 0, ny)) {
+		t.Errorf("after the gap: %v", got)
+	}
+	gap, err := scheduler.CronIn("30 2 * * *", ny)
+	if err != nil {
+		panic(err)
+	}
+//line scheduler_test.ego:110
+	if got := gap.Next(time.Date(2026, 3, 8, 0, 30, 0, 0, ny)); got.Day() != 9 {
+		t.Errorf("in the gap: %v", got)
+	}
+	repeated, err := scheduler.CronIn("30 1 * * *", ny)
+	if err != nil {
+		panic(err)
+	}
+//line scheduler_test.ego:114
+	first := repeated.Next(time.Date(2026, 10, 31, 1, 30, 0, 0, ny))
+	second := repeated.Next(first)
+	if first.Day() != 1 || second.Day() != 2 {
+		t.Errorf("in the repeated hour: %v, then %v", first, second)
+	}
+	// As in Vixie cron, a day of the month that starts with * restricts
+	// nothing when the weekday does: Mondays only.
+	everyOther, err := scheduler.Cron("0 0 */2 * 1")
+	if err != nil {
+		panic(err)
+	}
+//line scheduler_test.ego:122
+	if got := everyOther.Next(time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)); got.Day() != 12 {
+		t.Errorf("*/2 with a weekday: %v", got)
+	}
+}

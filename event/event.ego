@@ -17,6 +17,7 @@
 package event
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -90,8 +91,10 @@ func On[E any](d *Dispatcher, l func(ctx context.Context, e *E) error, opts ...O
 	if d.listeners == nil {
 		d.listeners = map[reflect.Type][]listener{}
 	}
-	ls := append(d.listeners[t], ln)
-	slices.SortStableFunc(ls, (a, b listener) => b.priority - a.priority)
+	// A new slice, so that a dispatch going through the old one isn't
+	// disturbed.
+	ls := append(slices.Clone(d.listeners[t]), ln)
+	slices.SortStableFunc(ls, (a, b listener) => cmp.Compare(b.priority, a.priority))
 	d.listeners[t] = ls
 }
 

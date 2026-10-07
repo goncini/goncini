@@ -23,6 +23,7 @@ func NewArticles(store *Store, access *security.Access, events *event.Dispatcher
 // Published is the event of an article published, for the features that
 // care, such as notifications.
 type Published struct {
+	ID       int64
 	Slug     string
 	AuthorID int64
 }
@@ -130,7 +131,7 @@ effect (a *Articles) Create(in CreateInput) (httpkernel.Created[ArticleBody], Ar
 	art := Article{Summary{Title: b.Title, Description: b.Description, AuthorID: users.Viewer(ctx)}, b.Body}
 	slug := check a.store.Save(art, b.TagList ?? []string{}) as Unavailable
 	created := check a.find(slug) ""
-	check event.Dispatch(ctx, a.events, &Published{Slug: slug, AuthorID: created.AuthorID}) as Unavailable
+	check event.Dispatch(ctx, a.events, &Published{ID: created.ID, Slug: slug, AuthorID: created.AuthorID}) as Unavailable
 	return httpkernel.Created[ArticleBody]{Body: ArticleBody{created}}, nil
 }
 

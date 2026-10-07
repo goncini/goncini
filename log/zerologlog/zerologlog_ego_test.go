@@ -4,6 +4,7 @@ package zerologlog_test
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"strings"
 	"testing"
@@ -14,14 +15,15 @@ import (
 	"github.com/goncini/goncini/log/zerologlog"
 )
 
-//line zerologlog_test.ego:15
+//line zerologlog_test.ego:16
 func TestHandler(t *testing.T) {
 	var out bytes.Buffer
 	c := goncini.Log{Level: slog.LevelInfo, JSON: true}
 	logger := goncini.NewLogger(zerologlog.NewHandler(zerolog.New(&out).Level(zerologlog.Level(c.Level)), c))
 	logger.Debug("hidden")
 	logger.Warn("the queue is slow", slog.Int("depth", 42))
-	if got := out.String(); strings.Contains(got, "hidden") || !strings.Contains(got, `"level":"warn"`) || !strings.Contains(got, `"depth":42`) || !strings.Contains(got, `"message":"the queue is slow"`) {
+	logger.Log(context.Background(), slog.LevelError+4, "critical") // a level of its own
+	if got := out.String(); strings.Contains(got, "hidden") || !strings.Contains(got, `"level":"warn"`) || !strings.Contains(got, `"depth":42`) || !strings.Contains(got, `"message":"the queue is slow"`) || !strings.Contains(got, `"message":"critical"`) {
 		t.Errorf("logged %s", got)
 	}
 }

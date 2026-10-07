@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -241,9 +242,12 @@ func (b *Bus) register(t reflect.Type) {
 	if b.names == nil {
 		b.names, b.types = map[reflect.Type]string{}, map[string]reflect.Type{}
 	}
-	name := t.String()
-	if t.PkgPath() != "" {
-		name = t.PkgPath() + "." + t.Name()
+	name, elem := t.String(), t
+	for elem.Kind() == reflect.Pointer {
+		elem = elem.Elem()
+	}
+	if elem.PkgPath() != "" {
+		name = strings.Repeat("*", strings.Count(t.String(), "*")-strings.Count(elem.String(), "*")) + elem.PkgPath() + "." + elem.Name()
 	}
 	b.names[t], b.types[name] = name, t
 }

@@ -115,3 +115,23 @@ func TestList(t *testing.T) {
 		t.Errorf("table:\n%s", b.String())
 	}
 }
+
+// TestListenersAddedDuringADispatch checks that a listener added while
+// its event is dispatched waits for the next dispatch.
+func TestListenersAddedDuringADispatch(t *testing.T) {
+	d := event.New()
+	var ran []string
+	event.On(d, func(ctx context.Context, e *published) error {
+		ran = append(ran, "A")
+		event.On(d, func(ctx context.Context, e *published) error { ran = append(ran, "H"); return nil }, event.Priority(10))
+		return nil
+	})
+	event.On(d, func(ctx context.Context, e *published) error { ran = append(ran, "B"); return nil })
+	if err := event.Dispatch(context.Background(), d, &published{}); err != nil {
+		panic(err)
+	}
+//line event_test.ego:107
+	if got := strings.Join(ran, ""); got != "AB" {
+		t.Errorf("ran %s", got)
+	}
+}

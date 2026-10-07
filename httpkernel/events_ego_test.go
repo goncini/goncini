@@ -3,6 +3,7 @@
 package httpkernel_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -18,7 +19,7 @@ import (
 // answers, an error listener that changes the problem, and a response
 // listener that sees what was sent.
 //
-//line events_test.ego:18
+//line events_test.ego:19
 func TestKernelEvents(t *testing.T) {
 	d := event.New()
 	maintenance := false
@@ -70,5 +71,32 @@ func TestKernelEvents(t *testing.T) {
 	}
 	if len(reported) != 2 || len(sent) != 4 || sent[1] != 409 || sent[2] != 503 {
 		t.Errorf("reported %v, sent %v", reported, sent)
+	}
+}
+
+// TestResponseEventEdges checks that a panicking response listener is
+// logged, and that an aborted response has no status.
+func TestResponseEventEdges(t *testing.T) {
+	d := event.New()
+	var statuses []int
+	event.On(d, func(ctx context.Context, e *httpkernel.ResponseEvent) error {
+		statuses = append(statuses, e.Status)
+		panic("boom")
+	})
+	k := &httpkernel.Kernel{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic(http.ErrAbortHandler)
+	}), Events: d}
+	var logs *bytes.Buffer
+	k.Logger, logs = logged()
+	func() {
+		defer func() {
+			if v := recover(); v != http.ErrAbortHandler {
+				t.Errorf("recovered %v", v)
+			}
+		}()
+		k.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+	}()
+	if len(statuses) != 1 || statuses[0] != 0 || !strings.Contains(logs.String(), "panicked") {
+		t.Errorf("statuses %v, logs %s", statuses, logs)
 	}
 }

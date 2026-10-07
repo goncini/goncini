@@ -31,8 +31,9 @@ import (
 //
 //line notifications.ego:26
 type NotifyFollowers struct {
-	Slug     string `json:"slug"`
-	AuthorID int64  `json:"authorId"`
+	ArticleID int64  `json:"articleId"`
+	Slug      string `json:"slug"`
+	AuthorID  int64  `json:"authorId"`
 }
 
 // NotificationError is everything the notifications endpoints fail with.
@@ -59,7 +60,7 @@ func (e Unavailable) As(target any) bool {
 	return false
 }
 
-//line notifications.ego:37
+//line notifications.ego:38
 func Problem(err error) httpkernel.Problem {
 	var v httpkernel.Problem
 	if err == nil {
@@ -72,7 +73,7 @@ func Problem(err error) httpkernel.Problem {
 	return v
 }
 
-//line notifications.ego:44
+//line notifications.ego:45
 var Problems = httpkernel.Map[NotificationError](Problem)
 
 // Notification is a notification of an article, as its user sees it.
@@ -99,12 +100,13 @@ func (n *Notifications) Handlers(b *messenger.Bus) {
 }
 
 // notify writes a notification of the article for each follower of its
-// author. Handled twice, as a message can be, it writes them once.
+// author. Handled twice, as a message can be, it writes them once: the
+// unique index of users and articles ignores the second.
 func (n *Notifications) notify(ctx context.Context, m NotifyFollowers) error {
-	_, err := n.sql.Conn(ctx).ExecContext(ctx, `INSERT INTO notifications (user_id, article_slug, author_id, created_at)
-		SELECT f.follower_id, ?, ?, ? FROM follows f WHERE f.followed_id = ?
-		AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.user_id = f.follower_id AND n.article_slug = ?)`,
-		m.Slug, m.AuthorID, n.now().UnixMicro(), m.AuthorID, m.Slug)
+	_, err := n.sql.Conn(ctx).ExecContext(ctx, `INSERT INTO notifications (user_id, article_id, article_slug, author_id, created_at)
+		SELECT follower_id, ?, ?, ?, ? FROM follows WHERE followed_id = ? AND true
+		ON CONFLICT (user_id, article_id) DO NOTHING`,
+		m.ArticleID, m.Slug, m.AuthorID, n.now().UnixMicro(), m.AuthorID)
 	return err
 }
 
@@ -132,7 +134,7 @@ type NotificationsBody struct {
 func (n *Notifications) List(ctx context.Context, in struct{}) (_ NotificationsBody, err error) {
 	ctx, span := trace.Start(ctx, "notifications.Notifications.List")
 	defer trace.End(span, &err)
-//line notifications.ego:101
+//line notifications.ego:103
 	list, err := db.All(ctx, n.sql.Conn(ctx), scanNotification,
 		"SELECT n.article_slug, u.username, n.created_at FROM notifications n JOIN users u ON u.id = n.author_id WHERE n.user_id = ? ORDER BY n.created_at DESC, n.id DESC LIMIT 100",
 		users.Viewer(ctx))
@@ -142,7 +144,7 @@ func (n *Notifications) List(ctx context.Context, in struct{}) (_ NotificationsB
 		}
 		return NotificationsBody{}, Unavailable{Cause: err}
 	}
-//line notifications.ego:104
+//line notifications.ego:106
 	return NotificationsBody{list}, nil
 }
 
@@ -165,6 +167,6 @@ func NewSubscriber(bus *messenger.Bus) *Subscriber {
 
 func (s *Subscriber) Subscribe(d *event.Dispatcher) {
 	event.On(d, func(ctx context.Context, e *articles.Published) error {
-		return messenger.Dispatch(ctx, s.bus, NotifyFollowers{Slug: e.Slug, AuthorID: e.AuthorID})
+		return messenger.Dispatch(ctx, s.bus, NotifyFollowers{ArticleID: e.ID, Slug: e.Slug, AuthorID: e.AuthorID})
 	})
 }

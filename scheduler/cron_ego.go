@@ -82,7 +82,9 @@ func CronIn(expr string, loc *time.Location) (Trigger, error) {
 	if c.weekdays&(1<<7) != 0 {
 		c.weekdays |= 1 // 7 is Sunday too
 	}
-	c.anyDay, c.anyWeekday = fields[2] == "*", fields[4] == "*"
+	// A day field that starts with *, as */2, restricts nothing for the
+	// OR of the two days, as in Vixie cron.
+	c.anyDay, c.anyWeekday = strings.HasPrefix(fields[2], "*"), strings.HasPrefix(fields[4], "*")
 	return c, nil
 }
 
@@ -144,22 +146,33 @@ func parseField(f string, lo, hi int) (uint64, error) {
 
 func (c *cron) String() string { return c.expr }
 
-// Next returns the first minute after t that matches.
+// Next returns the first minute after t that matches, walking the
+// location's calendar and clocks: a time that its clocks skip, in a
+// daylight saving gap, doesn't happen, and one that they repeat happens
+// once.
 func (c *cron) Next(t time.Time) time.Time {
-	t = t.In(c.loc).Truncate(time.Minute).Add(time.Minute)
-	limit := t.AddDate(5, 0, 0) // no match within 5 years: never, as February 30
-	for t.Before(limit) {
-		switch {
-		case c.months&(1<<int(t.Month())) == 0:
-			t = time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, c.loc)
-		case !c.dayMatches(t):
-			t = time.Date(t.Year(), t.Month(), t.Day()+1, 0, 0, 0, 0, c.loc)
-		case c.hours&(1<<t.Hour()) == 0:
-			t = time.Date(t.Year(), t.Month(), t.Day(), t.Hour()+1, 0, 0, 0, c.loc)
-		case c.minutes&(1<<t.Minute()) == 0:
-			t = t.Add(time.Minute)
-		default:
-			return t
+	t = t.In(c.loc)
+	y, m, d := t.Date()
+	h, mi := t.Hour(), t.Minute()
+	for day := 0; day < 5*366; day++ { // no match within 5 years: never, as February 30
+		date := time.Date(y, m, d+day, 12, 0, 0, 0, time.UTC) // a civil date
+		if c.months&(1<<int(date.Month())) == 0 || !c.dayMatches(date) {
+			continue
+		}
+		for hour := 0; hour < 24; hour++ {
+			if c.hours&(1<<hour) == 0 || day == 0 && hour < h {
+				continue
+			}
+			for minute := 0; minute < 60; minute++ {
+				if c.minutes&(1<<minute) == 0 || day == 0 && hour == h && minute <= mi {
+					continue
+				}
+				next := time.Date(date.Year(), date.Month(), date.Day(), hour, minute, 0, 0, c.loc)
+				if next.Hour() != hour || next.Minute() != minute || !next.After(t) {
+					continue // skipped by the clocks
+				}
+				return next
+			}
 		}
 	}
 	return time.Time{}

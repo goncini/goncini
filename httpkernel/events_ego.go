@@ -5,6 +5,7 @@ package httpkernel
 import (
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/goncini/goncini/event"
@@ -16,11 +17,13 @@ import (
 // Symfony; they are for what concerns every request without being in its
 // way: metrics, audit logs, error reporting, maintenance.
 
-// RequestEvent is dispatched when a request comes in, before the
-// middleware. A listener's error answers the request, as a problem, and
-// the request goes no further: a 503 during maintenance, for instance.
+// RequestEvent is dispatched when a request comes in, after the
+// middleware, before the handler: listeners see the request as trusted
+// proxies and hosts left it, and their answers go through the access log
+// and CORS. A listener's error answers the request, as a problem, and the
+// request goes no further: a 503 during maintenance, for instance.
 //
-//line events.ego:20
+//line events.ego:23
 type RequestEvent struct {
 	Request *http.Request
 }
@@ -34,17 +37,36 @@ type ErrorEvent struct {
 }
 
 // ResponseEvent is dispatched once the response is written, with what it
-// was. Its listeners' errors are logged.
+// was. Its listeners' errors and panics are logged.
 type ResponseEvent struct {
-	Request  *http.Request
+	Request *http.Request
+	// Status is the response's; 0 when the handler aborted it, with
+	// http.ErrAbortHandler.
 	Status   int
 	Size     int64 // the body's bytes
 	Duration time.Duration
 }
 
-// dispatched dispatches e to k's listeners, logging their error, if any.
+// dispatched dispatches e to k's listeners, logging their error or panic,
+// if any.
 func dispatched[E any](k *Kernel, r *http.Request, e *E) {
+	defer func() {
+		if v := recover(); v != nil {
+			k.logger().ErrorContext(r.Context(), "a kernel event's listener panicked", requestAttrs(r, slog.Any("panic", v), slog.String("stack", string(debug.Stack())))...)
+		}
+	}()
 	if err := event.Dispatch(r.Context(), k.Events, e); err != nil {
 		k.logger().ErrorContext(r.Context(), "a kernel event's listener failed", requestAttrs(r, slog.Any("error", err))...)
 	}
+}
+
+// requestEvents returns a handler that dispatches RequestEvent before h.
+func requestEvents(k *Kernel, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := event.Dispatch(r.Context(), k.Events, &RequestEvent{Request: r}); err != nil {
+			WriteError(w, r, err)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
 }

@@ -243,7 +243,9 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 
 - goncini's own SQL stores (locks, then Messenger's transport) work with SQLite and PostgreSQL, the databases its examples and adapters test; MySQL waits for an app that needs it. They create their tables when first used, as Messenger's Doctrine transport does by default, or leave it to the app's migrations.
 - The root module requires modernc.org/sqlite for its tests only; Go's module graph pruning keeps it out of apps' builds. PostgreSQL is tested in the `pgxdb` module, whose CI job has a database.
-- Kernel events are `RequestEvent`, `ErrorEvent` and `ResponseEvent`. Symfony's `kernel.terminate`, for work after the response, is Messenger's job.
+- Kernel events are `RequestEvent`, `ErrorEvent` and `ResponseEvent`; `RequestEvent` runs inside the kernel's middleware, so that its listeners see trusted proxies' and hosts' work, and their answers go through the access log and CORS.
+- Cron follows Vixie cron where cron implementations differ: a day field starting with `*` restricts nothing for the OR of the two days, a time skipped by daylight saving doesn't run, and a repeated one runs once.
+- Packages export `layer.Set`s, such as `messenger.SQL`, and adapters of logging libraries are modules of their own, `log/zaplog` and `log/zerologlog`, so that wiring them is one line (asked by the user on 2026-10-07). Symfony's `kernel.terminate`, for work after the response, is Messenger's job.
 
 **Order of work:** `event` (typed events, subscribers collected by `goncini generate`, kernel events); `lock` (memory and SQL); `messenger` (bus, handlers, memory and SQL transports, retries, the failure transport, `messenger:consume`); `scheduler`; then the gates.
 

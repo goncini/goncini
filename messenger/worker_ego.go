@@ -114,9 +114,15 @@ func (w *Worker) loop(ctx, handling context.Context, take func() (bool, bool), d
 	for ctx.Err() == nil {
 		lease, ok, err := w.receive(ctx)
 		if err != nil {
-			return err
+			// A database that is busy, or away for a while: try again
+			// after a poll, rather than stop consuming.
+			v := w.Logger
+			if v == nil {
+				v = slog.Default()
+			}
+			(v).ErrorContext(ctx, "receiving a message failed", slog.Any("error", err))
 		}
-//line worker.ego:104
+//line worker.ego:109
 		if !ok {
 			var poll time.Duration
 			if w.Poll > 0 {
@@ -124,7 +130,7 @@ func (w *Worker) loop(ctx, handling context.Context, take func() (bool, bool), d
 			} else {
 				poll = time.Second
 			}
-//line worker.ego:106
+//line worker.ego:111
 			select {
 			case <-ctx.Done():
 			case <-time.After(poll):
@@ -174,7 +180,7 @@ func (w *Worker) lease() time.Duration {
 // process handles a leased message, extending its lease meanwhile, then
 // acknowledges it, retries it later, or fails it over.
 //
-//line worker.ego:148
+//line worker.ego:153
 func (w *Worker) process(ctx context.Context, lease Lease) {
 	msg := lease.Message()
 	v := w.Logger
@@ -182,7 +188,7 @@ func (w *Worker) process(ctx context.Context, lease Lease) {
 		v = slog.Default()
 	}
 	log := (v).With(slog.String("message", msg.Type), slog.String("id", msg.ID))
-//line worker.ego:151
+//line worker.ego:156
 	hctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	extended := make(chan struct{})
@@ -195,16 +201,35 @@ func (w *Worker) process(ctx context.Context, lease Lease) {
 			case <-hctx.Done():
 				return
 			case <-tick.C:
-				if held, err := lease.Extend(ctx, w.lease()); err != nil || !held {
+				held, err := lease.Extend(ctx, w.lease())
+				if err == nil && !held {
 					cancel(errLeaseLost)
 					return
 				}
+				// An error may be passing: the next tick tries again, and
+				// the lease runs out if they all fail.
 			}
 		}
 	}()
-	err := w.handle(hctx, msg)
+	// The handler runs on its own, so that one that ignores its context
+	// can't hold the worker past its stop timeout.
+	result := make(chan error, 1)
+	handled := msg // the handler's own copy: an abandoned one may still read it
+	go func() { result <- w.handle(hctx, handled) }()
+	var err error
+	select {
+	case err = <-result:
+	case <-ctx.Done(): // the stop timeout ran out, and hctx with it
+		select {
+		case err = <-result:
+		case <-time.After(100 * time.Millisecond):
+			err = context.Cause(ctx) // abandoned: its message goes back
+		}
+	}
 	cancel(nil)
 	<-extended
+	// What's left to do must happen even past the stop timeout.
+	ctx = context.WithoutCancel(ctx)
 	switch {
 	case err == nil:
 		if err := lease.Ack(ctx); err != nil {
@@ -214,10 +239,10 @@ func (w *Worker) process(ctx context.Context, lease Lease) {
 	case errors.Is(context.Cause(hctx), errLeaseLost):
 		log.WarnContext(ctx, "a message's lease was lost while it was handled: another worker may handle it", slog.Any("error", err))
 		return
-	case errors.Is(context.Cause(ctx), errStopTimeout):
+	case errors.Is(context.Cause(hctx), errStopTimeout):
 		// Stopping cut the handler short: the message goes back as it was.
 		msg.AvailableAt = w.Bus.now()
-		if err := lease.Retry(context.WithoutCancel(ctx), msg); err != nil {
+		if err := lease.Retry(ctx, msg); err != nil {
 			log.ErrorContext(ctx, "giving back a message failed: it will be handled once its lease runs out", slog.Any("error", err))
 		}
 		return

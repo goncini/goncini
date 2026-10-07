@@ -27,8 +27,8 @@ type SQLStore struct {
 	// Schema.
 	NoSetup bool
 
-	setup    sync.Once
-	err      error
+	mu       sync.Mutex
+	setUp    bool
 	acquired atomic.Int64 // acquisitions, to prune expired locks now and then
 }
 
@@ -58,24 +58,32 @@ func (s *SQLStore) table() string {
 	return v
 }
 
-// ready creates the table once, unless NoSetup says not to.
+// ready creates the table once, unless NoSetup says not to: until it
+// succeeded, each call tries again.
 //
-//line sql.ego:52
+//line sql.ego:53
 func (s *SQLStore) ready(ctx context.Context) error {
 	if s.NoSetup {
 		return nil
 	}
-	s.setup.Do(func() {
-		_, s.err = s.pool.ExecContext(ctx, s.Schema())
-	})
-	return s.err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.setUp {
+		return nil
+	}
+	if _, err := s.pool.ExecContext(ctx, s.Schema()); err != nil {
+		return err
+	}
+//line sql.ego:63
+	s.setUp = true
+	return nil
 }
 
 func (s *SQLStore) Acquire(ctx context.Context, key, owner string, ttl time.Duration) (bool, error) {
 	if err := s.ready(ctx); err != nil {
 		return false, err
 	}
-//line sql.ego:64
+//line sql.ego:69
 	now := time.Now()
 	t := s.table()
 	// Insert the lock, or take it over if its owner is this one or its
@@ -85,19 +93,17 @@ func (s *SQLStore) Acquire(ctx context.Context, key, owner string, ttl time.Dura
 	if err != nil {
 		return false, fmt.Errorf("pool.ExecContext: %w", err)
 	}
-//line sql.ego:70
+//line sql.ego:75
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("res.RowsAffected: %w", err)
 	}
-//line sql.ego:71
+//line sql.ego:76
 	if s.acquired.Add(1)%256 == 0 {
 		// Locks of keys used once, such as a scheduler's ticks, would stay.
-		if _, err := s.pool.ExecContext(ctx, s.dialect.Rebind(fmt.Sprintf("DELETE FROM %s WHERE expires_at <= ?", t)), now.UnixMilli()); err != nil {
-			return false, fmt.Errorf("pool.ExecContext: %w", err)
-		}
+		// A failure is no matter: the next prune does it.
+		s.pool.ExecContext(ctx, s.dialect.Rebind(fmt.Sprintf("DELETE FROM %s WHERE expires_at <= ?", t)), now.UnixMilli())
 	}
-//line sql.ego:75
 	return n == 1, nil
 }
 
@@ -105,10 +111,10 @@ func (s *SQLStore) Release(ctx context.Context, key, owner string) error {
 	if err := s.ready(ctx); err != nil {
 		return err
 	}
-//line sql.ego:80
+//line sql.ego:86
 	if _, err := s.pool.ExecContext(ctx, s.dialect.Rebind(fmt.Sprintf("DELETE FROM %s WHERE name = ? AND owner = ?", s.table())), key, owner); err != nil {
 		return fmt.Errorf("pool.ExecContext: %w", err)
 	}
-//line sql.ego:81
+//line sql.ego:87
 	return nil
 }

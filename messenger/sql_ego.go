@@ -30,8 +30,8 @@ type SQLTransport struct {
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 
-	setup sync.Once
-	err   error
+	mu    sync.Mutex
+	setUp bool
 }
 
 // NewSQLTransport returns the transport of the queue in pool, a SQLite or
@@ -70,25 +70,32 @@ func (t *SQLTransport) now() time.Time {
 func (t *SQLTransport) Schema() []string {
 	tb := t.table()
 	return []string{
-		fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (id VARCHAR(36) PRIMARY KEY, queue VARCHAR(255) NOT NULL, type VARCHAR(255) NOT NULL, body TEXT NOT NULL, attempts INTEGER NOT NULL, error TEXT NOT NULL, available_at BIGINT NOT NULL, leased_until BIGINT NOT NULL, lease VARCHAR(36) NOT NULL)", tb),
+		// A message keeps its ID from queue to queue, as to the failure
+		// transport's: the key is both.
+		fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (queue VARCHAR(255) NOT NULL, id VARCHAR(36) NOT NULL, type VARCHAR(255) NOT NULL, body TEXT NOT NULL, attempts INTEGER NOT NULL, error TEXT NOT NULL, available_at BIGINT NOT NULL, leased_until BIGINT NOT NULL, lease VARCHAR(36) NOT NULL, PRIMARY KEY (queue, id))", tb),
 		fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s_available ON %s (queue, available_at)", tb, tb),
 	}
 }
 
-// ready creates the table once, unless NoSetup says not to.
+// ready creates the table once, unless NoSetup says not to: until it
+// succeeded, each call tries again.
 func (t *SQLTransport) ready(ctx context.Context) error {
 	if t.NoSetup {
 		return nil
 	}
-	t.setup.Do(func() {
-		for _, stmt := range t.Schema() {
-			if _, err := t.pool.ExecContext(ctx, stmt); err != nil {
-				t.err = err
-				return
-			}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.setUp {
+		return nil
+	}
+	for _, stmt := range t.Schema() {
+		if _, err := t.pool.ExecContext(ctx, stmt); err != nil {
+			return err
 		}
-	})
-	return t.err
+	}
+//line sql.ego:77
+	t.setUp = true
+	return nil
 }
 
 // exec runs a statement written with ? placeholders, and returns how many
@@ -97,12 +104,12 @@ func (t *SQLTransport) exec(ctx context.Context, query string, args ...any) (int
 	if err := t.ready(ctx); err != nil {
 		return 0, err
 	}
-//line sql.ego:81
+//line sql.ego:85
 	res, err := t.pool.ExecContext(ctx, t.dialect.Rebind(query), args...)
 	if err != nil {
 		return 0, fmt.Errorf("pool.ExecContext: %w", err)
 	}
-//line sql.ego:82
+//line sql.ego:86
 	return res.RowsAffected()
 }
 
@@ -116,7 +123,7 @@ func (t *SQLTransport) Receive(ctx context.Context, ttl time.Duration) (Lease, b
 	if err2 := t.ready(ctx); err2 != nil {
 		return nil, false, err2
 	}
-//line sql.ego:93
+//line sql.ego:97
 	now := t.now()
 	tb := t.table()
 	var skipLocked string
@@ -127,13 +134,13 @@ func (t *SQLTransport) Receive(ctx context.Context, ttl time.Duration) (Lease, b
 	}
 	// One statement leases the next available message: SQLite runs it
 	// alone, and PostgreSQL's workers skip the rows others are leasing.
-//line sql.ego:98
-	query := fmt.Sprintf("UPDATE %s SET leased_until = ?, lease = ? WHERE id = (SELECT id FROM %s WHERE queue = ? AND available_at <= ? AND leased_until <= ? ORDER BY available_at, id LIMIT 1%s) AND leased_until <= ? RETURNING id, type, body, attempts, error, available_at", tb, tb, skipLocked)
+//line sql.ego:102
+	query := fmt.Sprintf("UPDATE %s SET leased_until = ?, lease = ? WHERE queue = ? AND id = (SELECT id FROM %s WHERE queue = ? AND available_at <= ? AND leased_until <= ? ORDER BY available_at, id LIMIT 1%s) AND leased_until <= ? RETURNING id, type, body, attempts, error, available_at", tb, tb, skipLocked)
 	token := uid.NewV4().String()
 	var m Message
 	var body string
 	var available int64
-	err := t.pool.QueryRowContext(ctx, t.dialect.Rebind(query), now.Add(ttl).UnixMilli(), token, t.queue, now.UnixMilli(), now.UnixMilli(), now.UnixMilli()).
+	err := t.pool.QueryRowContext(ctx, t.dialect.Rebind(query), now.Add(ttl).UnixMilli(), token, t.queue, t.queue, now.UnixMilli(), now.UnixMilli(), now.UnixMilli()).
 		Scan(&m.ID, &m.Type, &body, &m.Attempts, &m.Error, &available)
 	if err == sql.ErrNoRows {
 		return nil, false, nil
@@ -141,7 +148,7 @@ func (t *SQLTransport) Receive(ctx context.Context, ttl time.Duration) (Lease, b
 	if err != nil {
 		return nil, false, err
 	}
-//line sql.ego:109
+//line sql.ego:113
 	m.Body, m.AvailableAt = []byte(body), time.UnixMilli(available)
 	return &sqlLease{t: t, msg: m, token: token}, true, nil
 }
@@ -150,7 +157,7 @@ func (t *SQLTransport) List(ctx context.Context) ([]Message, error) {
 	if err := t.ready(ctx); err != nil {
 		return nil, err
 	}
-//line sql.ego:115
+//line sql.ego:119
 	return db.All(ctx, t.pool, scanMessage, t.dialect.Rebind(fmt.Sprintf("SELECT id, type, body, attempts, error, available_at FROM %s WHERE queue = ? ORDER BY available_at, id", t.table())), t.queue)
 }
 
@@ -179,21 +186,21 @@ type sqlLease struct {
 func (l *sqlLease) Message() Message { return l.msg }
 
 func (l *sqlLease) Extend(ctx context.Context, ttl time.Duration) (bool, error) {
-	n, err := l.t.exec(ctx, fmt.Sprintf("UPDATE %s SET leased_until = ? WHERE id = ? AND lease = ?", l.t.table()), l.t.now().Add(ttl).UnixMilli(), l.msg.ID, l.token)
+	n, err := l.t.exec(ctx, fmt.Sprintf("UPDATE %s SET leased_until = ? WHERE queue = ? AND id = ? AND lease = ?", l.t.table()), l.t.now().Add(ttl).UnixMilli(), l.t.queue, l.msg.ID, l.token)
 	if err != nil {
 		return false, fmt.Errorf("t.exec: %w", err)
 	}
-//line sql.ego:144
+//line sql.ego:148
 	return n == 1, nil
 }
 
 func (l *sqlLease) Ack(ctx context.Context) error {
-	_, err := l.t.exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = ? AND lease = ?", l.t.table()), l.msg.ID, l.token)
+	_, err := l.t.exec(ctx, fmt.Sprintf("DELETE FROM %s WHERE queue = ? AND id = ? AND lease = ?", l.t.table()), l.t.queue, l.msg.ID, l.token)
 	return err
 }
 
 func (l *sqlLease) Retry(ctx context.Context, m Message) error {
-	_, err := l.t.exec(ctx, fmt.Sprintf("UPDATE %s SET attempts = ?, error = ?, available_at = ?, leased_until = 0, lease = '' WHERE id = ? AND lease = ?", l.t.table()),
-		m.Attempts, m.Error, m.AvailableAt.UnixMilli(), l.msg.ID, l.token)
+	_, err := l.t.exec(ctx, fmt.Sprintf("UPDATE %s SET attempts = ?, error = ?, available_at = ?, leased_until = 0, lease = '' WHERE queue = ? AND id = ? AND lease = ?", l.t.table()),
+		m.Attempts, m.Error, m.AvailableAt.UnixMilli(), l.t.queue, l.msg.ID, l.token)
 	return err
 }

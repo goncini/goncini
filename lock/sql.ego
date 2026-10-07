@@ -23,8 +23,8 @@ type SQLStore struct {
 	// Schema.
 	NoSetup bool
 
-	setup    sync.Once
-	err      error
+	mu       sync.Mutex
+	setUp    bool
 	acquired atomic.Int64 // acquisitions, to prune expired locks now and then
 }
 
@@ -48,15 +48,20 @@ func (s *SQLStore) table() string {
 	return if s.Table != "" { s.Table } else { "goncini_locks" }
 }
 
-// ready creates the table once, unless NoSetup says not to.
+// ready creates the table once, unless NoSetup says not to: until it
+// succeeded, each call tries again.
 func (s *SQLStore) ready(ctx context.Context) error {
 	if s.NoSetup {
 		return nil
 	}
-	s.setup.Do(() => {
-		_, s.err = s.pool.ExecContext(ctx, s.Schema())
-	})
-	return s.err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.setUp {
+		return nil
+	}
+	check s.pool.ExecContext(ctx, s.Schema()) ""
+	s.setUp = true
+	return nil
 }
 
 func (s *SQLStore) Acquire(ctx context.Context, key, owner string, ttl time.Duration) (bool, error) {
@@ -70,7 +75,8 @@ func (s *SQLStore) Acquire(ctx context.Context, key, owner string, ttl time.Dura
 	n := check res.RowsAffected()
 	if s.acquired.Add(1)%256 == 0 {
 		// Locks of keys used once, such as a scheduler's ticks, would stay.
-		check s.pool.ExecContext(ctx, s.dialect.Rebind(f"DELETE FROM {t} WHERE expires_at <= ?"), now.UnixMilli())
+		// A failure is no matter: the next prune does it.
+		s.pool.ExecContext(ctx, s.dialect.Rebind(f"DELETE FROM {t} WHERE expires_at <= ?"), now.UnixMilli())
 	}
 	return n == 1, nil
 }

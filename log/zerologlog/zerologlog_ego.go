@@ -15,6 +15,7 @@
 package zerologlog
 
 import (
+	"context"
 	"log/slog"
 	"os"
 
@@ -27,7 +28,7 @@ import (
 // NewLogger returns a zerolog logger on stderr for c, from c.Level up: JSON
 // if c.JSON, or else lines for people.
 //
-//line zerologlog.ego:27
+//line zerologlog.ego:28
 func NewLogger(c goncini.Log) zerolog.Logger {
 	l := zerolog.New(os.Stderr)
 	if !c.JSON {
@@ -39,7 +40,39 @@ func NewLogger(c goncini.Log) zerolog.Logger {
 // NewHandler returns the slog.Handler that writes to l, from c.Level up, as
 // the app's.
 func NewHandler(l zerolog.Logger, c goncini.Log) slog.Handler {
-	return slogzerolog.Option{Logger: &l, Level: c.Level}.NewZerologHandler()
+	return rounding{slogzerolog.Option{Logger: &l, Level: c.Level}.NewZerologHandler()}
+}
+
+// rounding is a handler that gives records the standard level at or below
+// theirs: slog-zerolog knows only those, and drops the others.
+type rounding struct {
+	slog.Handler
+}
+
+func (h rounding) Handle(ctx context.Context, r slog.Record) error {
+	r.Level = standard(r.Level)
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h rounding) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return rounding{h.Handler.WithAttrs(attrs)}
+}
+
+func (h rounding) WithGroup(name string) slog.Handler {
+	return rounding{h.Handler.WithGroup(name)}
+}
+
+// standard is the standard slog level at or below l.
+func standard(l slog.Level) slog.Level {
+	switch {
+	case l < slog.LevelInfo:
+		return slog.LevelDebug
+	case l < slog.LevelWarn:
+		return slog.LevelInfo
+	case l < slog.LevelError:
+		return slog.LevelWarn
+	}
+	return slog.LevelError
 }
 
 // Level is zerolog's level of an slog level: Debug, Info, Warn and Error

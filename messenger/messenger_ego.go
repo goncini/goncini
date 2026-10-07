@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,7 +43,7 @@ import (
 // Message is a message as transports keep it: its type's name and its
 // body, encoded.
 //
-//line messenger.ego:42
+//line messenger.ego:43
 type Message struct {
 	// ID identifies the message, a UUID made when it was dispatched.
 	ID string
@@ -161,7 +162,7 @@ func NewSQLTransports(pool *sql.DB, c Config) (Transports, error) {
 		}
 		ts[name] = v
 	}
-//line messenger.ego:156
+//line messenger.ego:157
 	return ts, nil
 }
 
@@ -193,7 +194,7 @@ func (c Config) queues() []string {
 // Background runs a worker of the queues until ctx is done, if
 // Config.Consume says so: serve runs it beside the server.
 //
-//line messenger.ego:179
+//line messenger.ego:180
 func (b *Bus) Background(ctx context.Context) error {
 	if !b.Config.Consume {
 		return nil
@@ -217,14 +218,14 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 	} else {
 		retries = max(c.Retries, 0)
 	}
-//line messenger.ego:197
+//line messenger.ego:198
 	var delay time.Duration
 	if c.Delay == 0 {
 		delay = time.Second
 	} else {
 		delay = c.Delay
 	}
-//line messenger.ego:198
+//line messenger.ego:199
 	var v string
 	if c.Failed == "" {
 		v = "failed"
@@ -238,7 +239,7 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 		Config:     c,
 		Logger:     logger,
 	}
-//line messenger.ego:205
+//line messenger.ego:206
 	for _, h := range handlers {
 		h.Handlers(b)
 	}
@@ -278,9 +279,12 @@ func (b *Bus) register(t reflect.Type) {
 	if b.names == nil {
 		b.names, b.types = map[reflect.Type]string{}, map[string]reflect.Type{}
 	}
-	name := t.String()
-	if t.PkgPath() != "" {
-		name = t.PkgPath() + "." + t.Name()
+	name, elem := t.String(), t
+	for elem.Kind() == reflect.Pointer {
+		elem = elem.Elem()
+	}
+	if elem.PkgPath() != "" {
+		name = strings.Repeat("*", strings.Count(t.String(), "*")-strings.Count(elem.String(), "*")) + elem.PkgPath() + "." + elem.Name()
 	}
 	b.names[t], b.types[name] = name, t
 }
@@ -299,7 +303,7 @@ func Delay(d time.Duration) Option {
 // Dispatch handles m now, if its type has no route, or sends it to its
 // transport.
 //
-//line messenger.ego:262
+//line messenger.ego:266
 func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
 	t := reflect.TypeFor[M]()
 	b.mu.RLock()
@@ -317,7 +321,7 @@ func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
 	if err != nil {
 		return err
 	}
-//line messenger.ego:276
+//line messenger.ego:280
 	msg := Message{ID: uid.NewV7().String(), Type: name, Body: body, AvailableAt: b.now()}
 	for _, o := range opts {
 		o(&msg)
@@ -338,7 +342,7 @@ func (b *Bus) handle(ctx context.Context, t reflect.Type, m any) error {
 			return err
 		}
 	}
-//line messenger.ego:294
+//line messenger.ego:298
 	return nil
 }
 

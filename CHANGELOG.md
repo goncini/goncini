@@ -426,6 +426,23 @@ with their providers and what they need, which `debug:container` lists.
 
 ### Found while building
 
+- **M3's review:** two independent reviews found 13 defects, each
+  reproduced, then fixed with a regression test. Among them:
+  - a message that failed for good couldn't move to the SQL failure queue,
+    whose table it shared under the same primary key, and was handled again
+    forever; `messenger:failed:retry` failed the same way;
+  - a handler that ignored its context held a stopping worker past its stop
+    timeout, and one failed receive stopped a worker;
+  - in New York, a daily cron looped forever on the spring's missing hour,
+    and ran twice on the fall's repeated one;
+  - a listener added during a dispatch corrupted it;
+  - RealWorld didn't notify the followers of an article that reused a slug.
+
+  What was left, deliberately: an article is committed before its event's
+  message is sent, so a crash between the two loses the notification; an
+  outbox, the message written in the article's transaction, is the fix,
+  which waits for an app that needs it. Lock expiry uses each process's
+  clock.
 - **M2's review:** three independent reviews found 23 defects in M2's
   packages, each reproduced, then fixed with a regression test. Among them:
   - schemas didn't follow json/v2's rules when embedded fields shared a

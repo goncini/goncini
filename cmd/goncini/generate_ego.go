@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,7 +23,7 @@ import (
 
 // FileName is the file that goncini generate writes in the app's package.
 //
-//line generate.ego:22
+//line generate.ego:23
 const FileName = "autoconfigured_gen.go"
 
 const (
@@ -48,17 +49,17 @@ func generate(root, appDir string, checkOnly bool) error {
 		if err2 != nil {
 			return err2
 		}
-//line generate.ego:44
+//line generate.ego:45
 		code, err3 := autoconfigure(root, appDir, services)
 		if err3 != nil {
 			return err3
 		}
-//line generate.ego:45
+//line generate.ego:46
 		old, err4 := os.ReadFile(path)
 		if err4 != nil {
 			return err4
 		}
-//line generate.ego:46
+//line generate.ego:47
 		if !bytes.Equal(old, code) {
 			return fmt.Errorf("%s isn't up to date: run goncini generate", path)
 		}
@@ -70,17 +71,17 @@ func generate(root, appDir string, checkOnly bool) error {
 			return err5
 		}
 	}
-//line generate.ego:55
+//line generate.ego:56
 	egoGenerate(root) // the app's layers can't be wired until Autoconfigured is
 	code, err6 := autoconfigure(root, appDir, nil)
 	if err6 != nil {
 		return err6
 	}
-//line generate.ego:57
+//line generate.ego:58
 	if err7 := os.WriteFile(path, code, 0o644); err7 != nil {
 		return err7
 	}
-//line generate.ego:58
+//line generate.ego:59
 	if out, err := egoGenerate(root); err != nil {
 		return fmt.Errorf("ego generate: %v\n%s", err, out)
 	}
@@ -90,17 +91,17 @@ func generate(root, appDir string, checkOnly bool) error {
 	if err8 != nil {
 		return err8
 	}
-//line generate.ego:64
+//line generate.ego:65
 	v, err9 := autoconfigure(root, appDir, services)
 	if err9 != nil {
 		return err9
 	}
 	code = v
-//line generate.ego:65
+//line generate.ego:66
 	if err10 := os.WriteFile(path, code, 0o644); err10 != nil {
 		return err10
 	}
-//line generate.ego:66
+//line generate.ego:67
 	return nil
 }
 
@@ -159,7 +160,7 @@ func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 	if err2 != nil {
 		return nil, err2
 	}
-//line generate.ego:121
+//line generate.ego:122
 	var b strings.Builder
 	var names []string
 	for _, k := range kinds {
@@ -234,7 +235,7 @@ func load(root, appDir string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:192
+//line generate.ego:193
 	var errs []error
 	packages.Visit(pkgs, nil, func(p *packages.Package) {
 		for _, e := range p.Errors {
@@ -244,12 +245,12 @@ func load(root, appDir string) (*app, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-//line generate.ego:199
+//line generate.ego:200
 	dir, err := filepath.Abs(filepath.Join(root, appDir))
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:200
+//line generate.ego:201
 	a := &app{all: pkgs, imports: map[string]string{}}
 	for _, p := range pkgs {
 		if len(p.GoFiles) > 0 && filepath.Dir(p.GoFiles[0]) == dir {
@@ -262,7 +263,7 @@ func load(root, appDir string) (*app, error) {
 	if err := a.findProviders(); err != nil {
 		return nil, err
 	}
-//line generate.ego:210
+//line generate.ego:211
 	return a, nil
 }
 
@@ -334,7 +335,7 @@ func isFunc(info *types.Info, x ast.Expr, path, name string) bool {
 
 // ident is the name in x, an identifier or a selector, or nil.
 //
-//line generate.ego:274
+//line generate.ego:275
 func ident(x ast.Expr) *ast.Ident {
 	switch x := x.(type) {
 	case *ast.Ident:
@@ -440,7 +441,7 @@ func (a *app) lookup(name string) types.Type {
 	} else {
 		path = gonciniPath + "/" + pkgName
 	}
-//line generate.ego:374
+//line generate.ego:375
 	var found types.Type
 	packages.Visit(a.all, nil, func(p *packages.Package) {
 		if found == nil && p.PkgPath == path {
@@ -463,14 +464,14 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 	switch k.name {
 	case "autoProblems":
 
-//line generate.ego:395
+//line generate.ego:396
 		for _, v := range a.mappers(elem) {
 			items = append(items, a.qualify(v.Pkg())+"."+v.Name())
 		}
 
 	case "autoChecks":
 
-//line generate.ego:400
+//line generate.ego:401
 		for _, t := range a.provided {
 			if m := pinger(t); m != "" {
 				add(t, "$."+m)
@@ -479,10 +480,14 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 
 	default:
 
-//line generate.ego:407
+//line generate.ego:408
 		iface, _ := elem.Underlying().(*types.Interface)
+		var added []types.Type
 		for _, t := range a.provided {
-			if iface != nil && types.Implements(t, iface) && !types.IsInterface(t) {
+			// A type provided twice, as by a provider that overrides a
+			// set's, is one service.
+			if iface != nil && types.Implements(t, iface) && !types.IsInterface(t) && !slices.ContainsFunc(added, func(u types.Type) bool { return types.Identical(t, u) }) {
+				added = append(added, t)
 				add(t, "$")
 			}
 		}
@@ -632,7 +637,7 @@ func describe(root, appDir string) ([]service, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:556
+//line generate.ego:561
 	if len(pkgs) != 1 || len(pkgs[0].Errors) > 0 {
 		return nil, nil
 	}
@@ -660,7 +665,7 @@ func describe(root, appDir string) ([]service, error) {
 		}
 		return v
 	}
-//line generate.ego:575
+//line generate.ego:580
 	var services []service
 	for _, stmt := range build.Body.List {
 		assign, ok := stmt.(*ast.AssignStmt)

@@ -138,7 +138,11 @@ func (k *Kernel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if event.Has[ResponseEvent](k.Events) {
 		start := time.Now()
 		defer func() {
-			dispatched(k, r, &ResponseEvent{Request: r, Status: cmp.Or(tw.Status(), http.StatusOK), Size: tw.Size(), Duration: time.Since(start)})
+			status := cmp.Or(tw.Status(), http.StatusOK)
+			if st.aborted {
+				status = 0 // no response was written
+			}
+			dispatched(k, r, &ResponseEvent{Request: r, Status: status, Size: tw.Size(), Duration: time.Since(start)})
 		}()
 	}
 	k.serve(tw, r, st)
@@ -154,6 +158,9 @@ func (k *Kernel) build() {
 		h = unmatched{m}
 	default:
 		h = m
+	}
+	if event.Has[RequestEvent](k.Events) {
+		h = requestEvents(k, h)
 	}
 	for i := len(k.Middleware) - 1; i >= 0; i-- {
 		h = k.Middleware[i](h)
@@ -171,6 +178,7 @@ func (k *Kernel) serve(w *ResponseTracker, r *http.Request, st *state) {
 		if err, ok := v.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 			// net/http's way to abort a response. It compares the value
 			// itself, so a *scope.Panic wrapping it must be unwrapped.
+			st.aborted = true
 			panic(http.ErrAbortHandler)
 		}
 		p, ok := v.(*scope.Panic)
@@ -190,12 +198,6 @@ func (k *Kernel) serve(w *ResponseTracker, r *http.Request, st *state) {
 				st.pattern = req.Pattern
 			}
 		}()
-		if event.Has[RequestEvent](k.Events) {
-			if err := event.Dispatch(req.Context(), k.Events, &RequestEvent{Request: req}); err != nil {
-				WriteError(w, req, err)
-				return struct{}{}, nil
-			}
-		}
 		k.chain.ServeHTTP(w, req)
 		return struct{}{}, nil
 	}, scope.StopTimeout(orDefault(k.StopTimeout, 10*time.Second)))
@@ -265,6 +267,7 @@ type state struct {
 	request *http.Request // for BaseURL: as the kernel got it, then as Endpoint did
 	pattern string        // the route pattern that matched
 	panic   *scope.Panic  // the panic that ended the request, if any
+	aborted bool          // the handler aborted the response, with http.ErrAbortHandler
 }
 
 type stateKey struct{}

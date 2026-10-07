@@ -35,5 +35,13 @@ func TestNotifications(t *testing.T) {
 	t.Log(out)
 	ann.Get("/api/notifications").Status(200).Contains(`"article":"news","author":"bob"`)
 	cat.Get("/api/notifications").Status(200).Contains(`{"notifications":[]}`) // cat follows no one
+
+	// A deleted article takes its notifications along; a new one with the
+	// same slug, and the same ID in SQLite, is notified again.
+	bob.Delete("/api/articles/news").Status(204)
+	ann.Get("/api/notifications").Status(200).Contains(`{"notifications":[]}`)
+	bob.Post("/api/articles", `{"article":{"title":"News","description":"d","body":"b"}}`).Status(201)
+	webtest.Run(t, a, "messenger:consume", "-limit", "1")
+	ann.Get("/api/notifications").Status(200).Contains(`"article":"news","author":"bob"`)
 	c.Get("/api/notifications").Status(401)
 }

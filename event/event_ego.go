@@ -19,6 +19,7 @@
 package event
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -34,7 +35,7 @@ import (
 // Stop is what a listener returns to stop the dispatch of its event: the
 // listeners after it don't run, and Dispatch returns nil.
 //
-//line event.ego:34
+//line event.ego:35
 var Stop = errors.New("event: stop")
 
 // Subscriber registers listeners, as Symfony's event subscribers do.
@@ -81,7 +82,7 @@ func Priority(p int) Option {
 
 // On adds a listener of the events of type E.
 //
-//line event.ego:77
+//line event.ego:78
 func On[E any](d *Dispatcher, l func(ctx context.Context, e *E) error, opts ...Option) {
 	ln := listener{
 		call: func(ctx context.Context, e any) error { return l(ctx, e.(*E)) },
@@ -98,8 +99,10 @@ func On[E any](d *Dispatcher, l func(ctx context.Context, e *E) error, opts ...O
 	if d.listeners == nil {
 		d.listeners = map[reflect.Type][]listener{}
 	}
-	ls := append(d.listeners[t], ln)
-	slices.SortStableFunc(ls, func(a, b listener) int { return b.priority - a.priority })
+	// A new slice, so that a dispatch going through the old one isn't
+	// disturbed.
+	ls := append(slices.Clone(d.listeners[t]), ln)
+	slices.SortStableFunc(ls, func(a, b listener) int { return cmp.Compare(b.priority, a.priority) })
 	d.listeners[t] = ls
 }
 
