@@ -1,0 +1,33 @@
+// Package goncini runs apps built with goncini's components: it loads their
+// environment and config, gives them a logger, a router, a kernel and a
+// server, and runs their commands. docs/layout.md in the repository
+// describes the layout of an app.
+//
+// An app's main function is one line:
+//
+//	func main() { goncini.Main(config.Load, app.Build) }
+//
+// # Environment and config
+//
+// An app's config is code: a Config struct, and a Load function that fills
+// it for an Env, with what every environment shares, then what the
+// environment named by APP_ENV changes. Environment variables only carry
+// APP_ENV and secrets, which Load reads with Env.Secret, from the process or
+// from .env files. A missing secret or an unknown environment fails at boot,
+// with every missing secret at once. See LoadEnv.
+//
+// # Wiring
+//
+// An app's Build is an effect-go layer injector. The framework's providers
+// are NewLogger, NewRouter, NewKernel, NewServer and NewApp; the app
+// provides its own services, the services of each kind goncini uses
+// ([]routing.Routes, []httpkernel.ErrorMapper, []console.Command), and the
+// config sections that goncini's providers take (HTTP and Log). Each
+// setting's zero value is a sensible default, and an app replaces any of
+// goncini's providers by passing its own to layer.Build.
+//
+// # Commands
+//
+// The app's binary is its console. Run lists the commands goncini adds to
+// the app's own: serve, the default, debug:router, debug:config and list.
+package goncini

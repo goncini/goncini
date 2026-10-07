@@ -1,0 +1,109 @@
+package goncini
+
+import (
+	"log/slog"
+	"os"
+	"time"
+
+	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/routing"
+)
+
+// HTTP configures how an app serves HTTP. Each field's zero value is the
+// default it names.
+type HTTP struct {
+	// Addr is the TCP address to listen on; empty means ":8080".
+	Addr string
+	// TrustedProxies are the addresses or ranges of the reverse proxies
+	// trusted to report the client's address, scheme and host, as
+	// httpkernel.TrustProxies takes them; none by default.
+	TrustedProxies []string
+	// TrustedHosts are the hosts the app answers for, as
+	// httpkernel.TrustHosts takes them; empty means any. Set them unless a
+	// proxy in front checks the host: a URL built from a host the client
+	// made up can be used against other users.
+	TrustedHosts []string
+	// BodyLimit is the most bytes read from a request body; zero means
+	// httpkernel.DefaultBodyLimit.
+	BodyLimit int64
+	// ShutdownTimeout bounds how long shutting down waits for the requests
+	// in flight; zero means 30 seconds.
+	ShutdownTimeout time.Duration
+	// Debug puts error messages and panic stacks in 5xx responses. It is
+	// for development only: they reveal internals.
+	Debug bool
+}
+
+// Log configures an app's logger.
+type Log struct {
+	// Level is the least severe level logged; the zero value is Info.
+	Level slog.Level
+	// JSON writes records as JSON, for log collectors, instead of text.
+	JSON bool
+}
+
+// App is what Main runs: an app's server and router, and its commands. An
+// app's Build returns it.
+type App struct {
+	Kernel   *httpkernel.Kernel
+	Server   *httpkernel.Server
+	Router   *routing.Router
+	Commands []console.Command
+	Logger   *slog.Logger
+}
+
+// NewLogger returns the logger of an app: records on stderr that carry the
+// trace and span IDs of the context they're logged with.
+func NewLogger(c Log) *slog.Logger {
+	opts := &slog.HandlerOptions{Level: c.Level}
+	var h slog.Handler = slog.NewTextHandler(os.Stderr, opts)
+	if c.JSON {
+		h = slog.NewJSONHandler(os.Stderr, opts)
+	}
+	return slog.New(trace.LogHandler(h))
+}
+
+// NewRouter returns a router with routes registered in order.
+func NewRouter(routes []routing.Routes) *routing.Router {
+	return routing.New(routes...)
+}
+
+// NewKernel returns the kernel that serves router: behind the trusted
+// proxies and hosts of c, with an access log, and with mappers turning
+// errors into problems.
+func NewKernel(c HTTP, router *routing.Router, mappers []httpkernel.ErrorMapper, logger *slog.Logger) (*httpkernel.Kernel, error) {
+	var mw []httpkernel.Middleware
+	if len(c.TrustedProxies) > 0 {
+		proxies := check httpkernel.TrustProxies(c.TrustedProxies...) ""
+		mw = append(mw, proxies.Middleware)
+	}
+	if len(c.TrustedHosts) > 0 {
+		hosts := check httpkernel.TrustHosts(c.TrustedHosts...) ""
+		mw = append(mw, hosts)
+	}
+	mw = append(mw, httpkernel.AccessLog(logger))
+	return &httpkernel.Kernel{
+		Handler:      router,
+		Middleware:   mw,
+		ErrorMappers: mappers,
+		BodyLimit:    c.BodyLimit,
+		Logger:       logger,
+		Debug:        c.Debug,
+	}, nil
+}
+
+// NewServer returns the server for kernel, listening on c.Addr.
+func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkernel.Server {
+	return &httpkernel.Server{
+		Addr:            if c.Addr != "" { c.Addr } else { ":8080" },
+		Handler:         kernel,
+		ShutdownTimeout: c.ShutdownTimeout,
+		Logger:          logger,
+	}
+}
+
+// NewApp returns the app made of these parts.
+func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, logger *slog.Logger) *App {
+	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Logger: logger}
+}

@@ -20,8 +20,9 @@ conduit/
 │   └── prod.ego
 ├── app/                    # package app: the wiring, Symfony's Kernel.php and services.yaml
 │   ├── inject.go           # //go:build egolayers: Build, from layer.Build
-│   ├── services.ego        # var Services = layer.Set(...): the app's own providers
-│   └── autoconfigured.go   # routes, commands and config sections, until goncini generate writes it
+│   ├── services.ego        # var Services = layer.Set(...): the app's own providers, and goncini's
+│   ├── autoconfigured.ego  # routes, commands and config sections, until goncini generate writes it
+│   └── app_test.ego        # builds the app in every environment
 ├── articles/               # one package per feature
 │   ├── articles.ego        # types, the ArticleError set and its problems
 │   ├── controller.ego      # Routes, and the endpoints
@@ -179,7 +180,7 @@ func prod(c *Config) {
 
 ## The wiring is a package
 
-`app.Build` builds the kernel from the config: it is `layer.Build(Services, goncini.Framework, Autoconfigured)`. Keeping the wiring out of package `main` lets tests boot the app's real kernel, the way Symfony's `KernelTestCase` does, since Go can't import `main`. That leaves `main.ego` with a single line:
+`app.Build` builds the app from the config: it is `layer.Build(Framework, Services, Autoconfigured)`, where `Framework` lists goncini's providers, since effect-go's `layer` only reads the sets declared in the injector's own package. A test builds the app with `webtest.Boot`, or with an injector of its own that swaps a provider, such as the clock. Keeping the wiring out of package `main` lets tests boot the app's real kernel, the way Symfony's `KernelTestCase` does, since Go can't import `main`. That leaves `main.ego` with a single line:
 
 ```go
 // main.ego

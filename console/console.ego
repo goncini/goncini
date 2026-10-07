@@ -1,0 +1,109 @@
+// Package console runs an app's commands, such as db:migrate or
+// debug:router: Symfony's Console, on the standard library. The app's binary
+// is its console:
+//
+//	conduit                  # runs the default command, usually serve
+//	conduit list             # lists the commands
+//	conduit db:migrate -n 1  # runs one, with its own flags
+//
+// A command parses its arguments itself, usually with a flag.FlagSet named
+// after it.
+package console
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"slices"
+	"strings"
+	"text/tabwriter"
+)
+
+// Command is a console command. Commands are services: an app collects them
+// into a []Command, as it does its routes.
+type Command interface {
+	// Name is what calls the command: letters, digits, '-' and ':', such
+	// as db:migrate.
+	Name() string
+	// Summary says in a line what the command does, for the list.
+	Summary() string
+	// Run runs the command with args, the arguments after its name, and
+	// writes its output to out.
+	Run(ctx context.Context, out io.Writer, args []string) error
+}
+
+// Error is everything Run fails with, besides the errors of the commands.
+error Error {
+	// UnknownCommand means that no command has the name.
+	UnknownCommand{ Name string } "unknown command {Name:q}: list shows the commands"
+	// Duplicate means that two commands have the name.
+	Duplicate{ Name string } "two commands are named {Name:q}"
+	// InvalidName means that a command's name has other characters than
+	// letters, digits, '-' and ':'.
+	InvalidName{ Name string } "invalid command name {Name:q}: use letters, digits, '-' and ':'"
+}
+
+// Run runs the command that args[0] names with the rest of args, or def
+// when args is empty. list, which writes the commands and their summaries
+// to out, is always there; -h and --help call it too.
+//
+// Run fails with an Error when the commands or the name are wrong, and
+// otherwise with what the command fails with.
+func Run(ctx context.Context, out io.Writer, commands []Command, def string, args []string) error {
+	byName := map[string]Command{}
+	for _, c := range commands {
+		name := c.Name()
+		if name == "" || strings.ContainsFunc(name, r => !nameChar(r)) {
+			return InvalidName{Name: name}
+		}
+		if _, dup := byName[name]; dup || name == "list" {
+			return Duplicate{Name: name}
+		}
+		byName[name] = c
+	}
+	name := def
+	if len(args) > 0 {
+		name, args = args[0], args[1:]
+	}
+	if name == "list" || name == "-h" || name == "-help" || name == "--help" {
+		return writeList(out, commands)
+	}
+	c, ok := byName[name]
+	if !ok {
+		return UnknownCommand{Name: name}
+	}
+	return c.Run(ctx, out, args)
+}
+
+// nameChar reports whether r can be part of a command name.
+func nameChar(r rune) bool {
+	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == ':'
+}
+
+// writeList writes the commands, sorted by name, with their summaries.
+func writeList(out io.Writer, commands []Command) error {
+	sorted := slices.SortedFunc(slices.Values(commands), (a, b Command) => strings.Compare(a.Name(), b.Name()))
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "list\tLists the commands")
+	for _, c := range sorted {
+		fmt.Fprintf(tw, "%s\t%s\n", c.Name(), c.Summary())
+	}
+	return tw.Flush()
+}
+
+// New returns a command with the name and summary that runs run.
+func New(name, summary string, run func(ctx context.Context, out io.Writer, args []string) error) Command {
+	return funcCommand{name, summary, run}
+}
+
+type funcCommand struct {
+	name, summary string
+	run           func(ctx context.Context, out io.Writer, args []string) error
+}
+
+func (c funcCommand) Name() string    { return c.name }
+func (c funcCommand) Summary() string { return c.summary }
+
+func (c funcCommand) Run(ctx context.Context, out io.Writer, args []string) error {
+	return c.run(ctx, out, args)
+}

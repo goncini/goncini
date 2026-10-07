@@ -1,0 +1,134 @@
+package goncini_test
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini"
+)
+
+// dotenv writes .env files into a new directory, by name.
+func dotenv(t *testing.T, files map[string]string) string {
+	dir := t.TempDir()
+	for name, content := range files {
+		must os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600)
+	}
+	return dir
+}
+
+func TestLoadEnvPrecedence(t *testing.T) {
+	dir := dotenv(t, map[string]string{
+		".env":            "A=env\nB=env\nC=env\nD=env\nE=env\n",
+		".env.local":      "B=local\nC=local\nD=local\nE=local\n",
+		".env.dev":        "C=dev\nD=dev\nE=dev\n",
+		".env.dev.local":  "D=dev.local\nE=dev.local\n",
+		".env.test":       "C=test\n",
+		".env.test.local": "D=test.local\n",
+	})
+	t.Setenv("E", "process")
+
+	dev := must goncini.LoadEnv(dir, "dev")
+	for name, want := range map[string]string{"A": "env", "B": "local", "C": "dev", "D": "dev.local", "E": "process"} {
+		if got := dev.Secret(name); got != want {
+			t.Errorf("dev: %s = %q, want %q", name, got, want)
+		}
+	}
+	// The test environment skips .env.local.
+	test := must goncini.LoadEnv(dir, "test")
+	for name, want := range map[string]string{"A": "env", "B": "env", "C": "test", "D": "test.local"} {
+		if got := test.Secret(name); got != want {
+			t.Errorf("test: %s = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestLoadEnvName(t *testing.T) {
+	for _, tt := range []struct {
+		files   map[string]string
+		process string // APP_ENV in the process, if not empty
+		want    string
+	}{
+		{nil, "", "dev"},
+		{map[string]string{".env": "APP_ENV=prod\n"}, "", "prod"},
+		{map[string]string{".env": "APP_ENV=prod\n", ".env.local": "APP_ENV=staging\n"}, "", "staging"},
+		{map[string]string{".env": "APP_ENV=prod\n", ".env.local": "APP_ENV=staging\n"}, "test", "test"},
+		{map[string]string{".env.prod": "APP_ENV=dev\n"}, "prod", "prod"},
+	} {
+		if tt.process != "" {
+			t.Setenv("APP_ENV", tt.process)
+		} else {
+			t.Setenv("APP_ENV", "")
+			os.Unsetenv("APP_ENV")
+		}
+		env := must goncini.LoadEnv(dotenv(t, tt.files), "")
+		if env.Name != tt.want {
+			t.Errorf("%v with APP_ENV=%q: %s, want %s", tt.files, tt.process, env.Name, tt.want)
+		}
+	}
+}
+
+func TestDotenvSyntax(t *testing.T) {
+	dir := dotenv(t, map[string]string{".env": `# a comment
+
+PLAIN=a value  # a comment
+export EXPORTED=1
+EMPTY=
+SINGLE='#not a comment \n'
+DOUBLE="line\nnext \"quoted\" \\ # not a comment" # a comment
+SPACES = around
+`})
+	env := must goncini.LoadEnv(dir, "dev")
+	for name, want := range map[string]string{
+		"PLAIN":    "a value",
+		"EXPORTED": "1",
+		"SINGLE":   `#not a comment \n`,
+		"DOUBLE":   "line\nnext \"quoted\" \\ # not a comment",
+		"SPACES":   "around",
+	} {
+		if got := env.Secret(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestDotenvErrors(t *testing.T) {
+	for content, want := range map[string]string{
+		"A=1\nnot a variable\n": ":2: expected NAME=value",
+		"1A=x\n":                ":1: expected NAME=value",
+		`A="open` + "\n":        ":1: missing closing quote",
+		`A='x' y` + "\n":        ":1: unexpected text after the closing quote",
+		`A="\q"` + "\n":         `:1: unknown escape \q`,
+	} {
+		dir := dotenv(t, map[string]string{".env": content})
+		_, err := goncini.LoadEnv(dir, "dev")
+		e, ok := errors.AsType[goncini.DotenvSyntax](err)
+		if !ok || e.File != filepath.Join(dir, ".env") || !strings.HasSuffix(err.Error(), want) {
+			t.Errorf("%q: %v, want ...%s", content, err, want)
+		}
+	}
+}
+
+func TestSecrets(t *testing.T) {
+	env := goncini.NewEnv("prod", map[string]string{"DATABASE_URL": "postgres://db", "EMPTY": ""})
+	if got := env.Secret("DATABASE_URL"); got != "postgres://db" {
+		t.Errorf("DATABASE_URL = %q", got)
+	}
+	if err := env.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"API_KEY", "EMPTY", "API_KEY"} {
+		if got := env.Secret(name); got != "" {
+			t.Errorf("%s = %q", name, got)
+		}
+	}
+	env.Unknown()
+	want := "APP_ENV is \"prod\", which names none of the app's environments\n" +
+		"missing secret API_KEY: set it in the environment, or in a .env file\n" +
+		"missing secret EMPTY: set it in the environment, or in a .env file"
+	if err := env.Err(); err == nil || err.Error() != want {
+		t.Errorf("Err() = %v\nwant %s", err, want)
+	}
+}

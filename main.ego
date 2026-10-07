@@ -1,0 +1,111 @@
+package goncini
+
+import (
+	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/routing"
+)
+
+// Main runs an app from its command line, as its main function does:
+//
+//	func main() { goncini.Main(config.Load, app.Build) }
+//
+// It loads the environment named by APP_ENV from the process and the .env
+// files of ProjectDir, then the config with load, and fails with every
+// missing secret at once. It then builds the app with build, in a scope
+// that SIGINT and SIGTERM cancel, and runs the command that the arguments
+// name, as Run does. If anything fails, Main reports it and exits with
+// status 1.
+func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C) (*App, error)) {
+	env, cfg, err := Load(ProjectDir(), "", load)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	scope.Main(s => {
+		app := check build(s.Context(), s, cfg) ""
+		slog.SetDefault(app.Logger)
+		return Run(s.Context(), os.Stdout, env, cfg, app, os.Args[1:])
+	})
+}
+
+// Load returns the environment named name, loaded from dir as LoadEnv does,
+// and the config that load makes for it. It fails with the reasons of
+// Env.Err: an unknown environment and every missing secret.
+func Load[C any](dir, name string, load func(*Env) C) (*Env, C, error) {
+	var cfg C
+	env := check LoadEnv(dir, name) ""
+	cfg = load(env)
+	check env.Err() ""
+	return env, cfg, nil
+}
+
+// ProjectDir returns the directory of the app's .env files: the nearest one
+// that holds a go.mod file, from the working directory up, which is the
+// app's own when it runs through go run or go test; or else the working
+// directory, as for a deployed binary.
+func ProjectDir() string {
+	wd := os.Getwd() else "."
+	for dir := wd; ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		if filepath.Dir(dir) == dir {
+			return wd
+		}
+	}
+}
+
+// Run runs the command of app that args[0] names, with the rest of args,
+// writing its output to out: serve when args is empty. Besides the app's
+// own commands, there are:
+//   - serve, which serves the app over HTTP until ctx is done, then shuts
+//     down gracefully; -addr overrides the address of the config, for a
+//     developer whose port is taken;
+//   - debug:router, which lists the routes;
+//   - debug:config, which prints cfg as JSON, with the values of env's
+//     secrets masked;
+//   - list, which lists the commands.
+func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, args []string) error {
+	commands := []console.Command{
+		console.New("serve", "Serves the app over HTTP", (ctx context.Context, out io.Writer, args []string) => serve(ctx, out, app, args)),
+		console.New("debug:router", "Lists the routes", (ctx context.Context, out io.Writer, args []string) => routing.WriteTable(out, app.Router.List())),
+		console.New("debug:config", "Prints the config, with secrets masked", (ctx context.Context, out io.Writer, args []string) => writeConfig(out, env, cfg)),
+	}
+	return console.Run(ctx, out, append(commands, app.Commands...), "serve", args)
+}
+
+// serve serves app until ctx is done.
+func serve(ctx context.Context, out io.Writer, app *App, args []string) error {
+	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+	flags.SetOutput(out)
+	addr := flags.String("addr", app.Server.Addr, "the TCP address to listen on")
+	check flags.Parse(args) ""
+	app.Server.Addr = *addr
+	return app.Server.ListenAndServe(ctx)
+}
+
+// writeConfig writes cfg as indented JSON, with the values of env's secrets
+// masked.
+func writeConfig(out io.Writer, env *Env, cfg any) error {
+	durations := json.MarshalToFunc((enc *jsontext.Encoder, d time.Duration) => enc.WriteToken(jsontext.String(d.String())))
+	b := check json.Marshal(cfg, jsontext.WithIndent("  "), json.WithMarshalers(durations)) ""
+	text := string(b)
+	for _, secret := range env.read {
+		quoted := must json.Marshal(secret)
+		text = strings.ReplaceAll(text, string(quoted[1:len(quoted)-1]), "******")
+	}
+	_, err := fmt.Fprintln(out, text)
+	return err
+}

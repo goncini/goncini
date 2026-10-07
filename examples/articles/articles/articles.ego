@@ -1,0 +1,60 @@
+// Package articles is the articles feature: what an article is, how it
+// fails, and the endpoints that serve it.
+package articles
+
+import (
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+	"unicode"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/routing"
+)
+
+// Article is what the API serves.
+type Article struct {
+	Slug      string    `json:"slug"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Tags      []string  `json:"tags"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// ArticleError is everything the articles endpoints fail with.
+error ArticleError {
+	NotFound{ Slug string } "no article {Slug}"
+	Duplicate{ Slug string } "an article {Slug} already exists"
+}
+
+// Problem says what each ArticleError looks like over HTTP. A new case
+// doesn't compile until it has an arm here.
+func Problem(err ArticleError) httpkernel.Problem {
+	return match err {
+		nil          => httpkernel.Problem{}
+		NotFound(e)  => httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
+		Duplicate(e) => httpkernel.Problem{Status: http.StatusConflict, Detail: e.Error()}
+	}
+}
+
+// Problems is what a kernel registers to answer ArticleErrors.
+var Problems = httpkernel.Map[ArticleError](Problem)
+
+// Articles keeps the articles in memory, and serves them.
+type Articles struct {
+	mu     sync.Mutex
+	bySlug map[string]Article
+	now    func() time.Time
+	show   *routing.Route // the route of an article, for its URL: set by Routes
+}
+
+func NewArticles(now func() time.Time) *Articles {
+	return &Articles{bySlug: map[string]Article{}, now: now}
+}
+
+// slugify turns a title into a slug: "Hello, World!" becomes "hello-world".
+func slugify(title string) string {
+	words := strings.FieldsFunc(strings.ToLower(title), r => !unicode.IsLetter(r) && !unicode.IsDigit(r))
+	return strings.Join(words, "-")
+}

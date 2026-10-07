@@ -25,7 +25,7 @@
 | Project layout | **Four layouts, from one package to hexagonal, with packages by feature as the default; the wiring in an `app` package; config as `.ego` code in `config/`** (decided 2026-10-05 and 06). Environment variables are only for `APP_ENV` and secrets. See [layout.md](layout.md). |
 | Go version | **1.27** (decided). `encoding/json/v2`, standard from 1.27, says which field failed (`/article/title`), which binding needs, and generic methods allow typed getters such as `Params.Enum`. effect-go itself stays on 1.26. On 1.26, json/v2 is only an experiment behind `GOEXPERIMENT=jsonv2`, with an older API (`inline` where 1.27 has `embed`), and 1.26 leaves support when 1.28 ships, around February 2027. |
 | Language | **The framework is written in `.ego`** (decided), with the generated Go committed, so users never need `ego`. Its public API is callable from plain Go, where effect methods take `ctx` explicitly. |
-| Ecosystem | **Wrap and wire, don't replace:** sqlc, goose, cobra, go-playground/validator, golang-jwt, modernc.org/sqlite. |
+| Ecosystem | **Wrap and wire, don't replace:** sqlc, goose, go-playground/validator, golang-jwt, modernc.org/sqlite. |
 
 What effect-go provides and doesn't, per its maintainer session:
 - **Nothing HTTP-specific is planned in effect-go.** Handler adapters, error-to-status mapping, middleware, the panic-to-500 boundary and per-request scopes are goncini's.
@@ -40,7 +40,7 @@ What effect-go provides and doesn't, per its maintainer session:
 | Routing | Plain-Go registration on `http.ServeMux`: names, groups, prefixes, URL generation, `debug:router`. | M1 |
 | DependencyInjection | effect-go `layer`, plus `goncini generate` for autoconfiguration (tag collections) and config sections. As in Symfony, the container is compiled: generated Go, no reflection. | M1 |
 | Dotenv, Config, environments | Config as `.ego` code in `config/`: the shared values, then one function per environment, picked by `APP_ENV` (decided). Environment variables only for secrets, read through `env.Secret`, with Symfony's `.env` file precedence. No YAML, TOML or JSON config files, and no loader for them (decided). | M1 |
-| Console | The app binary is the console (cobra). Commands are services, collected by autoconfiguration. | M1 |
+| Console | The app binary is the console: `console`, a small package on the standard library, since a command parses its own flags with `flag`. Commands are services, collected by autoconfiguration. | M1 |
 | ErrorHandler, `HttpException` | Error sets mapped to RFC 9457 problems by exhaustive `match`; a panic becomes a 500 at the boundary; the renderer can be swapped. | M1 |
 | Serializer, `#[MapRequestPayload]`, `#[MapQueryString]` | Typed handlers in `httpkernel`, `func(ctx, In) (Out, error)`. `In` is bound from the path, query, headers and JSON body; `Out` is encoded as JSON. | M1 |
 | Validator | `validate` struct tags (go-playground/validator) and an optional `Validate()` method; violations become a 422. | M1 |
@@ -153,7 +153,7 @@ func dbConfig(c Config) db.Config                                       { return
   - graceful shutdown on SIGTERM.
 - **`routing`:** a `Router` on `ServeMux`, with names, groups, `With(middleware)`, `URL(name, params)` and the listing behind `debug:router`.
 - **`config`:** `APP_ENV`, and secrets through `env.Secret` from `.env`, `.env.local`, `.env.$APP_ENV` and `.env.$APP_ENV.local`, with real environment variables winning. Missing secrets and an unknown `APP_ENV` fail at boot, all at once. The settings themselves are the app's `.ego` code ([layout.md](layout.md)); `debug:config` prints them with secrets masked.
-- **`console`:** cobra, with commands as services implementing `console.Command`.
+- **`console`:** commands as services implementing `console.Command`, on the standard library.
 - **`goncini generate`** (last, and only once writing these providers by hand gets annoying): runs `ego generate`, then writes the `Autoconfigured` providers:
   - a slice for each framework interface: `routing.Routes` and `console.Command` in M1;
   - one provider per config section.
@@ -173,7 +173,7 @@ func dbConfig(c Config) db.Config                                       { return
 
 ### 3.4 Order of work (components first)
 
-> **Status (2026-10-04):** steps 1, 2 and 4 are built: [`httpkernel`](../httpkernel) and [`routing`](../routing), used by [examples/articles](../examples/articles). [CHANGELOG.md](../CHANGELOG.md) says what they do, what building them found, and where they differ from this plan.
+> **Status (2026-10-07):** steps 1, 2, 4 and 5 are built: [`httpkernel`](../httpkernel), [`routing`](../routing), config as code, [`console`](../console) and `goncini.Main`, used by [examples/articles](../examples/articles) in the [layout](layout.md). Exporting spans is left for when an app needs it: the kernel's spans go to the global tracer provider, and log records carry their trace IDs. [CHANGELOG.md](../CHANGELOG.md) says what they do, what building them found, and where they differ from this plan.
 
 Each step is a package that works in any `net/http` app, the way Laravel uses Symfony's HttpFoundation. effect-go matters most from step 4.
 
@@ -206,7 +206,6 @@ Each step is a package that works in any `net/http` app, the way Laravel uses Sy
 
 ## 6. Open questions
 
-- Console: cobra, or a small package of our own?
 - Are error mappers registered on the kernel (proposed) or provided as services?
 - Validation: struct tags plus `Validate()` (proposed), or rules in Go code only?
 - Default error body: RFC 9457 problem+json (proposed)?

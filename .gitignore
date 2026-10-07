@@ -25,8 +25,9 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
-.env
+# Local secrets: .env and .env.<env> are committed
+.env.local
+.env.*.local
 
 # Editor/IDE
 # .idea/

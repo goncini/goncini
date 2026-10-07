@@ -1,0 +1,32 @@
+package webtest_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/webtest"
+)
+
+func TestBoot(t *testing.T) {
+	var name string
+	closed := false
+	load := (env *goncini.Env) => env.Name
+	build := func(ctx context.Context, s *scope.Scope, cfg string) (*goncini.App, error) {
+		name = cfg
+		s.Defer(func(context.Context) error { closed = true; return nil })
+		return &goncini.App{Router: routing.New()}, nil
+	}
+	t.Run("boot", (t *testing.T) => {
+		if app := webtest.Boot(t, load, build); app.Router == nil || name != "test" {
+			t.Errorf("booted %+v in %q", app, name)
+		}
+		if closed {
+			t.Error("closed before the test ended")
+		}
+	})
+	if !closed {
+		t.Error("not closed when the test ended")
+	}
+}

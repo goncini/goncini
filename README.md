@@ -19,9 +19,11 @@ its ecosystem, and [effect-go](https://github.com/effect-go/effect-go).
 - **Structured concurrency.** Each request runs in its own effect-go scope,
   and the server shuts down gracefully.
 
-Status: early. [`httpkernel`](httpkernel) and [`routing`](routing) are
-implemented ([CHANGELOG.md](CHANGELOG.md)); configuration and the console
-come next. The plan is in [docs/assessment.md](docs/assessment.md).
+Status: early. [`httpkernel`](httpkernel), [`routing`](routing), config as
+code, the [`console`](console) and `goncini.Main` are implemented
+([CHANGELOG.md](CHANGELOG.md)); `db`, `security` and the rest of `webtest` come next. The
+plan is in [docs/assessment.md](docs/assessment.md), and the layout of an app
+in [docs/layout.md](docs/layout.md).
 
 ## A taste
 
@@ -75,9 +77,9 @@ Handlers build URLs from route names, escaped:
 `router.URL("article_show", routing.Params{"slug": "café"})` gives
 `/articles/caf%C3%A9`.
 
-The full example is [examples/articles](examples/articles):
-`go run ./examples/articles` serves it, and `go run ./examples/articles routes`
-lists its routes.
+The full example is [examples/articles](examples/articles), an app in
+goncini's layout: in its directory, `go run .` serves it, `go run . list`
+lists its commands, and `go run . debug:router` its routes.
 
 ## Developing
 

@@ -1,0 +1,21 @@
+// Package app wires the articles API: goncini's services, the app's own,
+// and the config sections they take.
+package app
+
+import (
+	"time"
+
+	"github.com/goncini/goncini"
+
+	"github.com/goncini/goncini/examples/articles/articles"
+)
+
+// Framework is goncini's services. effect-go's layer only reads the sets
+// declared in the injector's package, so the app lists them.
+var Framework = layer.Set(goncini.NewLogger, goncini.NewRouter, goncini.NewKernel, goncini.NewServer, goncini.NewApp)
+
+// Services is the app's own services.
+var Services = layer.Set(articles.NewArticles, clock)
+
+// clock is the app's clock: the system's.
+func clock() func() time.Time { return time.Now }

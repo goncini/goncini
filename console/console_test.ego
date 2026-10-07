@@ -1,0 +1,54 @@
+package console_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini/console"
+)
+
+// echo writes its name and arguments.
+func echo(name string) console.Command {
+	return console.New(name, "Echoes "+name, (ctx context.Context, out io.Writer, args []string) => {
+		_, err := io.WriteString(out, name+" "+strings.Join(args, " "))
+		return err
+	})
+}
+
+func TestRun(t *testing.T) {
+	commands := []console.Command{echo("serve"), echo("db:migrate")}
+	for args, want := range map[string]string{
+		"":                "serve ",
+		"serve":           "serve ",
+		"db:migrate -n 1": "db:migrate -n 1",
+		"--help":          "list        Lists the commands\ndb:migrate  Echoes db:migrate\nserve       Echoes serve\n",
+	} {
+		var out bytes.Buffer
+		if err := console.Run(context.Background(), &out, commands, "serve", strings.Fields(args)); err != nil || out.String() != want {
+			t.Errorf("%q: %v %q, want %q", args, err, out.String(), want)
+		}
+	}
+}
+
+func TestRunErrors(t *testing.T) {
+	for _, tt := range []struct {
+		commands []console.Command
+		args     string
+		want     error
+	}{
+		{[]console.Command{echo("serve")}, "nope", console.UnknownCommand{Name: "nope"}},
+		{[]console.Command{echo("serve"), echo("serve")}, "serve", console.Duplicate{Name: "serve"}},
+		{[]console.Command{echo("list")}, "list", console.Duplicate{Name: "list"}},
+		{[]console.Command{echo("db migrate")}, "list", console.InvalidName{Name: "db migrate"}},
+		{[]console.Command{echo("")}, "list", console.InvalidName{Name: ""}},
+	} {
+		err := console.Run(context.Background(), io.Discard, tt.commands, "serve", strings.Fields(tt.args))
+		if !errors.Is(err, tt.want) {
+			t.Errorf("%s: %v, want %v", tt.args, err, tt.want)
+		}
+	}
+}

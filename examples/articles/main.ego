@@ -1,42 +1,19 @@
-// Command articles is a small API built with goncini: an effect-go error
-// set mapped to responses, typed endpoints, validation, named routes, and a
-// server that shuts down gracefully.
+// Command articles is a small API built with goncini, in the layout of
+// goncini apps: an effect-go error set mapped to responses, typed
+// endpoints, validation, named routes, config as code, and a server that
+// shuts down gracefully.
 //
-//	go run ./examples/articles
+//	go run .
 //	curl -i localhost:8080/articles -H 'Content-Type: application/json' -d '{"title":"Hello","body":"First post"}'
 //
-// go run ./examples/articles routes lists the routes.
+// go run . list lists the commands, such as debug:router.
 package main
 
 import (
-	"log/slog"
-	"os"
-	"time"
+	"github.com/goncini/goncini"
 
-	"github.com/goncini/goncini/httpkernel"
-	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/examples/articles/app"
+	"github.com/goncini/goncini/examples/articles/config"
 )
 
-func main() {
-	slog.SetDefault(slog.New(trace.LogHandler(slog.NewTextHandler(os.Stderr, nil))))
-	router := routing.New(NewArticles(time.Now))
-	if len(os.Args) > 1 && os.Args[1] == "routes" {
-		must routing.WriteTable(os.Stdout, router.List())
-		return
-	}
-	srv := &httpkernel.Server{
-		Addr:    os.LookupEnv("ADDR") ?? ":8080",
-		Handler: NewKernel(router, slog.Default()),
-	}
-	scope.Main(s => srv.ListenAndServe(s.Context()))
-}
-
-// NewKernel serves the router, logging each request.
-func NewKernel(router *routing.Router, logger *slog.Logger) *httpkernel.Kernel {
-	return &httpkernel.Kernel{
-		Handler:      router,
-		Middleware:   []httpkernel.Middleware{httpkernel.AccessLog(logger)},
-		ErrorMappers: []httpkernel.ErrorMapper{Problems},
-		Logger:       logger,
-	}
-}
+func main() { goncini.Main(config.Load, app.Build) }
