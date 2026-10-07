@@ -53,6 +53,10 @@ type App struct {
 	Logger   *slog.Logger
 }
 
+// Framework is goncini's providers, for an app's layer.Build: NewLogger,
+// NewRouter, NewKernel, NewServer and NewApp.
+var Framework = layer.Set(NewLogger, NewRouter, NewKernel, NewServer, NewApp)
+
 // NewLogger returns the logger of an app: records on stderr that carry the
 // trace and span IDs of the context they're logged with.
 func NewLogger(c Log) *slog.Logger {

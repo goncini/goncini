@@ -5,7 +5,7 @@ go 1.27
 tool github.com/effect-go/effect-go/cmd/ego
 
 require (
-	github.com/effect-go/effect-go v0.2.1
+	github.com/effect-go/effect-go v0.2.2
 	github.com/goncini/goncini v0.0.0
 )
 

@@ -11,6 +11,7 @@ import (
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
 
+	"github.com/effect-go/effect-go/layer"
 	"github.com/effect-go/effect-go/trace"
 )
 
@@ -59,6 +60,10 @@ type App struct {
 	Logger   *slog.Logger
 }
 
+// Framework is goncini's providers, for an app's layer.Build: NewLogger,
+// NewRouter, NewKernel, NewServer and NewApp.
+var Framework = layer.Set(NewLogger, NewRouter, NewKernel, NewServer, NewApp)
+
 // NewLogger returns the logger of an app: records on stderr that carry the
 // trace and span IDs of the context they're logged with.
 func NewLogger(c Log) *slog.Logger {
@@ -85,7 +90,7 @@ func NewKernel(c HTTP, router *routing.Router, mappers []httpkernel.ErrorMapper,
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:79
+//line app.ego:83
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -93,7 +98,7 @@ func NewKernel(c HTTP, router *routing.Router, mappers []httpkernel.ErrorMapper,
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:83
+//line app.ego:87
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
@@ -125,7 +130,7 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 
 // NewApp returns the app made of these parts.
 //
-//line app.ego:107
+//line app.ego:111
 func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, logger *slog.Logger) *App {
 	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Logger: logger}
 }

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-goncini requires Go 1.27, and effect-go v0.2.1, which pins the library and
+goncini requires Go 1.27, and effect-go v0.2.2, which pins the library and
 the `ego` tool together.
 
 ### httpkernel
@@ -78,8 +78,8 @@ Running an app, in the [layout](docs/layout.md) of goncini apps:
   changes. Environment variables only carry `APP_ENV` and secrets, read with
   `Env.Secret` from the process or from `.env` files, in Symfony's order. An
   unknown environment and every missing secret fail at boot, together.
-- **Providers:** `NewLogger`, `NewRouter`, `NewKernel`, `NewServer` and
-  `NewApp`, configured by the `HTTP` and `Log` sections, whose zero values
+- **Providers:** `Framework`, the set of `NewLogger`, `NewRouter`,
+  `NewKernel`, `NewServer` and `NewApp`, configured by the `HTTP` and `Log` sections, whose zero values
   are the defaults. Logs carry trace IDs; the kernel sits behind the trusted
   proxies and hosts, with an access log.
 - **Commands:** `console` runs an app's commands, which are services. goncini
@@ -111,12 +111,10 @@ Running an app, in the [layout](docs/layout.md) of goncini apps:
     - comments on error-set cases didn't reach the generated Go;
     - documented declarations after an error set got wrong `//line` positions,
       so stack traces pointed up to 16 lines off.
-  - Open:
-    - `layer` only reads the `layer.Set`s declared in the injector's own
-      package, so goncini can't export its providers as one set: each app
-      lists them (`Framework` in `app/services.ego`);
-    - `ego generate ./...` on packages that import each other's `.ego` code,
-      none of it generated yet, takes three runs to converge;
-    - an external test package (`config_test`) that imports a package that
-      imports the package under test fails to type-check in `ego generate`,
-      though `go test` accepts it.
+  - v0.2.2:
+    - `layer` only read the `layer.Set`s declared in the injector's own
+      package, so goncini couldn't export `Framework`;
+    - `ego generate ./...` never finished on a fresh app whose packages
+      import each other's `.ego` code;
+    - an external test package that imports a package depending on the
+      package under test failed to type-check, though `go test` accepts it.

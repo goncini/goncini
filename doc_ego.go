@@ -20,11 +20,15 @@
 //
 // # Wiring
 //
-// An app's Build is an effect-go layer injector. The framework's providers
-// are NewLogger, NewRouter, NewKernel, NewServer and NewApp; the app
-// provides its own services, the services of each kind goncini uses
-// ([]routing.Routes, []httpkernel.ErrorMapper, []console.Command), and the
-// config sections that goncini's providers take (HTTP and Log). Each
+// An app's Build is an effect-go layer injector:
+//
+//	panic(layer.Build(goncini.Framework, Services, Autoconfigured))
+//
+// Framework is goncini's providers: NewLogger, NewRouter, NewKernel,
+// NewServer and NewApp. The app provides its own services, the services of
+// each kind goncini uses ([]routing.Routes, []httpkernel.ErrorMapper,
+// []console.Command), and the config sections that goncini's providers take
+// (HTTP and Log). Each
 // setting's zero value is a sensible default, and an app replaces any of
 // goncini's providers by passing its own to layer.Build.
 //

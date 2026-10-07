@@ -7,20 +7,14 @@ package app
 import (
 	"time"
 
-	"github.com/goncini/goncini"
-
 	"github.com/goncini/goncini/examples/articles/articles"
 
 	"github.com/effect-go/effect-go/layer"
 )
 
-// Framework is goncini's services. effect-go's layer only reads the sets
-// declared in the injector's package, so the app lists them.
-//
-//line services.ego:15
-var Framework = layer.Set(goncini.NewLogger, goncini.NewRouter, goncini.NewKernel, goncini.NewServer, goncini.NewApp)
-
 // Services is the app's own services.
+//
+//line services.ego:12
 var Services = layer.Set(articles.NewArticles, clock)
 
 // clock is the app's clock: the system's.

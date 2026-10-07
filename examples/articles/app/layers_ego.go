@@ -7,27 +7,27 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/effect-go/effect-go/scope"
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/examples/articles/articles"
 	"github.com/goncini/goncini/examples/articles/config"
-	"time"
 )
 
 // Build builds the app for cfg.
 func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
 	http := httpConfig(cfg)
 	v := clock()
-	articles := articles.NewArticles(v)
-	v2 := routes(articles)
+	articles2 := articles.NewArticles(v)
+	v2 := routes(articles2)
 	router := goncini.NewRouter(v2)
 	v3 := problems()
 	log := logConfig(cfg)
 	logger := goncini.NewLogger(log)
 	kernel, err := goncini.NewKernel(http, router, v3, logger)
 	if err != nil {
-		return nil, fmt.Errorf("goncini.NewKernel: %w", err)
+		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
 	server := goncini.NewServer(http, kernel, logger)
 	v4 := commands()
@@ -38,15 +38,15 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 // BuildTest builds the app with a test's clock.
 func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func() time.Time) (*goncini.App, error) {
 	http := httpConfig(cfg)
-	articles := articles.NewArticles(now)
-	v := routes(articles)
+	articles2 := articles.NewArticles(now)
+	v := routes(articles2)
 	router := goncini.NewRouter(v)
 	v2 := problems()
 	log := logConfig(cfg)
 	logger := goncini.NewLogger(log)
 	kernel, err := goncini.NewKernel(http, router, v2, logger)
 	if err != nil {
-		return nil, fmt.Errorf("goncini.NewKernel: %w", err)
+		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
 	server := goncini.NewServer(http, kernel, logger)
 	v3 := commands()
