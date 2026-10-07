@@ -2,7 +2,9 @@ package security
 
 import (
 	"cmp"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -21,6 +23,15 @@ type Config struct {
 	// Scheme is the scheme of the Authorization header, as in
 	// "Authorization: Bearer <token>"; empty means Bearer.
 	Scheme string
+	// RoleHierarchy gives roles the roles they include, for Access:
+	// {"ROLE_ADMIN": {"ROLE_MODERATOR"}}.
+	RoleHierarchy map[string][]string
+}
+
+// Verifier verifies tokens: it returns the subject that a token names, or
+// fails with InvalidToken. Tokens and APIKeys are verifiers.
+type Verifier interface {
+	Verify(token string) (subject string, err error)
 }
 
 // Tokens issues and verifies signed tokens, JWTs signed with HMAC-SHA256,
@@ -70,4 +81,34 @@ func (t *Tokens) Verify(token string) (string, error) {
 		fail InvalidToken{Reason: "it names no user"}
 	}
 	return claims.Subject, nil
+}
+
+// APIKeys verifies API keys, secrets that machine clients send as tokens,
+// each naming a subject. It keeps their SHA-256 hashes, and looks keys up
+// by them: the time a lookup takes says nothing of the keys.
+type APIKeys struct {
+	subjects map[[sha256.Size]byte]string
+}
+
+// NewAPIKeys returns the verifier of keys, a map from each key to the
+// subject it names. Keys must have at least 32 bytes, as random as the
+// app's secret: read them with env.Secret.
+func NewAPIKeys(keys map[string]string) (*APIKeys, error) {
+	k := &APIKeys{subjects: map[[sha256.Size]byte]string{}}
+	for key, subject := range keys {
+		if len(key) < 32 {
+			return nil, fmt.Errorf("security: the API key of %q has fewer than 32 bytes", subject)
+		}
+		k.subjects[sha256.Sum256([]byte(key))] = subject
+	}
+	return k, nil
+}
+
+// Verify returns the subject of key, or fails with InvalidToken.
+func (k *APIKeys) Verify(key string) (string, error) {
+	subject, ok := k.subjects[sha256.Sum256([]byte(key))]
+	if !ok {
+		fail InvalidToken{Reason: "it isn't one of the API's keys"}
+	}
+	return subject, nil
 }

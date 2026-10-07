@@ -1,0 +1,58 @@
+// Package moderation is the moderators' part of the API, under /admin:
+// they remove articles. They authenticate with API keys, behind a firewall
+// of their own.
+package moderation
+
+import (
+	"context"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/security"
+
+	"github.com/goncini/goncini/examples/realworld/articles"
+)
+
+// Config is the moderators' API keys.
+type Config struct {
+	// Keys are the moderators' names, by their API keys.
+	Keys map[string]string
+}
+
+// Moderator is a moderator, as their key names them.
+type Moderator struct {
+	Name string
+}
+
+// Roles gives moderators ROLE_MODERATOR.
+func (*Moderator) Roles() []string { return []string{"ROLE_MODERATOR"} }
+
+// NewFirewall returns the firewall of the moderators: their API keys, as
+// bearer tokens.
+func NewFirewall(c Config) (*security.Firewall[*Moderator], error) {
+	keys := check security.NewAPIKeys(c.Keys) ""
+	return &security.Firewall[*Moderator]{
+		Tokens: keys,
+		Load: func(ctx context.Context, name string) (*Moderator, bool, error) {
+			return &Moderator{Name: name}, true, nil
+		},
+	}, nil
+}
+
+// Moderation serves the moderators' endpoints.
+type Moderation struct {
+	articles *articles.Articles
+	access   *security.Access
+}
+
+func NewModeration(a *articles.Articles, access *security.Access) *Moderation {
+	return &Moderation{articles: a, access: access}
+}
+
+// Routes registers the endpoints, which need ROLE_MODERATOR. Deleting an
+// article is the articles' own endpoint, which Authorship lets moderators
+// use.
+func (m *Moderation) Routes(r *routing.Router) {
+	mod := r.With(m.access.Require("ROLE_MODERATOR"))
+	mod.Delete("/articles/{slug}", httpkernel.Endpoint(m.articles.Delete)).Name("moderation_article_delete")
+}

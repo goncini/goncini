@@ -10,11 +10,12 @@ import (
 
 // Articles serves the articles, their favorites, comments and tags.
 type Articles struct {
-	store *Store
+	store  *Store
+	access *security.Access
 }
 
-func NewArticles(store *Store) *Articles {
-	return &Articles{store: store}
+func NewArticles(store *Store, access *security.Access) *Articles {
+	return &Articles{store: store, access: access}
 }
 
 // Routes registers the endpoints.
@@ -93,10 +94,11 @@ effect (a *Articles) find(slug string) (Article, ArticleError) {
 	return art, nil
 }
 
-// findOwn returns the article with the slug, if the viewer wrote it.
-effect (a *Articles) findOwn(slug string) (Article, ArticleError) {
+// findGranted returns the article with the slug, if the viewer may do
+// attribute to it, as Authorship decides.
+effect (a *Articles) findGranted(slug, attribute string) (Article, ArticleError) {
 	art := check a.find(slug) ""
-	if art.AuthorID != users.Viewer(ctx) {
+	if !a.access.IsGranted(ctx, attribute, art) {
 		fail NotAuthor{Slug: slug}
 	}
 	return art, nil
@@ -155,7 +157,7 @@ func (in *UpdateInput) Validate() error {
 // Update changes the values that the body has of an article that the
 // authenticated user wrote. Its slug stays the same.
 effect (a *Articles) Update(in UpdateInput) (ArticleBody, ArticleError) {
-	art := check a.findOwn(in.Slug) ""
+	art := check a.findGranted(in.Slug, "edit") ""
 	b := in.Body.Article
 	if b.Title.Set {
 		art.Title = b.Title.Value
@@ -175,9 +177,10 @@ effect (a *Articles) Update(in UpdateInput) (ArticleBody, ArticleError) {
 	return ArticleBody{updated}, nil
 }
 
-// Delete deletes an article that the authenticated user wrote.
+// Delete deletes an article: one the authenticated user wrote, or any for
+// a moderator.
 effect (a *Articles) Delete(in SlugInput) (httpkernel.NoContent, ArticleError) {
-	art := check a.findOwn(in.Slug) ""
+	art := check a.findGranted(in.Slug, "delete") ""
 	check a.store.Delete(art.ID) as Unavailable
 	return httpkernel.NoContent{}, nil
 }

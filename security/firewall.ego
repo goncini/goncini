@@ -68,8 +68,8 @@ func challenge(scheme, params string) http.Header {
 type Firewall[U any] struct {
 	// Config gives the scheme of the Authorization header.
 	Config Config
-	// Tokens verifies the tokens.
-	Tokens *Tokens
+	// Tokens verifies the tokens: *Tokens, APIKeys, or another Verifier.
+	Tokens Verifier
 	// Load returns the user that a token's subject identifies, and reports
 	// whether there is one. Its errors are the server's: 500s.
 	Load func(ctx context.Context, subject string) (U, bool, error)
@@ -114,18 +114,22 @@ func (h *firewalled[U]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // the Authorization header's: Bearer, an HTTP scheme, or another, such as
 // Token, as an API key in the header.
 func (h *firewalled[U]) DescribeOperation(op *openapi.Op) {
-	scheme := &openapi.SecurityScheme{Type: "http", Scheme: "bearer", BearerFormat: "JWT"}
+	name, format := h.scheme, "JWT"
+	if _, ok := h.f.Tokens.(*Tokens); !ok {
+		name, format = h.scheme+"Key", "" // a key, or another verifier's tokens
+	}
+	scheme := &openapi.SecurityScheme{Type: "http", Scheme: "bearer", BearerFormat: format}
 	if !strings.EqualFold(h.scheme, "Bearer") {
 		scheme = &openapi.SecurityScheme{
 			Type:        "apiKey",
 			In:          "header",
 			Name:        "Authorization",
-			Description: f"The Authorization header, with the {h.scheme} scheme: Authorization: {h.scheme} eyJhbGciOiJIUzI1NiJ9…",
+			Description: f"The Authorization header, with the {h.scheme} scheme: Authorization: {h.scheme} <token>",
 		}
 	}
-	op.SecurityScheme(h.scheme, scheme)
-	op.Security = append(op.Security, openapi.SecurityRequirement{}, openapi.SecurityRequirement{h.scheme: {}})
-	op.Errors = append(op.Errors, InvalidToken{Scheme: h.scheme, Reason: "it has expired"})
+	op.SecurityScheme(name, scheme)
+	op.Security = append(op.Security, openapi.SecurityRequirement{}, openapi.SecurityRequirement{name: {}})
+	op.Errors = append(op.Errors, InvalidToken{Scheme: h.scheme, Reason: "it isn't one of the API's"})
 }
 
 // authenticate returns the user of an Authorization header.
@@ -195,11 +199,5 @@ func (h required) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // without one: it drops the empty requirement that a firewall adds.
 func (required) DescribeOperation(op *openapi.Op) {
 	op.Security = slices.DeleteFunc(op.Security, r => len(r) == 0)
-	var scheme string
-	if len(op.Security) > 0 {
-		for name := range op.Security[0] {
-			scheme = name
-		}
-	}
-	op.Errors = append(op.Errors, Unauthenticated{Scheme: scheme})
+	op.Errors = append(op.Errors, Unauthenticated{})
 }

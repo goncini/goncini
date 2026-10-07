@@ -5,6 +5,150 @@
     "version": "2.0.0"
   },
   "paths": {
+    "/api/admin/articles/{slug}": {
+      "delete": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Deletes an article: one the authenticated user wrote, or any for a moderator.",
+        "operationId": "moderation_article_delete",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it isn't one of the API's",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "AccessDenied": {
+                    "summary": "access denied: ROLE_MODERATOR",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "access denied"
+                        ]
+                      }
+                    }
+                  },
+                  "NotAuthor": {
+                    "summary": "not the author of ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "forbidden"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoArticle": {
+                    "summary": "no article ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerKey": []
+          }
+        ]
+      }
+    },
     "/api/articles": {
       "get": {
         "tags": [
@@ -107,7 +251,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -267,7 +411,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -496,7 +640,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -615,7 +759,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -790,7 +934,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -966,7 +1110,7 @@
         "tags": [
           "Articles"
         ],
-        "summary": "Deletes an article that the authenticated user wrote.",
+        "summary": "Deletes an article: one the authenticated user wrote, or any for a moderator.",
         "operationId": "article_delete",
         "parameters": [
           {
@@ -998,7 +1142,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -1139,7 +1283,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -1295,7 +1439,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -1451,7 +1595,7 @@
         "tags": [
           "Articles"
         ],
-        "summary": "Deletes a comment that the authenticated user wrote.",
+        "summary": "Deletes a comment: one the authenticated user wrote, or any for a moderator.",
         "operationId": "comment_delete",
         "parameters": [
           {
@@ -1514,7 +1658,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -1665,7 +1809,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -1782,7 +1926,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -1901,7 +2045,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -2011,7 +2155,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -2128,7 +2272,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -2237,7 +2381,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -2315,7 +2459,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -2469,7 +2613,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -2710,7 +2854,7 @@
                 },
                 "examples": {
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -2949,7 +3093,7 @@
                     }
                   },
                   "InvalidToken": {
-                    "summary": "invalid token: it has expired",
+                    "summary": "invalid token: it isn't one of the API's",
                     "value": {
                       "errors": {
                         "token": [
@@ -3410,9 +3554,13 @@
       }
     },
     "securitySchemes": {
+      "BearerKey": {
+        "type": "http",
+        "scheme": "bearer"
+      },
       "Token": {
         "type": "apiKey",
-        "description": "The Authorization header, with the Token scheme: Authorization: Token eyJhbGciOiJIUzI1NiJ9…",
+        "description": "The Authorization header, with the Token scheme: Authorization: Token <token>",
         "name": "Authorization",
         "in": "header"
       }

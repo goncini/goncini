@@ -19,8 +19,9 @@ import (
 //
 //line config_test.ego:15
 var secrets = map[string]string{
-	"DATABASE_URL": ":memory:",
-	"APP_SECRET":   "a secret of at least thirty-two bytes",
+	"DATABASE_URL":  ":memory:",
+	"APP_SECRET":    "a secret of at least thirty-two bytes",
+	"MODERATOR_KEY": "a moderator's key of at least thirty-two bytes",
 }
 
 // TestEnvironments builds the app in each environment, which checks that

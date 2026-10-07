@@ -315,11 +315,19 @@ func (userRoutes) Routes(r *routing.Router) {
 	r.Get("/users", echo()).Name("user_list")
 }
 
-func TestPrefix(t *testing.T) {
-	r := routing.New(routing.Prefix("/api", articleRoutes{}, userRoutes{}))
-	for _, path := range []string{"/api/articles", "/api/users"} {
-		if rec := serve(r, "GET", path); rec.Code != 200 {
-			t.Errorf("GET %s: %d", path, rec.Code)
+// TestPrefixAndWith checks the Routes that Prefix and With return: here,
+// a part of an API behind a middleware, and another without.
+func TestPrefixAndWith(t *testing.T) {
+	var tag func(http.Handler) http.Handler = func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Tag", "1")
+			next.ServeHTTP(w, r)
+		})
+	}
+	r := routing.New(routing.Prefix("/api", routing.With(tag, articleRoutes{}), userRoutes{}))
+	for path, tagged := range map[string]string{"/api/articles": "1", "/api/users": ""} {
+		if rec := serve(r, "GET", path); rec.Code != 200 || rec.Header().Get("X-Tag") != tagged {
+			t.Errorf("GET %s: %d, X-Tag %q", path, rec.Code, rec.Header().Get("X-Tag"))
 		}
 	}
 }

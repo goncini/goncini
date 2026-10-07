@@ -46,14 +46,15 @@ type DeleteCommentInput struct {
 	ID int64 `path:"id"`
 }
 
-// DeleteComment deletes a comment that the authenticated user wrote.
+// DeleteComment deletes a comment: one the authenticated user wrote, or
+// any for a moderator.
 effect (a *Articles) DeleteComment(in DeleteCommentInput) (httpkernel.NoContent, ArticleError) {
 	art := check a.find(in.Slug) ""
 	c, ok := check a.store.Comment(0, art.ID, in.ID) as Unavailable
 	if !ok {
 		fail NoComment{ID: in.ID}
 	}
-	if c.AuthorID != users.Viewer(ctx) {
+	if !a.access.IsGranted(ctx, "delete", c) {
 		fail NotCommentAuthor{ID: in.ID}
 	}
 	check a.store.DeleteComment(in.ID) as Unavailable

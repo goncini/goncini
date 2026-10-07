@@ -13,6 +13,7 @@ import (
 	"github.com/goncini/goncini/examples/realworld/articles"
 	"github.com/goncini/goncini/examples/realworld/conduit"
 	"github.com/goncini/goncini/examples/realworld/config"
+	"github.com/goncini/goncini/examples/realworld/moderation"
 	"github.com/goncini/goncini/examples/realworld/users"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
@@ -21,7 +22,7 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI)
+var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration)
 
 // autoProblems are the error mappers that the app's packages declare.
 func autoProblems() []httpkernel.ErrorMapper {
@@ -38,26 +39,37 @@ func autoChecks(p1 *sql.DB) []goncini.Check {
 	return []goncini.Check{p1.PingContext}
 }
 
+// autoVoters are the services that are security voters.
+func autoVoters(p1 articles.Authorship) []security.Voter {
+	return []security.Voter{p1}
+}
+
 // autoServices describes the app's services, for debug:container.
 func autoServices() []goncini.Service {
 	return []goncini.Service{
 		{Type: "goncini.HTTP", Provider: "autoConfigHTTP", Needs: []string{"config.Config"}},
+		{Type: "security.Config", Provider: "autoConfigSecurity", Needs: []string{"config.Config"}},
+		{Type: "*security.Tokens", Provider: "security.NewTokens", Needs: []string{"security.Config"}},
 		{Type: "db.Config", Provider: "autoConfigDB", Needs: []string{"config.Config"}},
 		{Type: "*sql.DB", Provider: "db.Open", Needs: []string{"db.Config"}},
 		{Type: "*db.SQL", Provider: "db.NewSQL", Needs: []string{"*sql.DB"}},
 		{Type: "*users.Store", Provider: "users.NewStore", Needs: []string{"*db.SQL"}},
+		{Type: "*security.Firewall[*users.User]", Provider: "firewall", Needs: []string{"security.Config", "*security.Tokens", "*users.Store"}},
+		{Type: "moderation.Config", Provider: "autoConfigModeration", Needs: []string{"config.Config"}},
+		{Type: "*security.Firewall[*moderation.Moderator]", Provider: "moderation.NewFirewall", Needs: []string{"moderation.Config"}},
 		{Type: "security.Hasher", Provider: "hasher", Needs: []string{}},
-		{Type: "security.Config", Provider: "autoConfigSecurity", Needs: []string{"config.Config"}},
-		{Type: "*security.Tokens", Provider: "security.NewTokens", Needs: []string{"security.Config"}},
 		{Type: "func() time.Time", Provider: "clock", Needs: []string{}},
 		{Type: "*ratelimit.Limiter", Provider: "logins", Needs: []string{"func() time.Time"}},
 		{Type: "*users.Users", Provider: "users.NewUsers", Needs: []string{"*users.Store", "security.Hasher", "*security.Tokens", "*ratelimit.Limiter"}},
 		{Type: "*articles.Store", Provider: "articles.NewStore", Needs: []string{"*db.SQL", "func() time.Time"}},
-		{Type: "*articles.Articles", Provider: "articles.NewArticles", Needs: []string{"*articles.Store"}},
-		{Type: "[]routing.Routes", Provider: "routes", Needs: []string{"*users.Users", "*articles.Articles"}},
+		{Type: "articles.Authorship", Provider: "articles.NewAuthorship", Needs: []string{}},
+		{Type: "[]security.Voter", Provider: "autoVoters", Needs: []string{"articles.Authorship"}},
+		{Type: "*security.Access", Provider: "security.NewAccess", Needs: []string{"security.Config", "[]security.Voter"}},
+		{Type: "*articles.Articles", Provider: "articles.NewArticles", Needs: []string{"*articles.Store", "*security.Access"}},
+		{Type: "*moderation.Moderation", Provider: "moderation.NewModeration", Needs: []string{"*articles.Articles", "*security.Access"}},
+		{Type: "[]routing.Routes", Provider: "routes", Needs: []string{"*security.Firewall[*users.User]", "*security.Firewall[*moderation.Moderator]", "*users.Users", "*articles.Articles", "*moderation.Moderation"}},
 		{Type: "*routing.Router", Provider: "goncini.NewRouter", Needs: []string{"[]routing.Routes"}},
-		{Type: "*security.Firewall[*users.User]", Provider: "firewall", Needs: []string{"security.Config", "*security.Tokens", "*users.Store"}},
-		{Type: "[]httpkernel.Middleware", Provider: "middleware", Needs: []string{"*security.Firewall[*users.User]"}},
+		{Type: "[]httpkernel.Middleware", Provider: "goncini.NewMiddleware", Needs: []string{}},
 		{Type: "[]httpkernel.ErrorMapper", Provider: "autoProblems", Needs: []string{}},
 		{Type: "httpkernel.Renderer", Provider: "conduit.NewRenderer", Needs: []string{}},
 		{Type: "httpkernel.Validator", Provider: "conduit.NewValidator", Needs: []string{}},
@@ -85,8 +97,8 @@ func autoOpenAPI() openapi.Annotations {
 			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).AddComment":    {Summary: "Comments on an article.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
 			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Comments":      {Summary: "Returns the comments of an article, oldest first.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
 			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Create":        {Summary: "Publishes an article, with a slug made of its title.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Delete":        {Summary: "Deletes an article that the authenticated user wrote.", Errors: []error{articles.NoArticle{}, articles.NotAuthor{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).DeleteComment": {Summary: "Deletes a comment that the authenticated user wrote.", Errors: []error{articles.NoArticle{}, articles.NoComment{}, articles.NotCommentAuthor{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Delete":        {Summary: "Deletes an article: one the authenticated user wrote, or any for a moderator.", Errors: []error{articles.NoArticle{}, articles.NotAuthor{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).DeleteComment": {Summary: "Deletes a comment: one the authenticated user wrote, or any for a moderator.", Errors: []error{articles.NoArticle{}, articles.NoComment{}, articles.NotCommentAuthor{}, articles.Unavailable{}}},
 			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Favorite":      {Summary: "Adds an article to the authenticated user's favorites.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
 			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Feed":          {Summary: "Returns the articles of the authors that the authenticated user follows, newest first, without their bodies.", Errors: []error{articles.Unavailable{}}},
 			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).List":          {Summary: "Returns the articles that the filters select, newest first, without their bodies.", Errors: []error{articles.Unavailable{}}},
@@ -134,3 +146,6 @@ func autoConfigSecurity(c config.Config) security.Config { return c.Security }
 
 // autoConfigOpenAPI is the OpenAPI section of the config.
 func autoConfigOpenAPI(c config.Config) openapi.Config { return c.OpenAPI }
+
+// autoConfigModeration is the Moderation section of the config.
+func autoConfigModeration(c config.Config) moderation.Config { return c.Moderation }

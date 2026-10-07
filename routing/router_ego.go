@@ -74,6 +74,12 @@ func (r *Router) Include(routes ...Routes) {
 	}
 }
 
+// RoutesFunc is a function that registers routes, as Routes does.
+type RoutesFunc func(r *Router)
+
+// Routes calls f.
+func (f RoutesFunc) Routes(r *Router) { f(r) }
+
 // Prefix returns the Routes that registers the routes of each of routes
 // under prefix, as Group does, such as an API's controllers under /api:
 //
@@ -89,6 +95,23 @@ type prefixed struct {
 
 func (p prefixed) Routes(r *Router) {
 	r.Group(p.prefix).Include(p.routes...)
+}
+
+// With returns the Routes that registers the routes of each of routes
+// behind mw, as Router.With does, such as a firewall for a part of an API:
+//
+//	routing.New(routing.Prefix("/api", routing.With(firewall.Middleware, users, articles)))
+func With(mw func(http.Handler) http.Handler, routes ...Routes) Routes {
+	return wrapped{mw, routes}
+}
+
+type wrapped struct {
+	mw     func(http.Handler) http.Handler
+	routes []Routes
+}
+
+func (w wrapped) Routes(r *Router) {
+	r.With(w.mw).Include(w.routes...)
 }
 
 // Get registers h for GET requests to path, and HEAD requests.
@@ -184,7 +207,7 @@ func (r *Router) Handler(req *http.Request) (h http.Handler, pattern string) {
 // Route is a registered route. Name names it, Require sets requirements on
 // its wildcards, and URL builds its URLs.
 //
-//line router.ego:178
+//line router.ego:201
 type Route struct {
 	t            *table
 	name         string
@@ -224,7 +247,7 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 	} else {
 		pattern = muxPath
 	}
-//line router.ego:212
+//line router.ego:235
 	if f, ok := h.(http.HandlerFunc); h == nil || ok && f == nil {
 		panic(fmt.Sprintf("routing: nil handler for %s (%s)", pattern, source))
 	}
@@ -271,7 +294,7 @@ func mustBeRoutable(p, source string) {
 		if err != nil {
 			text = s
 		}
-//line router.ego:255
+//line router.ego:278
 		if text == "." || text == ".." {
 			panic(fmt.Sprintf("routing: path %q has a %q segment (%s), which clients resolve away", p, text, source))
 		}

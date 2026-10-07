@@ -164,6 +164,18 @@ Symfony's Security component, the light version:
 - Its failures are the `AuthError` cases, 401 problems with a
   `WWW-Authenticate` header. For that, `httpkernel.Problem` gained a
   `Header` of response headers, which the kernel's 405 now uses for `Allow`.
+- **Voters and roles (M2):** `Access` decides from voters' votes, with the
+  affirmative, consensus or unanimous strategy, and grants `ROLE_*`
+  attributes to users whose `Roles` include them, through
+  `Config.RoleHierarchy`. `security.On` makes a voter of the subjects of one
+  type; `Check` is Symfony's `denyAccessUnlessGranted`, a 401 or a 403;
+  `Require` guards routes; `goncini generate` collects the voters.
+- **Firewalls per route group (M2):** a firewall's middleware goes on a
+  group with `routing.With`, and its `Tokens` is any `Verifier`: `Tokens`'
+  JWTs, or `APIKeys`, the hashed keys of machine clients. RealWorld puts its
+  users' firewall on `/api`, and a moderators' firewall of API keys on
+  `/api/admin`, where they may delete any article: the `Authorship` voter
+  lets them, as it lets authors edit and delete their own.
 
 ### openapi
 

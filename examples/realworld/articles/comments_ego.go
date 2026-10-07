@@ -89,16 +89,17 @@ type DeleteCommentInput struct {
 	ID int64 `path:"id"`
 }
 
-// DeleteComment deletes a comment that the authenticated user wrote.
+// DeleteComment deletes a comment: one the authenticated user wrote, or
+// any for a moderator.
 func (a *Articles) DeleteComment(ctx context.Context, in DeleteCommentInput) (_ httpkernel.NoContent, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.DeleteComment")
 	defer trace.End(span, &err)
-//line comments.ego:51
+//line comments.ego:52
 	art, err := a.find(ctx, in.Slug)
 	if err != nil {
 		return httpkernel.NoContent{}, err
 	}
-//line comments.ego:52
+//line comments.ego:53
 	c, ok, err := a.store.Comment(ctx, 0, art.ID, in.ID)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -106,11 +107,11 @@ func (a *Articles) DeleteComment(ctx context.Context, in DeleteCommentInput) (_ 
 		}
 		return httpkernel.NoContent{}, Unavailable{Cause: err}
 	}
-//line comments.ego:53
+//line comments.ego:54
 	if !ok {
 		return httpkernel.NoContent{}, NoComment{ID: in.ID}
 	}
-	if c.AuthorID != users.Viewer(ctx) {
+	if !a.access.IsGranted(ctx, "delete", c) {
 		return httpkernel.NoContent{}, NotCommentAuthor{ID: in.ID}
 	}
 	if err := a.store.DeleteComment(ctx, in.ID); err != nil {
@@ -119,6 +120,6 @@ func (a *Articles) DeleteComment(ctx context.Context, in DeleteCommentInput) (_ 
 		}
 		return httpkernel.NoContent{}, Unavailable{Cause: err}
 	}
-//line comments.ego:60
+//line comments.ego:61
 	return httpkernel.NoContent{}, nil
 }

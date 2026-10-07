@@ -288,6 +288,11 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
+	// ModerationArticleDelete Deletes an article: one the authenticated user wrote, or any for a moderator.
+	//
+	// Corresponds with DELETE /api/admin/articles/{slug} (the `ModerationArticleDelete` operationId).
+	ModerationArticleDelete(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ArticleList Returns the articles that the filters select, newest first, without their bodies.
 	//
 	// Corresponds with GET /api/articles (the `ArticleList` operationId).
@@ -312,7 +317,7 @@ type ClientInterface interface {
 	// Corresponds with GET /api/articles/feed (the `ArticleFeed` operationId).
 	ArticleFeed(ctx context.Context, params *ArticleFeedParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ArticleDelete Deletes an article that the authenticated user wrote.
+	// ArticleDelete Deletes an article: one the authenticated user wrote, or any for a moderator.
 	//
 	// Corresponds with DELETE /api/articles/{slug} (the `ArticleDelete` operationId).
 	ArticleDelete(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -359,7 +364,7 @@ type ClientInterface interface {
 	// Corresponds with POST /api/articles/{slug}/comments (the `CommentAdd` operationId).
 	CommentAdd(ctx context.Context, slug string, body CommentAddJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CommentDelete Deletes a comment that the authenticated user wrote.
+	// CommentDelete Deletes a comment: one the authenticated user wrote, or any for a moderator.
 	//
 	// Corresponds with DELETE /api/articles/{slug}/comments/{id} (the `CommentDelete` operationId).
 	CommentDelete(ctx context.Context, slug string, id int64, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -448,6 +453,21 @@ type ClientInterface interface {
 	UserLogin(ctx context.Context, body UserLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
+// ModerationArticleDelete Deletes an article: one the authenticated user wrote, or any for a moderator.
+//
+// Corresponds with DELETE /api/admin/articles/{slug} (the `ModerationArticleDelete` operationId).
+func (c *Client) ModerationArticleDelete(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewModerationArticleDeleteRequest(c.Server, slug)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ArticleList Returns the articles that the filters select, newest first, without their bodies.
 //
 // Corresponds with GET /api/articles (the `ArticleList` operationId).
@@ -512,7 +532,7 @@ func (c *Client) ArticleFeed(ctx context.Context, params *ArticleFeedParams, req
 	return c.Client.Do(req)
 }
 
-// ArticleDelete Deletes an article that the authenticated user wrote.
+// ArticleDelete Deletes an article: one the authenticated user wrote, or any for a moderator.
 //
 // Corresponds with DELETE /api/articles/{slug} (the `ArticleDelete` operationId).
 func (c *Client) ArticleDelete(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -629,7 +649,7 @@ func (c *Client) CommentAdd(ctx context.Context, slug string, body CommentAddJSO
 	return c.Client.Do(req)
 }
 
-// CommentDelete Deletes a comment that the authenticated user wrote.
+// CommentDelete Deletes a comment: one the authenticated user wrote, or any for a moderator.
 //
 // Corresponds with DELETE /api/articles/{slug}/comments/{id} (the `CommentDelete` operationId).
 func (c *Client) CommentDelete(ctx context.Context, slug string, id int64, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -855,6 +875,40 @@ func (c *Client) UserLogin(ctx context.Context, body UserLoginJSONRequestBody, r
 		return nil, err
 	}
 	return c.Client.Do(req)
+}
+
+// NewModerationArticleDeleteRequest constructs an http.Request for the ModerationArticleDelete method
+func NewModerationArticleDeleteRequest(server string, slug string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "slug", slug, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/admin/articles/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
 }
 
 // NewArticleListRequest constructs an http.Request for the ArticleList method
@@ -1690,6 +1744,13 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
+	// ModerationArticleDeleteWithResponse Deletes an article: one the authenticated user wrote, or any for a moderator.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/admin/articles/{slug} (the `ModerationArticleDelete` operationId).
+	ModerationArticleDeleteWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*ModerationArticleDeleteResponse, error)
+
 	// ArticleListWithResponse Returns the articles that the filters select, newest first, without their bodies.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -1718,7 +1779,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/articles/feed (the `ArticleFeed` operationId).
 	ArticleFeedWithResponse(ctx context.Context, params *ArticleFeedParams, reqEditors ...RequestEditorFn) (*ArticleFeedResponse, error)
 
-	// ArticleDeleteWithResponse Deletes an article that the authenticated user wrote.
+	// ArticleDeleteWithResponse Deletes an article: one the authenticated user wrote, or any for a moderator.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -1771,7 +1832,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/articles/{slug}/comments (the `CommentAdd` operationId).
 	CommentAddWithResponse(ctx context.Context, slug string, body CommentAddJSONRequestBody, reqEditors ...RequestEditorFn) (*CommentAddResponse, error)
 
-	// CommentDeleteWithResponse Deletes a comment that the authenticated user wrote.
+	// CommentDeleteWithResponse Deletes a comment: one the authenticated user wrote, or any for a moderator.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -1874,6 +1935,75 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/users/login (the `UserLogin` operationId).
 	UserLoginWithResponse(ctx context.Context, body UserLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*UserLoginResponse, error)
+}
+
+// ModerationArticleDeleteResponse401Headers the declared response headers of an HTTP 401 response for ModerationArticleDelete
+type ModerationArticleDeleteResponse401Headers struct {
+	WwwAuthenticate *string
+}
+
+type ModerationArticleDeleteResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Errors
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Errors
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *Errors
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Errors
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *ModerationArticleDeleteResponse401Headers
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ModerationArticleDeleteResponse) GetJSON401() *Errors {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ModerationArticleDeleteResponse) GetJSON403() *Errors {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ModerationArticleDeleteResponse) GetJSON404() *Errors {
+	return r.JSON404
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ModerationArticleDeleteResponse) GetJSON503() *Errors {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ModerationArticleDeleteResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ModerationArticleDeleteResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ModerationArticleDeleteResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ModerationArticleDeleteResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
 }
 
 // ArticleListResponse401Headers the declared response headers of an HTTP 401 response for ArticleList
@@ -3376,6 +3506,19 @@ func (r UserLoginResponse) ContentType() string {
 	return ""
 }
 
+// ModerationArticleDeleteWithResponse Deletes an article: one the authenticated user wrote, or any for a moderator.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/admin/articles/{slug} (the `ModerationArticleDelete` operationId).
+func (c *ClientWithResponses) ModerationArticleDeleteWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*ModerationArticleDeleteResponse, error) {
+	rsp, err := c.ModerationArticleDelete(ctx, slug, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseModerationArticleDeleteResponse(rsp)
+}
+
 // ArticleListWithResponse Returns the articles that the filters select, newest first, without their bodies.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -3428,7 +3571,7 @@ func (c *ClientWithResponses) ArticleFeedWithResponse(ctx context.Context, param
 	return ParseArticleFeedResponse(rsp)
 }
 
-// ArticleDeleteWithResponse Deletes an article that the authenticated user wrote.
+// ArticleDeleteWithResponse Deletes an article: one the authenticated user wrote, or any for a moderator.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -3523,7 +3666,7 @@ func (c *ClientWithResponses) CommentAddWithResponse(ctx context.Context, slug s
 	return ParseCommentAddResponse(rsp)
 }
 
-// CommentDeleteWithResponse Deletes a comment that the authenticated user wrote.
+// CommentDeleteWithResponse Deletes a comment: one the authenticated user wrote, or any for a moderator.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -3709,6 +3852,69 @@ func (c *ClientWithResponses) UserLoginWithResponse(ctx context.Context, body Us
 		return nil, err
 	}
 	return ParseUserLoginResponse(rsp)
+}
+
+// ParseModerationArticleDeleteResponse parses an HTTP response from a ModerationArticleDeleteWithResponse call
+func ParseModerationArticleDeleteResponse(rsp *http.Response) (*ModerationArticleDeleteResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ModerationArticleDeleteResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Errors
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Errors
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Errors
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Errors
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers ModerationArticleDeleteResponse401Headers
+		if values := rsp.Header.Values("Www-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Www-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WwwAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
 }
 
 // ParseArticleListResponse parses an HTTP response from a ArticleListWithResponse call

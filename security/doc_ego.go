@@ -9,10 +9,15 @@
 //   - Firewall, middleware that authenticates requests carrying a token in
 //     their Authorization header, and puts their user in their context;
 //   - User and CurrentUser, which give handlers that user, and Required,
-//     middleware for routes that need one.
+//     middleware for routes that need one;
+//   - APIKeys, which verify the keys of machine clients, for a firewall of
+//     their own on a group of routes (routing.With);
+//   - Access, which decides what users may do from voters' votes and their
+//     roles, as Symfony's voters and role hierarchy do, with Require,
+//     middleware for routes that need a role.
 //
 // Its failures are the AuthError cases, which answer 401 problems with a
-// WWW-Authenticate header.
+// WWW-Authenticate header, and AccessDenied, a 403.
 //
 //	r.Post("/users/login", httpkernel.Endpoint(u.Login))
 //	r.With(security.Required).Get("/user", httpkernel.Endpoint(u.Current))

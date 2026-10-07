@@ -11,29 +11,34 @@ import (
 
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/goosedb"
-	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
 
 	"github.com/goncini/goncini/examples/realworld/articles"
 	"github.com/goncini/goncini/examples/realworld/migrations"
+	"github.com/goncini/goncini/examples/realworld/moderation"
 	"github.com/goncini/goncini/examples/realworld/users"
 )
 
 // Services is the app's own services.
 var Services = layer.Set(
 	db.Open, db.NewSQL, migrator,
-	security.NewTokens, hasher, firewall,
+	security.NewTokens, hasher, firewall, security.NewAccess,
 	users.NewStore, users.NewUsers, logins,
-	articles.NewStore, articles.NewArticles,
+	articles.NewStore, articles.NewArticles, articles.NewAuthorship,
+	moderation.NewFirewall, moderation.NewModeration,
 	routes, clock,
 )
 
-// routes puts the API under /api. goncini generate collects the routes of
-// an app that doesn't provide them itself.
-func routes(u *users.Users, a *articles.Articles) []routing.Routes {
-	return []routing.Routes{routing.Prefix("/api", u, a)}
+// routes puts the API under /api, behind the users' firewall, and the
+// moderators' part under /api/admin, behind theirs. goncini generate
+// collects the routes of an app that doesn't provide them itself.
+func routes(users *security.Firewall[*users.User], mods *security.Firewall[*moderation.Moderator], u *users.Users, a *articles.Articles, m *moderation.Moderation) []routing.Routes {
+	return []routing.Routes{
+		routing.Prefix("/api", routing.With(users.Middleware, u, a)),
+		routing.Prefix("/api/admin", routing.With(mods.Middleware, m)),
+	}
 }
 
 // migrator runs the migrations with goose.
@@ -47,11 +52,6 @@ func hasher() security.Hasher { return security.Hasher{} }
 // firewall authenticates requests by their token, which names a user ID.
 func firewall(c security.Config, tokens *security.Tokens, store *users.Store) *security.Firewall[*users.User] {
 	return &security.Firewall[*users.User]{Config: c, Tokens: tokens, Load: store.ByID}
-}
-
-// middleware puts the firewall in the kernel.
-func middleware(f *security.Firewall[*users.User]) []httpkernel.Middleware {
-	return []httpkernel.Middleware{f.Middleware}
 }
 
 // logins limits the logins of each email from each address: 5 a minute.

@@ -14,44 +14,54 @@ import (
 	"github.com/goncini/goncini/examples/realworld/articles"
 	"github.com/goncini/goncini/examples/realworld/conduit"
 	"github.com/goncini/goncini/examples/realworld/config"
+	"github.com/goncini/goncini/examples/realworld/moderation"
 	"github.com/goncini/goncini/examples/realworld/users"
 	"github.com/goncini/goncini/security"
 )
 
 // Build builds the API for cfg. RealWorld has an error format and
-// validation messages of its own, and authenticates every request.
+// validation messages of its own.
 func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
 	http := autoConfigHTTP(cfg)
-	config2 := autoConfigDB(cfg)
-	db2, cleanup, err := db.Open(config2)
+	config2 := autoConfigSecurity(cfg)
+	tokens, err := security.NewTokens(config2)
+	if err != nil {
+		return nil, fmt.Errorf("security.NewTokens: %w", err)
+	}
+	config3 := autoConfigDB(cfg)
+	db2, cleanup, err := db.Open(config3)
 	if err != nil {
 		return nil, fmt.Errorf("db.Open: %w", err)
 	}
 	s.Defer(func(context.Context) error { return cleanup() })
 	sql2 := db.NewSQL(db2)
 	store := users.NewStore(sql2)
-	hasher2 := hasher()
-	config3 := autoConfigSecurity(cfg)
-	tokens, err := security.NewTokens(config3)
+	firewall2 := firewall(config2, tokens, store)
+	config4 := autoConfigModeration(cfg)
+	firewall3, err := moderation.NewFirewall(config4)
 	if err != nil {
-		return nil, fmt.Errorf("security.NewTokens: %w", err)
+		return nil, fmt.Errorf("moderation.NewFirewall: %w", err)
 	}
+	hasher2 := hasher()
 	v := clock()
 	limiter := logins(v)
 	users2 := users.NewUsers(store, hasher2, tokens, limiter)
 	store2 := articles.NewStore(sql2, v)
-	articles2 := articles.NewArticles(store2)
-	v2 := routes(users2, articles2)
-	router := goncini.NewRouter(v2)
-	firewall2 := firewall(config3, tokens, store)
-	v3 := middleware(firewall2)
-	v4 := autoProblems()
+	authorship := articles.NewAuthorship()
+	v2 := autoVoters(authorship)
+	access := security.NewAccess(config2, v2)
+	articles2 := articles.NewArticles(store2, access)
+	moderation2 := moderation.NewModeration(articles2, access)
+	v3 := routes(firewall2, firewall3, users2, articles2, moderation2)
+	router := goncini.NewRouter(v3)
+	v4 := goncini.NewMiddleware()
+	v5 := autoProblems()
 	renderer := conduit.NewRenderer()
 	validator := conduit.NewValidator()
 	log := autoConfigLog(cfg)
 	handler := goncini.NewLogHandler(log)
 	logger := goncini.NewLogger(handler)
-	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, logger)
+	kernel, err := goncini.NewKernel(http, router, v4, v5, renderer, validator, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
@@ -60,15 +70,15 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v5 := autoCommands(migrator2)
-	v6 := autoChecks(db2)
-	v7 := autoServices()
-	config4 := autoConfigOpenAPI(cfg)
+	v6 := autoCommands(migrator2)
+	v7 := autoChecks(db2)
+	v8 := autoServices()
+	config5 := autoConfigOpenAPI(cfg)
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config4, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config5, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
-	app := goncini.NewApp(kernel, server, router, v5, v6, v7, logger, document)
+	app := goncini.NewApp(kernel, server, router, v6, v7, v8, logger, document)
 	return app, nil
 }

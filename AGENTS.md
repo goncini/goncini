@@ -183,6 +183,21 @@ or a 401 error; `security.User[*users.User](ctx)` reports whether there is
 one. In the RealWorld app, `users.Current(ctx)` and `users.Viewer(ctx)`
 (an ID, 0 for anonymous) wrap them.
 
+Who may do what to a subject is a voter's decision, a service with a
+`Vote(ctx, attribute, subject)` method, such as `articles.Authorship`;
+`goncini generate` hands the voters to `security.Access`:
+
+```go
+if !a.access.IsGranted(ctx, "edit", art) {
+	fail NotAuthor{Slug: slug}
+}
+```
+
+`access.Require("ROLE_MODERATOR")` is middleware for routes that need a
+role. A firewall goes on a group of routes, `routing.With(fw.Middleware,
+…)`, so that parts of the API authenticate differently, such as the
+moderators' API keys under `/api/admin`.
+
 ## Database
 
 Stores query through `db.SQL`, with `db.All`, `db.One` and `db.Value`:

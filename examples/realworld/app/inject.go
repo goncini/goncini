@@ -14,7 +14,7 @@ import (
 )
 
 // Build builds the API for cfg. RealWorld has an error format and
-// validation messages of its own, and authenticates every request.
+// validation messages of its own.
 func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
-	panic(layer.Build(goncini.Framework, Services, Autoconfigured, conduit.NewRenderer, conduit.NewValidator, middleware))
+	panic(layer.Build(goncini.Framework, Services, Autoconfigured, conduit.NewRenderer, conduit.NewValidator))
 }
