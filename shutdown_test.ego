@@ -56,7 +56,7 @@ func TestShutdownDuringASlowRequest(t *testing.T) {
 			logger := slog.New(slog.DiscardHandler)
 			router := goncini.NewRouter([]routing.Routes{slowRoutes{log}})
 			kernel := must goncini.NewKernel(c, router, nil, nil, nil, nil, logger)
-			app := goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, nil, nil, logger)
+			app := goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, nil, nil, nil, logger)
 			return struct{}{}, goncini.Run(s.Context(), io.Discard, goncini.NewEnv("prod", nil), c, app, nil)
 		})
 		served <- err

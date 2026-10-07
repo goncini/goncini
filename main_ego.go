@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/goncini/goncini/console"
@@ -37,7 +38,7 @@ import (
 // exits with status 2. Anything else that fails is logged, and exits with
 // status 1.
 //
-//line main.ego:35
+//line main.ego:36
 func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C) (*App, error)) {
 	env, cfg, err := Load(ProjectDir(), "", load)
 	if err != nil {
@@ -58,7 +59,7 @@ func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C)
 		}
 		return err
 	})
-//line main.ego:52
+//line main.ego:53
 	if usage != nil {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
@@ -74,12 +75,12 @@ func Load[C any](dir, name string, load func(*Env) C) (*Env, C, error) {
 	if err != nil {
 		return nil, *new(C), err
 	}
-//line main.ego:64
+//line main.ego:65
 	cfg = load(env)
 	if err := env.Err(); err != nil {
 		return nil, *new(C), err
 	}
-//line main.ego:66
+//line main.ego:67
 	return env, cfg, nil
 }
 
@@ -92,7 +93,7 @@ func ProjectDir() string {
 	if err != nil {
 		wd = "."
 	}
-//line main.ego:75
+//line main.ego:76
 	for dir := wd; ; dir = filepath.Dir(dir) {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
@@ -110,6 +111,8 @@ func ProjectDir() string {
 //     ctx is done, and shuts down gracefully; -addr overrides the address
 //     of the config, for a developer whose port is taken;
 //   - debug:router, which lists the routes;
+//   - debug:container, which lists the app's services, as goncini generate
+//     describes them;
 //   - debug:config, which prints cfg as JSON, with the values of env's
 //     secrets masked, and without its zero values, which are defaults;
 //   - list and help, which describe the commands.
@@ -120,6 +123,7 @@ func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, a
 			return routing.WriteTable(out, app.Router.List())
 		}),
 		console.New("debug:config", "Prints the config, with secrets masked", func(ctx context.Context, out io.Writer, args []string) error { return writeConfig(out, env, cfg) }),
+		console.New("debug:container", "Lists the app's services", func(ctx context.Context, out io.Writer, args []string) error { return writeServices(out, app.Services) }),
 	}
 	return console.Run(ctx, out, append(commands, app.Commands...), "serve", args)
 }
@@ -149,6 +153,21 @@ func (c serveCommand) Run(ctx context.Context, out io.Writer, args []string) err
 	return c.server.ListenAndServe(ctx)
 }
 
+// writeServices writes the services, with their providers and what they
+// need, in the order the app builds them.
+func writeServices(out io.Writer, services []Service) error {
+	if len(services) == 0 {
+		_, err := fmt.Fprintln(out, "no services are described: run goncini generate")
+		return err
+	}
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "SERVICE\tPROVIDER\tNEEDS")
+	for _, s := range services {
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", s.Type, s.Provider, strings.Join(s.Needs, ", "))
+	}
+	return tw.Flush()
+}
+
 // writeConfig writes cfg as indented JSON, without its zero values, which
 // are defaults, and with the values of env's secrets masked in its strings.
 func writeConfig(out io.Writer, env *Env, cfg any) error {
@@ -157,7 +176,7 @@ func writeConfig(out io.Writer, env *Env, cfg any) error {
 	if err != nil {
 		return err
 	}
-//line main.ego:134
+//line main.ego:153
 	dec := jsontext.NewDecoder(bytes.NewReader(b))
 	enc := jsontext.NewEncoder(out, jsontext.WithIndent("  "))
 	for {
@@ -168,7 +187,7 @@ func writeConfig(out io.Writer, env *Env, cfg any) error {
 		if err != nil {
 			return err
 		}
-//line main.ego:142
+//line main.ego:161
 		if tok.Kind() == '"' {
 			s := tok.String()
 			for _, secret := range env.read {

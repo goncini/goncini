@@ -40,7 +40,8 @@ func build(c goncini.HTTP, routes []routing.Routes, commands []console.Command) 
 	logger := slog.New(slog.DiscardHandler)
 	router := goncini.NewRouter(routes)
 	kernel := must goncini.NewKernel(c, router, nil, nil, goncini.NewRenderer(), goncini.NewValidator(), logger)
-	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, logger)
+	services := []goncini.Service{{Type: "*routing.Router", Provider: "goncini.NewRouter", Needs: []string{"[]routing.Routes"}}}
+	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, services, logger)
 }
 
 // routes registers a route.
@@ -82,6 +83,9 @@ func TestRun(t *testing.T) {
 
 	for args, want := range map[string]string{
 		"greet you all": "hello you all",
+		"debug:container": "" +
+			"SERVICE          PROVIDER           NEEDS\n" +
+			"*routing.Router  goncini.NewRouter  []routing.Routes\n",
 		"debug:router": "" +
 			"NAME   METHOD  PATH    HANDLER\n" +
 			"hello  GET     /hello  http.HandlerFunc\n",
@@ -175,6 +179,16 @@ func TestNewKernel(t *testing.T) {
 		if _, err := goncini.NewKernel(c, routing.New(), nil, nil, nil, nil, slog.New(slog.DiscardHandler)); err == nil {
 			t.Errorf("NewKernel(%+v) accepted it", c)
 		}
+	}
+}
+
+func TestDebugContainerWithoutServices(t *testing.T) {
+	var out bytes.Buffer
+	app := build(goncini.HTTP{}, nil, nil)
+	app.Services = nil
+	must goncini.Run(context.Background(), &out, goncini.NewEnv("dev", nil), config{}, app, []string{"debug:container"})
+	if out.String() != "no services are described: run goncini generate\n" {
+		t.Errorf("debug:container: %q", out.String())
 	}
 }
 

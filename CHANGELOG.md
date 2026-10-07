@@ -216,7 +216,9 @@ Symfony's autoconfiguration does:
 A kind that the app provides itself is left to it: RealWorld provides its
 routes, under `/api`. An app is generated from nothing in one run, and
 `-check` fails when the file isn't up to date, which CI checks.
-`debug:container` is still to come.
+
+It also describes the services that the app's layers build, in order,
+with their providers and what they need, which `debug:container` lists.
 
 ### Found while building
 

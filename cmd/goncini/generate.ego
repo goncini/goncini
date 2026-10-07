@@ -40,7 +40,8 @@ func generate(root, appDir string, checkOnly bool) error {
 		if missing {
 			return fmt.Errorf("%s is missing: run goncini generate", path)
 		}
-		code := check autoconfigure(root, appDir) ""
+		services := check describe(root, appDir) ""
+		code := check autoconfigure(root, appDir, services) ""
 		old := check os.ReadFile(path) ""
 		if !bytes.Equal(old, code) {
 			return fmt.Errorf("%s isn't up to date: run goncini generate", path)
@@ -52,11 +53,16 @@ func generate(root, appDir string, checkOnly bool) error {
 		check os.WriteFile(path, []byte(stub), 0o644) ""
 	}
 	egoGenerate(root) // the app's layers can't be wired until Autoconfigured is
-	code := check autoconfigure(root, appDir) ""
+	code := check autoconfigure(root, appDir, nil) ""
 	check os.WriteFile(path, code, 0o644) ""
 	if out, err := egoGenerate(root); err != nil {
 		return fmt.Errorf("ego generate: %v\n%s", err, out)
 	}
+	// Now that the layers are wired, describe the services they build: the
+	// providers stay the same, so the layers do too.
+	services := check describe(root, appDir) ""
+	code = check autoconfigure(root, appDir, services) ""
+	check os.WriteFile(path, code, 0o644) ""
 	return nil
 }
 
@@ -90,8 +96,9 @@ type app struct {
 	imports  map[string]string   // import path -> name, for the generated file
 }
 
-// autoconfigure returns the generated file of the app.
-func autoconfigure(root, appDir string) ([]byte, error) {
+// autoconfigure returns the generated file of the app, describing
+// services, if the app uses goncini.Service.
+func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 	a := check load(root, appDir) ""
 	var b strings.Builder
 	var names []string
@@ -103,6 +110,18 @@ func autoconfigure(root, appDir string) ([]byte, error) {
 		names = append(names, k.name)
 		params, values := a.collect(k, elem)
 		fmt.Fprintf(&b, "// %s\nfunc %s(%s) []%s {\n\treturn %s\n}\n\n", k.doc, k.name, strings.Join(params, ", "), a.typeString(elem), values)
+	}
+	if svc := a.lookup("goncini.Service"); svc != nil && !a.provides(types.NewSlice(svc)) {
+		names = append(names, "autoServices")
+		fmt.Fprintf(&b, "// autoServices describes the app's services, for debug:container.\nfunc autoServices() []%s {\n\treturn []%s{\n", a.typeString(svc), a.typeString(svc))
+		for _, s := range services {
+			needs := make([]string, len(s.needs))
+			for i, n := range s.needs {
+				needs[i] = strconv.Quote(n)
+			}
+			fmt.Fprintf(&b, "\t\t{Type: %q, Provider: %q, Needs: []string{%s}},\n", s.typ, s.provider, strings.Join(needs, ", "))
+		}
+		b.WriteString("\t}\n}\n\n")
 	}
 	if a.config != nil {
 		st, _ := a.config.Underlying().(*types.Struct)
@@ -446,4 +465,60 @@ func (a *app) importBlock() string {
 		}
 	}
 	return "import (\n" + strings.Join(groups, "\n\n") + "\n)\n\n"
+}
+
+// service is a service that the app's Build injector builds.
+type service struct {
+	typ, provider string
+	needs         []string
+}
+
+// describe returns the services that the app's injector named Build, or
+// else its first, builds, in order, as ego generate wired them in the
+// layers_ego.go of the app's package; none if the layers aren't wired.
+func describe(root, appDir string) ([]service, error) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
+		Dir:  filepath.Join(root, appDir),
+	}
+	pkgs := check packages.Load(cfg, ".") ""
+	if len(pkgs) != 1 || len(pkgs[0].Errors) > 0 {
+		return nil, nil
+	}
+	p := pkgs[0]
+	var build *ast.FuncDecl
+	for i, f := range p.Syntax {
+		if filepath.Base(p.CompiledGoFiles[i]) != "layers_ego.go" {
+			continue
+		}
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && (build == nil || fd.Name.Name == "Build") {
+				build = fd
+			}
+		}
+	}
+	if build == nil {
+		return nil, nil
+	}
+	name := func(pkg *types.Package) string { return if pkg == p.Types { "" } else { pkg.Name() } }
+	var services []service
+	for _, stmt := range build.Body.List {
+		assign, ok := stmt.(*ast.AssignStmt)
+		if !ok || len(assign.Rhs) != 1 {
+			continue
+		}
+		call, ok := assign.Rhs[0].(*ast.CallExpr)
+		lhs, ok2 := assign.Lhs[0].(*ast.Ident)
+		if !ok || !ok2 || p.TypesInfo.Defs[lhs] == nil {
+			continue
+		}
+		s := service{typ: types.TypeString(p.TypesInfo.Defs[lhs].Type(), name), provider: types.ExprString(call.Fun)}
+		for _, arg := range call.Args {
+			if t := p.TypesInfo.TypeOf(arg); t != nil {
+				s.needs = append(s.needs, types.TypeString(t, name))
+			}
+		}
+		services = append(services, s)
+	}
+	return services, nil
 }

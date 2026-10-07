@@ -70,7 +70,19 @@ type App struct {
 	Router   *routing.Router
 	Commands []console.Command
 	Checks   []Check
+	Services []Service
 	Logger   *slog.Logger
+}
+
+// Service describes a service of the app, in the order the app builds them,
+// for debug:container. goncini generate writes them.
+type Service struct {
+	// Type is the service's type, such as *users.Store.
+	Type string
+	// Provider is the function that builds it, such as users.NewStore.
+	Provider string
+	// Needs are the types of what the provider takes.
+	Needs []string
 }
 
 // Check reports whether a service that the app needs is ready, such as its
@@ -135,7 +147,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:128
+//line app.ego:140
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -143,7 +155,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:132
+//line app.ego:144
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
@@ -183,7 +195,7 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 
 // NewApp returns the app made of these parts.
 //
-//line app.ego:164
-func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, logger *slog.Logger) *App {
-	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Logger: logger}
+//line app.ego:176
+func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger) *App {
+	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger}
 }

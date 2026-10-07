@@ -60,6 +60,7 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	}
 	v5 := autoCommands(migrator2)
 	v6 := autoChecks(db2)
-	app := goncini.NewApp(kernel, server, router, v5, v6, logger)
+	v7 := autoServices()
+	app := goncini.NewApp(kernel, server, router, v5, v6, v7, logger)
 	return app, nil
 }

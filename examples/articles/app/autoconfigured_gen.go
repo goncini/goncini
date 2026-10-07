@@ -17,7 +17,7 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoConfigHTTP, autoConfigLog, autoConfigDB)
+var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoServices, autoConfigHTTP, autoConfigLog, autoConfigDB)
 
 // autoRoutes are the services that have routes, in the order they are provided.
 func autoRoutes(p1 *articles.Articles) []routing.Routes {
@@ -37,6 +37,35 @@ func autoCommands(p1 *articles.SlugCommand, m db.Migrator) []console.Command {
 // autoChecks ping the services that can be pinged, such as the database, before serving.
 func autoChecks(p1 *sql.DB) []goncini.Check {
 	return []goncini.Check{p1.PingContext}
+}
+
+// autoServices describes the app's services, for debug:container.
+func autoServices() []goncini.Service {
+	return []goncini.Service{
+		{Type: "goncini.HTTP", Provider: "autoConfigHTTP", Needs: []string{"config.Config"}},
+		{Type: "db.Config", Provider: "autoConfigDB", Needs: []string{"config.Config"}},
+		{Type: "*sql.DB", Provider: "db.Open", Needs: []string{"db.Config"}},
+		{Type: "*db.SQL", Provider: "db.NewSQL", Needs: []string{"*sql.DB"}},
+		{Type: "*articles.Store", Provider: "articles.NewStore", Needs: []string{"*db.SQL"}},
+		{Type: "func() time.Time", Provider: "clock", Needs: []string{}},
+		{Type: "*articles.Articles", Provider: "articles.NewArticles", Needs: []string{"*articles.Store", "func() time.Time"}},
+		{Type: "[]routing.Routes", Provider: "autoRoutes", Needs: []string{"*articles.Articles"}},
+		{Type: "*routing.Router", Provider: "goncini.NewRouter", Needs: []string{"[]routing.Routes"}},
+		{Type: "[]httpkernel.Middleware", Provider: "goncini.NewMiddleware", Needs: []string{}},
+		{Type: "[]httpkernel.ErrorMapper", Provider: "autoProblems", Needs: []string{}},
+		{Type: "httpkernel.Renderer", Provider: "goncini.NewRenderer", Needs: []string{}},
+		{Type: "httpkernel.Validator", Provider: "goncini.NewValidator", Needs: []string{}},
+		{Type: "goncini.Log", Provider: "autoConfigLog", Needs: []string{"config.Config"}},
+		{Type: "*slog.Logger", Provider: "goncini.NewLogger", Needs: []string{"goncini.Log"}},
+		{Type: "*httpkernel.Kernel", Provider: "goncini.NewKernel", Needs: []string{"goncini.HTTP", "*routing.Router", "[]httpkernel.Middleware", "[]httpkernel.ErrorMapper", "httpkernel.Renderer", "httpkernel.Validator", "*slog.Logger"}},
+		{Type: "*httpkernel.Server", Provider: "goncini.NewServer", Needs: []string{"goncini.HTTP", "*httpkernel.Kernel", "*slog.Logger"}},
+		{Type: "*articles.SlugCommand", Provider: "articles.NewSlugCommand", Needs: []string{"*articles.Articles"}},
+		{Type: "db.Migrator", Provider: "migrator", Needs: []string{"*sql.DB"}},
+		{Type: "[]console.Command", Provider: "autoCommands", Needs: []string{"*articles.SlugCommand", "db.Migrator"}},
+		{Type: "[]goncini.Check", Provider: "autoChecks", Needs: []string{"*sql.DB"}},
+		{Type: "[]goncini.Service", Provider: "autoServices", Needs: []string{}},
+		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger"}},
+	}
 }
 
 // autoConfigHTTP is the HTTP section of the config.

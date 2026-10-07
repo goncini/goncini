@@ -44,16 +44,21 @@ func generate(root, appDir string, checkOnly bool) error {
 		if missing {
 			return fmt.Errorf("%s is missing: run goncini generate", path)
 		}
-		code, err2 := autoconfigure(root, appDir)
+		services, err2 := describe(root, appDir)
 		if err2 != nil {
 			return err2
 		}
 //line generate.ego:44
-		old, err3 := os.ReadFile(path)
+		code, err3 := autoconfigure(root, appDir, services)
 		if err3 != nil {
 			return err3
 		}
 //line generate.ego:45
+		old, err4 := os.ReadFile(path)
+		if err4 != nil {
+			return err4
+		}
+//line generate.ego:46
 		if !bytes.Equal(old, code) {
 			return fmt.Errorf("%s isn't up to date: run goncini generate", path)
 		}
@@ -61,24 +66,41 @@ func generate(root, appDir string, checkOnly bool) error {
 	}
 	if missing {
 		stub := generatedTitle + "package " + filepath.Base(appDir) + "\n\nimport \"" + layerPath + "\"\n\nvar Autoconfigured = layer.Set()\n"
-		if err4 := os.WriteFile(path, []byte(stub), 0o644); err4 != nil {
-			return err4
+		if err5 := os.WriteFile(path, []byte(stub), 0o644); err5 != nil {
+			return err5
 		}
 	}
-//line generate.ego:54
+//line generate.ego:55
 	egoGenerate(root) // the app's layers can't be wired until Autoconfigured is
-	code, err5 := autoconfigure(root, appDir)
-	if err5 != nil {
-		return err5
-	}
-//line generate.ego:56
-	if err6 := os.WriteFile(path, code, 0o644); err6 != nil {
+	code, err6 := autoconfigure(root, appDir, nil)
+	if err6 != nil {
 		return err6
 	}
 //line generate.ego:57
+	if err7 := os.WriteFile(path, code, 0o644); err7 != nil {
+		return err7
+	}
+//line generate.ego:58
 	if out, err := egoGenerate(root); err != nil {
 		return fmt.Errorf("ego generate: %v\n%s", err, out)
 	}
+	// Now that the layers are wired, describe the services they build: the
+	// providers stay the same, so the layers do too.
+	services, err8 := describe(root, appDir)
+	if err8 != nil {
+		return err8
+	}
+//line generate.ego:64
+	v, err9 := autoconfigure(root, appDir, services)
+	if err9 != nil {
+		return err9
+	}
+	code = v
+//line generate.ego:65
+	if err10 := os.WriteFile(path, code, 0o644); err10 != nil {
+		return err10
+	}
+//line generate.ego:66
 	return nil
 }
 
@@ -112,13 +134,14 @@ type app struct {
 	imports  map[string]string   // import path -> name, for the generated file
 }
 
-// autoconfigure returns the generated file of the app.
-func autoconfigure(root, appDir string) ([]byte, error) {
+// autoconfigure returns the generated file of the app, describing
+// services, if the app uses goncini.Service.
+func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 	a, err2 := load(root, appDir)
 	if err2 != nil {
 		return nil, err2
 	}
-//line generate.ego:96
+//line generate.ego:103
 	var b strings.Builder
 	var names []string
 	for _, k := range kinds {
@@ -129,6 +152,18 @@ func autoconfigure(root, appDir string) ([]byte, error) {
 		names = append(names, k.name)
 		params, values := a.collect(k, elem)
 		fmt.Fprintf(&b, "// %s\nfunc %s(%s) []%s {\n\treturn %s\n}\n\n", k.doc, k.name, strings.Join(params, ", "), a.typeString(elem), values)
+	}
+	if svc := a.lookup("goncini.Service"); svc != nil && !a.provides(types.NewSlice(svc)) {
+		names = append(names, "autoServices")
+		fmt.Fprintf(&b, "// autoServices describes the app's services, for debug:container.\nfunc autoServices() []%s {\n\treturn []%s{\n", a.typeString(svc), a.typeString(svc))
+		for _, s := range services {
+			needs := make([]string, len(s.needs))
+			for i, n := range s.needs {
+				needs[i] = strconv.Quote(n)
+			}
+			fmt.Fprintf(&b, "\t\t{Type: %q, Provider: %q, Needs: []string{%s}},\n", s.typ, s.provider, strings.Join(needs, ", "))
+		}
+		b.WriteString("\t}\n}\n\n")
 	}
 	if a.config != nil {
 		st, _ := a.config.Underlying().(*types.Struct)
@@ -167,7 +202,7 @@ func load(root, appDir string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:141
+//line generate.ego:160
 	var errs []error
 	packages.Visit(pkgs, nil, func(p *packages.Package) {
 		for _, e := range p.Errors {
@@ -177,12 +212,12 @@ func load(root, appDir string) (*app, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-//line generate.ego:148
+//line generate.ego:167
 	dir, err := filepath.Abs(filepath.Join(root, appDir))
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:149
+//line generate.ego:168
 	a := &app{all: pkgs, imports: map[string]string{}}
 	for _, p := range pkgs {
 		if len(p.GoFiles) > 0 && filepath.Dir(p.GoFiles[0]) == dir {
@@ -195,7 +230,7 @@ func load(root, appDir string) (*app, error) {
 	if err := a.findProviders(); err != nil {
 		return nil, err
 	}
-//line generate.ego:159
+//line generate.ego:178
 	return a, nil
 }
 
@@ -267,7 +302,7 @@ func isFunc(info *types.Info, x ast.Expr, path, name string) bool {
 
 // ident is the name in x, an identifier or a selector, or nil.
 //
-//line generate.ego:223
+//line generate.ego:242
 func ident(x ast.Expr) *ast.Ident {
 	switch x := x.(type) {
 	case *ast.Ident:
@@ -358,7 +393,7 @@ func (a *app) lookup(name string) types.Type {
 	} else {
 		path = gonciniPath + "/" + pkgName
 	}
-//line generate.ego:308
+//line generate.ego:327
 	var found types.Type
 	packages.Visit(a.all, nil, func(p *packages.Package) {
 		if found == nil && p.PkgPath == path {
@@ -381,14 +416,14 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 	switch k.name {
 	case "autoProblems":
 
-//line generate.ego:329
+//line generate.ego:348
 		for _, v := range a.mappers(elem) {
 			items = append(items, a.qualify(v.Pkg())+"."+v.Name())
 		}
 
 	case "autoChecks":
 
-//line generate.ego:334
+//line generate.ego:353
 		for _, t := range a.provided {
 			if m := pinger(t); m != "" {
 				add(t, "$."+m)
@@ -397,7 +432,7 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 
 	default:
 
-//line generate.ego:341
+//line generate.ego:360
 		iface, _ := elem.Underlying().(*types.Interface)
 		for _, t := range a.provided {
 			if iface != nil && types.Implements(t, iface) && !types.IsInterface(t) {
@@ -420,7 +455,7 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 			return params, v2
 		}
 	}
-//line generate.ego:357
+//line generate.ego:376
 	return params, list
 }
 
@@ -513,4 +548,73 @@ func (a *app) importBlock() string {
 		}
 	}
 	return "import (\n" + strings.Join(groups, "\n\n") + "\n)\n\n"
+}
+
+// service is a service that the app's Build injector builds.
+type service struct {
+	typ, provider string
+	needs         []string
+}
+
+// describe returns the services that the app's injector named Build, or
+// else its first, builds, in order, as ego generate wired them in the
+// layers_ego.go of the app's package; none if the layers aren't wired.
+func describe(root, appDir string) ([]service, error) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
+		Dir:  filepath.Join(root, appDir),
+	}
+	pkgs, err := packages.Load(cfg, ".")
+	if err != nil {
+		return nil, err
+	}
+//line generate.ego:485
+	if len(pkgs) != 1 || len(pkgs[0].Errors) > 0 {
+		return nil, nil
+	}
+	p := pkgs[0]
+	var build *ast.FuncDecl
+	for i, f := range p.Syntax {
+		if filepath.Base(p.CompiledGoFiles[i]) != "layers_ego.go" {
+			continue
+		}
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && (build == nil || fd.Name.Name == "Build") {
+				build = fd
+			}
+		}
+	}
+	if build == nil {
+		return nil, nil
+	}
+	name := func(pkg *types.Package) string {
+		var v string
+		if pkg == p.Types {
+			v = ""
+		} else {
+			v = pkg.Name()
+		}
+		return v
+	}
+//line generate.ego:504
+	var services []service
+	for _, stmt := range build.Body.List {
+		assign, ok := stmt.(*ast.AssignStmt)
+		if !ok || len(assign.Rhs) != 1 {
+			continue
+		}
+		call, ok := assign.Rhs[0].(*ast.CallExpr)
+		lhs, ok2 := assign.Lhs[0].(*ast.Ident)
+		if !ok || !ok2 || p.TypesInfo.Defs[lhs] == nil {
+			continue
+		}
+		s := service{typ: types.TypeString(p.TypesInfo.Defs[lhs].Type(), name), provider: types.ExprString(call.Fun)}
+		for _, arg := range call.Args {
+			if t := p.TypesInfo.TypeOf(arg); t != nil {
+				s.needs = append(s.needs, types.TypeString(t, name))
+			}
+		}
+		services = append(services, s)
+	}
+	return services, nil
 }

@@ -13,6 +13,7 @@ go test ./...
 go run . list                # the app's commands; go run . serves it
 go run . db:migrate          # applies the migrations
 go run . debug:router        # lists the routes
+go run . debug:container     # lists the services, with their providers and what they need
 ```
 
 Edit `.ego` files only, never the generated `_ego.go`, `layers_ego.go` or
