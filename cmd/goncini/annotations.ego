@@ -79,11 +79,10 @@ func (a *app) annotations() string {
 // crawler finds the endpoints of a module, and what their code builds.
 type crawler struct {
 	a       *app
-	decls   map[*types.Func]decl      // the functions of the module's and goncini's packages
-	specs   map[*types.TypeName]tspec // the types of the module's packages
-	sets    []*types.Interface        // the error sets that mappers map
-	problem *types.Interface          // httpkernel.ProblemError
-	memo    map[*types.Func][]*types.Named
+	decls   map[*types.Func]decl       // the functions of the module's and goncini's packages
+	specs   map[*types.TypeName]tspec  // the types of the module's packages
+	sets    []*types.Interface         // the error sets that mappers map
+	problem *types.Interface           // httpkernel.ProblemError
 	module  map[*packages.Package]bool // the module's packages
 }
 
@@ -101,7 +100,7 @@ type tspec struct {
 }
 
 func (a *app) newCrawler() *crawler {
-	x := &crawler{a: a, decls: map[*types.Func]decl{}, specs: map[*types.TypeName]tspec{}, memo: map[*types.Func][]*types.Named{}, module: map[*packages.Package]bool{}}
+	x := &crawler{a: a, decls: map[*types.Func]decl{}, specs: map[*types.TypeName]tspec{}, module: map[*packages.Package]bool{}}
 	for _, p := range a.all {
 		x.module[p] = true
 	}
@@ -213,7 +212,11 @@ func runtimeName(fn *types.Func) string {
 	if isPtr {
 		recv = ptr.Elem()
 	}
-	name := recv.(*types.Named).Obj().Name()
+	named := recv.(*types.Named)
+	name := named.Obj().Name()
+	if named.TypeParams().Len() > 0 || named.TypeArgs().Len() > 0 {
+		name += "[...]" // as the runtime writes a generic type's methods
+	}
 	if isPtr {
 		return fn.Pkg().Path() + ".(*" + name + ")." + fn.Name()
 	}

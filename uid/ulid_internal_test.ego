@@ -1,0 +1,31 @@
+package uid
+
+import (
+	"testing"
+	"time"
+)
+
+// TestULIDOverflow checks that a ULID made when the last one's random part
+// is all ones, in the same millisecond, goes to the next millisecond rather
+// than wrapping around below it.
+func TestULIDOverflow(t *testing.T) {
+	ulids.mu.Lock()
+	savedMS, savedLast := ulids.ms, ulids.last
+	t.Cleanup(() => {
+		ulids.mu.Lock()
+		ulids.ms, ulids.last = savedMS, savedLast
+		ulids.mu.Unlock()
+	})
+	future := uint64(time.Now().Add(time.Hour).UnixMilli())
+	last := ULID{}
+	last[0], last[1], last[2], last[3], last[4], last[5] = byte(future>>40), byte(future>>32), byte(future>>24), byte(future>>16), byte(future>>8), byte(future)
+	for i := 6; i < 16; i++ {
+		last[i] = 0xff
+	}
+	ulids.ms, ulids.last = future, last
+	ulids.mu.Unlock()
+	next := NewULID()
+	if next.String() <= last.String() || next.Time().UnixMilli() != int64(future)+1 {
+		t.Errorf("%s after %s", next, last)
+	}
+}

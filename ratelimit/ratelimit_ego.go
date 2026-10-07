@@ -14,6 +14,7 @@ package ratelimit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -27,7 +28,7 @@ import (
 
 // LimitError is everything a limiter refuses with.
 //
-//line ratelimit.ego:26
+//line ratelimit.ego:28
 type LimitError interface {
 	error
 	isLimitError()
@@ -57,7 +58,7 @@ func (e Exceeded) As(target any) bool {
 
 // Problem is a 429 with a Retry-After header, in whole seconds.
 //
-//line ratelimit.ego:36
+//line ratelimit.ego:38
 func (e Exceeded) Problem() httpkernel.Problem {
 	return httpkernel.Problem{
 		Status: http.StatusTooManyRequests,
@@ -119,8 +120,9 @@ type Policy interface {
 // one to share their limits.
 type Store interface {
 	// Update calls f with the state of key, which it changes, with no other
-	// update of key in between, and keeps the result for ttl.
-	Update(ctx context.Context, key string, ttl time.Duration, f func(*State)) error
+	// update of key in between, and keeps the result for ttl from now, the
+	// limiter's time.
+	Update(ctx context.Context, key string, now time.Time, ttl time.Duration, f func(*State)) error
 }
 
 // Limiter limits how often each key takes tokens.
@@ -139,31 +141,44 @@ type Limiter struct {
 // Take takes n tokens for key, if the policy allows it. A Result that
 // isn't allowed isn't an error: Err makes one.
 func (l *Limiter) Take(ctx context.Context, key string, n int) (Result, error) {
-	v := l.Now
-	if v == nil {
-		v = time.Now
+	if n <= 0 {
+		return Result{}, fmt.Errorf("ratelimit: can't take %d tokens", n)
 	}
-	now := (v)()
-//line ratelimit.ego:118
+	if v, ok := l.Policy.(interface{ valid() error }); ok {
+		if err := v.valid(); err != nil {
+			return Result{}, err
+		}
+	}
+//line ratelimit.ego:126
+	v2 := l.Now
+	if v2 == nil {
+		v2 = time.Now
+	}
+	now := (v2)()
+//line ratelimit.ego:127
 	var res Result
-	err := l.store().Update(ctx, key, l.Policy.TTL(), func(st *State) {
+	err := l.store().Update(ctx, key, now, l.Policy.TTL(), func(st *State) {
 		res = l.Policy.Take(st, n, now)
 	})
-//line ratelimit.ego:120
+//line ratelimit.ego:129
 	return res, err
 }
 
 // Reset forgets key's state: it has its whole limit again, as after a
 // successful login.
 func (l *Limiter) Reset(ctx context.Context, key string) error {
-	return l.store().Update(ctx, key, l.Policy.TTL(), func(st *State) {
+	v := l.Now
+	if v == nil {
+		v = time.Now
+	}
+	return l.store().Update(ctx, key, (v)(), l.Policy.TTL(), func(st *State) {
 		*st = State{}
 	})
 }
 
 // store is the limiter's store.
 //
-//line ratelimit.ego:130
+//line ratelimit.ego:139
 func (l *Limiter) store() Store {
 	if l.Store != nil {
 		return l.Store
@@ -171,7 +186,7 @@ func (l *Limiter) store() Store {
 	l.once.Do(func() {
 		l.mem = &MemoryStore{}
 	})
-//line ratelimit.ego:135
+//line ratelimit.ego:144
 	return l.mem
 }
 
@@ -199,12 +214,14 @@ func (p FixedWindow) Take(st *State, n int, now time.Time) Result {
 			res.RetryAfter = reset
 		}
 	}
-//line ratelimit.ego:158
+//line ratelimit.ego:167
 	res.Remaining = p.Limit - int(st.Count)
 	return res
 }
 
 func (p FixedWindow) TTL() time.Duration { return p.Interval }
+
+func (p FixedWindow) valid() error { return positive("FixedWindow", p.Limit, p.Interval) }
 
 // SlidingWindow allows Limit tokens per Interval, counting the previous
 // window's tokens in proportion to how much of the interval it still
@@ -225,7 +242,7 @@ func (p SlidingWindow) Take(st *State, n int, now time.Time) Result {
 		} else {
 			st.Previous = 0
 		}
-//line ratelimit.ego:179
+//line ratelimit.ego:190
 		st.Count = 0
 		st.Start = st.Start.Add(windows * p.Interval)
 	}
@@ -273,6 +290,8 @@ func (p SlidingWindow) retryAfter(st *State, n float64, elapsed time.Duration) t
 
 func (p SlidingWindow) TTL() time.Duration { return 2 * p.Interval }
 
+func (p SlidingWindow) valid() error { return positive("SlidingWindow", p.Limit, p.Interval) }
+
 // TokenBucket allows bursts of up to Burst tokens, refilled at Rate tokens
 // per Interval.
 type TokenBucket struct {
@@ -307,6 +326,21 @@ func (p TokenBucket) TTL() time.Duration {
 	return p.Interval * time.Duration(p.Burst) / time.Duration(p.Rate)
 }
 
+func (p TokenBucket) valid() error {
+	if p.Rate <= 0 {
+		return errors.New("ratelimit: TokenBucket.Rate must be positive")
+	}
+	return positive("TokenBucket", p.Burst, p.Interval)
+}
+
+// positive checks a policy's limit and interval.
+func positive(policy string, limit int, interval time.Duration) error {
+	if limit <= 0 || interval <= 0 {
+		return fmt.Errorf("ratelimit: %s needs a positive limit and interval", policy)
+	}
+	return nil
+}
+
 // MemoryStore keeps states in memory: the limits of one process. Its zero
 // value is ready.
 type MemoryStore struct {
@@ -322,10 +356,9 @@ type entry struct {
 }
 
 // Update calls f with key's state, under the store's lock.
-func (m *MemoryStore) Update(ctx context.Context, key string, ttl time.Duration, f func(*State)) error {
+func (m *MemoryStore) Update(ctx context.Context, key string, now time.Time, ttl time.Duration, f func(*State)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	now := time.Now()
 	if m.states == nil {
 		m.states = map[string]*entry{}
 	}
@@ -369,9 +402,6 @@ type limited struct {
 
 func (h *limited) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	res, err := h.l.Take(r.Context(), h.key(r), 1)
-	if err == nil {
-		err = res.Err()
-	}
 	if err != nil {
 		httpkernel.WriteError(w, r, err)
 		return
@@ -380,6 +410,10 @@ func (h *limited) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hd.Set("RateLimit-Limit", strconv.Itoa(res.Limit))
 	hd.Set("RateLimit-Remaining", strconv.Itoa(res.Remaining))
 	hd.Set("RateLimit-Reset", strconv.Itoa(seconds(res.Reset)))
+	if err := res.Err(); err != nil {
+		httpkernel.WriteError(w, r, err)
+		return
+	}
 	h.next.ServeHTTP(w, r)
 }
 

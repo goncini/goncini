@@ -218,11 +218,14 @@ func ClientIP(r *http.Request) netip.Addr {
 // such as typed endpoints. It is the zero Addr outside a Kernel, which
 // keeps the request for it.
 func ClientIPOf(ctx context.Context) netip.Addr {
+	if c := clientOf(ctx); c.ip.IsValid() {
+		return c.ip
+	}
 	st := stateOf(ctx)
 	if st?.request == nil {
 		return netip.Addr{}
 	}
-	return ClientIP(st.request)
+	return remoteAddr(st.request)
 }
 
 // Scheme returns "https" or "http": as reported by trusted proxies, or else

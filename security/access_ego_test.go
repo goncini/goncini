@@ -33,6 +33,7 @@ func TestStrategies(t *testing.T) {
 		{security.Access{Voters: []security.Voter{a}, AllowIfAllAbstain: true}, true},
 		{security.Access{Voters: []security.Voter{g, d, d}, Strategy: security.Consensus}, false},
 		{security.Access{Voters: []security.Voter{g, g, d}, Strategy: security.Consensus}, true},
+		{security.Access{Voters: []security.Voter{g, d}, Strategy: security.Consensus}, true}, // a tie
 		{security.Access{Voters: []security.Voter{g, g, d}, Strategy: security.Unanimous}, false},
 		{security.Access{Voters: []security.Voter{g, a}, Strategy: security.Unanimous}, true},
 	} {
@@ -70,7 +71,7 @@ func adminAPI(t *testing.T) *webtest.Client {
 	if err != nil {
 		panic(err)
 	}
-//line access_test.ego:66
+//line access_test.ego:67
 	fw := &security.Firewall[*staff]{
 		Tokens: keys,
 		Load: func(ctx context.Context, name string) (*staff, bool, error) {
@@ -83,7 +84,7 @@ func adminAPI(t *testing.T) *webtest.Client {
 			return &staff{name: name, roles: v}, true, nil
 		},
 	}
-//line access_test.ego:72
+//line access_test.ego:73
 	access := security.NewAccess(security.Config{RoleHierarchy: map[string][]string{"ROLE_ADMIN": {"ROLE_EDITOR"}}}, []security.Voter{
 		security.On(func(ctx context.Context, attribute string, doc document) security.Vote {
 			u, ok := security.User[*staff](ctx)
@@ -96,7 +97,7 @@ func adminAPI(t *testing.T) *webtest.Client {
 			return v
 		}),
 	})
-//line access_test.ego:78
+//line access_test.ego:79
 	ok := httpkernel.Endpoint(func(ctx context.Context, in struct{}) (httpkernel.NoContent, error) {
 		return httpkernel.NoContent{}, nil
 	})
@@ -106,7 +107,7 @@ func adminAPI(t *testing.T) *webtest.Client {
 		if err := access.Check(ctx, "read", document{in.Owner}); err != nil {
 			return httpkernel.NoContent{}, err
 		}
-//line access_test.ego:85
+//line access_test.ego:86
 		return httpkernel.NoContent{}, nil
 	})
 	admin := routing.RoutesFunc(func(r *routing.Router) {
@@ -116,7 +117,7 @@ func adminAPI(t *testing.T) *webtest.Client {
 	public := routing.RoutesFunc(func(r *routing.Router) {
 		r.Get("/public", ok)
 	})
-//line access_test.ego:92
+//line access_test.ego:93
 	router := routing.New(routing.Prefix("/admin", routing.With(fw.Middleware, admin)), public)
 	return webtest.NewClient(t, &httpkernel.Kernel{Handler: router, Logger: slog.New(slog.DiscardHandler)})
 }
@@ -143,12 +144,12 @@ func TestAPIKeys(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line access_test.ego:115
+//line access_test.ego:116
 	sub, err := keys.Verify(annKey)
 	if err != nil {
 		panic(err)
 	}
-//line access_test.ego:116
+//line access_test.ego:117
 	if _, err := keys.Verify(bobKey); sub != "ann" || err == nil {
 		t.Errorf("subject %q, another key: %v", sub, err)
 	}

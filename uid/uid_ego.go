@@ -183,7 +183,7 @@ func NewULID() ULID {
 	defer ulids.mu.Unlock()
 	ms := uint64(time.Now().UnixMilli())
 	var u ULID
-	if ms <= ulids.ms {
+	if ms <= ulids.ms && !maxRandom(ulids.last) {
 		u = ulids.last
 		for i := 15; i >= 6; i-- { // add one to the random part
 			u[i]++
@@ -192,6 +192,9 @@ func NewULID() ULID {
 			}
 		}
 	} else {
+		// A new millisecond, or the next one when this one's random part
+		// can't go up.
+		ms = max(ms, ulids.ms+1)
 		binary.BigEndian.PutUint16(u[0:2], uint16(ms>>32))
 		binary.BigEndian.PutUint32(u[2:6], uint32(ms))
 		rand.Read(u[6:])
@@ -199,6 +202,16 @@ func NewULID() ULID {
 	}
 	ulids.last = u
 	return u
+}
+
+// maxRandom reports whether u's random part is all ones.
+func maxRandom(u ULID) bool {
+	for _, b := range u[6:] {
+		if b != 0xff {
+			return false
+		}
+	}
+	return true
 }
 
 var ulids struct {
@@ -279,7 +292,7 @@ func normalize(c byte) byte {
 
 // MarshalText writes u as String does.
 //
-//line uid.ego:272
+//line uid.ego:285
 func (u ULID) MarshalText() ([]byte, error) { return []byte(u.String()), nil }
 
 // UnmarshalText parses u as ParseULID does.

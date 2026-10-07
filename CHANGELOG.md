@@ -333,6 +333,24 @@ with their providers and what they need, which `debug:container` lists.
 
 ### Found while building
 
+- **M2's review:** three independent reviews found 23 defects in M2's
+  packages, each reproduced, then fixed with a regression test. Among them:
+  - schemas didn't follow json/v2's rules when embedded fields shared a
+    name, and a request body could share a response's component through a
+    nested type whose schemas differed;
+  - two routes that OpenAPI can't tell apart overwrote each other: that is
+    an error now;
+  - `Links` overflowed past the end of a list, and dropped a path's escaping;
+  - CORS responses without an `Origin` lacked `Vary: Origin`, which let
+    shared caches serve them to other origins;
+  - `ClientIPOf` ignored trusted proxies outside endpoints;
+  - RealWorld's login told registered emails from others by its timing,
+    and the articles example lost an article whose slug looked like a UUID.
+
+  What was left, deliberately: `Authorship` checks a moderator's own roles,
+  not the hierarchy, which RealWorld doesn't configure; `Check` can't match
+  a `{path...}` wildcard across segments; page links are relative to the
+  request's path, behind a proxy's prefix too.
 - **M2:** the repository's `.gitignore` ignored `*.test`, Go's test
   binaries, and so the examples' `.env.test` files: CI ran their tests with
   the dev `.env`, on a database file. They are committed now.

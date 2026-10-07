@@ -6,7 +6,7 @@ import (
 	"encoding"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"maps"
+	"fmt"
 	"reflect"
 	"slices"
 	"strconv"
@@ -18,7 +18,7 @@ import (
 // SchemaProvider is a type that gives its own JSON Schema, such as a type
 // with a custom JSON form. Generate calls it on the zero value.
 //
-//line schema.ego:18
+//line schema.ego:17
 type SchemaProvider interface {
 	OpenAPISchema() *Schema
 }
@@ -48,7 +48,7 @@ func (v mode) String() string {
 
 // schemaKey is a named struct type, in a mode: a component.
 //
-//line schema.ego:34
+//line schema.ego:33
 type schemaKey struct {
 	t reflect.Type
 	m mode
@@ -81,14 +81,11 @@ var (
 
 // of returns the schema of t, in mode m.
 func (s *schemas) of(t reflect.Type, m mode) *Schema {
-	if implements(t, schemaProvider) {
-		v := reflect.Zero(t).Interface().(SchemaProvider).OpenAPISchema()
-		if v == nil {
-			v = &Schema{}
-		}
-		own := *(v)
-//line schema.ego:68
-		return &own
+	if t.Kind() == reflect.Pointer {
+		return nullable(s.of(t.Elem(), m))
+	}
+	if own := provided(t); own != nil {
+		return own
 	}
 	if t.PkgPath() == httpkernelPkgPath && strings.HasPrefix(t.Name(), "Optional[") {
 		// httpkernel.Optional[T]: absent, null or a T.
@@ -102,8 +99,6 @@ func (s *schemas) of(t reflect.Type, m mode) *Schema {
 		return &Schema{Type: Types{"string"}, Format: "duration"}
 	case t == jsontextValue:
 		return &Schema{}
-	case t.Kind() == reflect.Pointer:
-		return nullable(s.of(t.Elem(), m))
 	case m == writing && implementsAny(t, jsonMarshalers), m == reading && implementsAny(t, jsonUnmarshalers):
 		return &Schema{} // a JSON form of its own, unknown
 	case m == writing && implements(t, textMarshaler), m == reading && implements(t, textUnmarshaler):
@@ -125,7 +120,7 @@ func (s *schemas) of(t reflect.Type, m mode) *Schema {
 	case reflect.String:
 		return &Schema{Type: Types{"string"}}
 	case reflect.Slice, reflect.Array:
-		if t.Elem().Kind() == reflect.Uint8 && t.Kind() == reflect.Slice {
+		if t.Elem().Kind() == reflect.Uint8 {
 			return &Schema{Type: Types{"string"}, Format: "byte"} // base64
 		}
 		return &Schema{Type: Types{"array"}, Items: s.of(t.Elem(), m)}
@@ -140,11 +135,32 @@ func (s *schemas) of(t reflect.Type, m mode) *Schema {
 	return &Schema{} // an interface: any value
 }
 
+// provided returns the schema that t, or *t, gives as a SchemaProvider, or
+// nil.
+func provided(t reflect.Type) *Schema {
+	var v any
+	switch {
+	case t.Implements(schemaProvider):
+		v = reflect.Zero(t).Interface()
+	case reflect.PointerTo(t).Implements(schemaProvider):
+		v = reflect.New(t).Interface()
+	default:
+		return nil
+	}
+	v2 := v.(SchemaProvider).OpenAPISchema()
+	if v2 == nil {
+		v2 = &Schema{}
+	}
+	own := *(v2)
+//line schema.ego:132
+	return &own
+}
+
 // ref returns a $ref to the component of t, a named struct type, making it
 // first if needed.
 func (s *schemas) ref(t reflect.Type, m mode) *Schema {
 	key := schemaKey{t, m}
-	r := &Schema{Ref: pendingRef} // finish names it
+	r := &Schema{Ref: "?"} // finish names it
 	s.refs[key] = append(s.refs[key], r)
 	if _, ok := s.components[key]; !ok {
 		s.components[key] = nil // being made: recursive types refer to it
@@ -164,7 +180,7 @@ func (s *schemas) object(t reflect.Type, m mode, doc TypeDoc, prefix string) *Sc
 		v = ""
 	}
 	o := &Schema{Type: Types{"object"}, Properties: map[string]*Schema{}, Description: v}
-//line schema.ego:138
+//line schema.ego:153
 	s.fields(o, t, m, doc, prefix)
 	if len(o.Properties) == 0 {
 		o.Properties = nil
@@ -172,9 +188,44 @@ func (s *schemas) object(t reflect.Type, m mode, doc TypeDoc, prefix string) *Sc
 	return o
 }
 
+// member is a JSON member that a struct field gives, before
+// encoding/json/v2's rules choose among those of the same name.
+type member struct {
+	name     string
+	depth    int  // how deep in embedded structs
+	tagged   bool // named by its json tag
+	field    reflect.StructField
+	options  []string
+	doc      TypeDoc
+	prefix   string // of the field's path, for its doc
+	optional bool   // in an embedded pointer, absent when it is nil
+}
+
 // fields adds the members of t's fields to o, as encoding/json/v2 encodes
-// them: embedded structs without a JSON name have their members promoted.
+// them: embedded structs without a JSON name have their members promoted,
+// and of the members with the same name, the shallowest wins, or else the
+// only one tagged with it, or else none.
 func (s *schemas) fields(o *Schema, t reflect.Type, m mode, doc TypeDoc, prefix string) {
+	var all []member
+	s.collect(&all, o, t, m, doc, prefix, 0, false)
+	byName := map[string][]member{}
+	var names []string
+	for _, mb := range all {
+		if byName[mb.name] == nil {
+			names = append(names, mb.name)
+		}
+		byName[mb.name] = append(byName[mb.name], mb)
+	}
+	for _, name := range names {
+		if mb, ok := dominant(byName[name]); ok {
+			s.member(o, mb, m)
+		}
+	}
+}
+
+// collect adds the members of t's fields to all, and the fallback of an
+// embedded map to o.
+func (s *schemas) collect(all *[]member, o *Schema, t reflect.Type, m mode, doc TypeDoc, prefix string, depth int, optional bool) {
 	for i := range t.NumField() {
 		f := t.Field(i)
 		tag := f.Tag.Get("json")
@@ -183,65 +234,88 @@ func (s *schemas) fields(o *Schema, t reflect.Type, m mode, doc TypeDoc, prefix 
 			continue
 		}
 		options := strings.Split(opts, ",")
-		ft := f.Type
 		if slices.Contains(options, "embed") || slices.Contains(options, "inline") || f.Anonymous && name == "" {
-			var elem reflect.Type
-			if ft.Kind() == reflect.Pointer {
-				elem = ft.Elem()
-			} else {
-				elem = ft
+			elem := f.Type
+			if elem.Kind() == reflect.Pointer {
+				elem = elem.Elem()
 			}
-//line schema.ego:159
 			if elem.Kind() == reflect.Map {
 				o.AdditionalProperties = s.of(elem.Elem(), m) // a fallback for any member
 				continue
 			}
 			if elem.Kind() == reflect.Struct {
-				before := len(o.Required)
-				if elem.Name() != "" {
-					s.fields(o, elem, m, s.docs[elem], "")
-				} else {
-					s.fields(o, elem, m, doc, prefix+f.Name+".")
+				inner, innerPrefix := s.docs[elem], ""
+				if elem.Name() == "" {
+					inner, innerPrefix = doc, prefix+f.Name+"."
 				}
-				if ft.Kind() == reflect.Pointer {
-					o.Required = o.Required[:before] // a nil pointer omits them
-				}
+				s.collect(all, o, elem, m, inner, innerPrefix, depth+1, optional || f.Type.Kind() == reflect.Pointer)
 				continue
 			}
 		}
 		if !f.IsExported() {
 			continue
 		}
-		if name == "" {
-			name = f.Name
+		mb := member{name: name, depth: depth, tagged: name != "", field: f, options: options, doc: doc, prefix: prefix, optional: optional}
+		if mb.name == "" {
+			mb.name = f.Name
 		}
-		var p *Schema
-		if ft.Kind() == reflect.Struct && ft.Name() == "" {
-			p = s.object(ft, m, doc, prefix+f.Name+".")
-		} else {
-			p = s.of(ft, m)
+		*all = append(*all, mb)
+	}
+}
+
+// dominant returns the member that json/v2 writes of those with a name.
+func dominant(ms []member) (member, bool) {
+	depth := ms[0].depth
+	for _, mb := range ms {
+		depth = min(depth, mb.depth)
+	}
+	var shallowest, tagged []member
+	for _, mb := range ms {
+		if mb.depth == depth {
+			shallowest = append(shallowest, mb)
+			if mb.tagged {
+				tagged = append(tagged, mb)
+			}
 		}
-		if slices.Contains(options, "string") {
-			p = quoted(p)
-		}
-		required := false
-		if v, ok := f.Tag.Lookup("validate"); ok {
-			required = constrain(p, ft, v)
-		}
-		if m == writing {
-			required = !slices.Contains(options, "omitempty") && !slices.Contains(options, "omitzero")
-		} else if !required {
-			// A struct with required members is required itself: without
-			// it, they are missing.
-			required = len(s.inner(p, ft, m).Required) > 0
-		}
-		if d := doc.Fields[prefix+f.Name]; d != "" {
-			p = described(p, d)
-		}
-		o.Properties[name] = p
-		if required && !slices.Contains(o.Required, name) {
-			o.Required = append(o.Required, name)
-		}
+	}
+	switch {
+	case len(shallowest) == 1:
+		return shallowest[0], true
+	case len(tagged) == 1:
+		return tagged[0], true
+	}
+	return member{}, false
+}
+
+// member adds a member to o.
+func (s *schemas) member(o *Schema, mb member, m mode) {
+	f, ft := mb.field, mb.field.Type
+	var p *Schema
+	if ft.Kind() == reflect.Struct && ft.Name() == "" {
+		p = s.object(ft, m, mb.doc, mb.prefix+f.Name+".")
+	} else {
+		p = s.of(ft, m)
+	}
+	if slices.Contains(mb.options, "string") {
+		p = quoted(p)
+	}
+	required := false
+	if v, ok := f.Tag.Lookup("validate"); ok {
+		required = constrain(p, ft, v)
+	}
+	if m == writing {
+		required = !slices.Contains(mb.options, "omitempty") && !slices.Contains(mb.options, "omitzero")
+	} else if !required {
+		// A struct with required members is required itself: without
+		// it, they are missing.
+		required = len(s.inner(p, ft, m).Required) > 0
+	}
+	if d := mb.doc.Fields[mb.prefix+f.Name]; d != "" {
+		p = described(p, d)
+	}
+	o.Properties[mb.name] = p
+	if required && !mb.optional && !slices.Contains(o.Required, mb.name) {
+		o.Required = append(o.Required, mb.name)
 	}
 }
 
@@ -259,7 +333,7 @@ func (s *schemas) inner(p *Schema, t reflect.Type, m mode) *Schema {
 		}
 		return v
 	}
-//line schema.ego:222
+//line schema.ego:301
 	return p
 }
 
@@ -267,8 +341,7 @@ func (s *schemas) inner(p *Schema, t reflect.Type, m mode) *Schema {
 // by the json tag's string option.
 func quoted(p *Schema) *Schema {
 	if p.Type.Is("integer") || p.Type.Is("number") || p.Type.Is("boolean") {
-		q := *p
-		q.Type = Types{"string"}
+		q := Schema{Type: Types{"string"}, Description: p.Description}
 		if p.Type.Is("null") {
 			q.Type = append(q.Type, "null")
 		}
@@ -298,9 +371,6 @@ func nullable(p *Schema) *Schema {
 	return p
 }
 
-// pendingRef is the $ref of a component until finish names it.
-const pendingRef = "#/components/schemas/?"
-
 // implements reports whether t or *t implements the interface.
 func implements(t, iface reflect.Type) bool {
 	return t.Implements(iface) || t.Kind() != reflect.Pointer && reflect.PointerTo(t).Implements(iface)
@@ -311,10 +381,11 @@ func implementsAny(t reflect.Type, ifaces []reflect.Type) bool {
 	return slices.ContainsFunc(ifaces, func(i reflect.Type) bool { return implements(t, i) })
 }
 
-// components names the components and fills in the $refs to them. A type
-// is named as Go does, with its package's name before it if another type
-// has the same name, and Input after it for its reading schema if its
-// writing schema differs.
+// finish names the components and fills in the $refs to them. A type is
+// named as Go does, with its package's name before it if another type has
+// the same name. Its reading schema shares its writing schema's component
+// when they are the same, refs included; or else it is named with Input
+// after it. A name taken already gets a number after it.
 func (s *schemas) finish() map[string]*Schema {
 	if len(s.order) == 0 {
 		return nil
@@ -328,48 +399,112 @@ func (s *schemas) finish() map[string]*Schema {
 			byBase[b] = append(byBase[b], k.t)
 		}
 	}
-	named := map[reflect.Type]string{}
+	base := map[reflect.Type]string{}
 	for b, ts := range byBase {
 		for _, t := range ts {
 			if len(ts) == 1 {
-				named[t] = b
+				base[t] = b
 			} else {
-				named[t] = exported(packageName(t)) + b
+				base[t] = exported(packageName(t)) + b
 			}
 		}
 	}
-//line schema.ego:296
-	out := map[string]*Schema{}
+	// Refs hold markers of their keys until the names are known.
+//line schema.ego:373
+	index := map[schemaKey]int{}
+	for i, k := range s.order {
+		index[k] = i
+		for _, r := range s.refs[k] {
+			r.Ref = fmt.Sprintf("#/components/schemas/\x00%d\x00", i)
+		}
+	}
+	// A type's two schemas share a component if they are the same once the
+	// refs to types whose schemas share theirs are written the same:
+	// assume all do, then split those that differ, until none does.
+	shared := map[reflect.Type]bool{}
 	for _, k := range s.order {
-		name := named[k.t]
+		if _, both := s.components[schemaKey{k.t, writing}]; both && k.m == reading {
+			shared[k.t] = true
+		}
+	}
+	label := func(k schemaKey) string {
+		var v string
+		if shared[k.t] {
+			v = fmt.Sprintf("%s", base[k.t])
+		} else {
+			v = fmt.Sprintf("%s/%v", base[k.t], k.m)
+		}
+		return v
+	}
+//line schema.ego:390
+	render := func(sch *Schema) string { return s.render(sch, label) }
+	for changed := true; changed; {
+		changed = false
+		for t := range shared {
+			if render(s.components[schemaKey{t, reading}]) != render(s.components[schemaKey{t, writing}]) {
+				delete(shared, t)
+				changed = true
+			}
+		}
+	}
+	names := map[schemaKey]string{}
+	out := map[string]*Schema{}
+	// Types' own names first, then those with Input.
+	keys := slices.Clone(s.order)
+	slices.SortStableFunc(keys, func(a, b schemaKey) int {
+		var v int
+		if a.m == b.m {
+			v = 0
+		} else if a.m == writing {
+			v = -1
+		} else {
+			v = 1
+		}
+		return v
+	})
+//line schema.ego:405
+	for _, k := range keys {
+		if k.m == reading && shared[k.t] {
+			continue
+		}
+		name := base[k.t]
 		if k.m == reading {
-			if w, ok := s.components[schemaKey{k.t, writing}]; ok {
-				if same(w, s.components[k]) {
-					s.point(k, name)
-					continue
-				}
+			if _, both := s.components[schemaKey{k.t, writing}]; both {
 				name += "Input"
 			}
 		}
-		out[name] = s.components[k]
-		s.point(k, name)
+		unique := name
+		for n := 2; out[unique] != nil; n++ {
+			unique = name + strconv.Itoa(n)
+		}
+		out[unique] = s.components[k]
+		names[k] = unique
+	}
+	for k, i := range index {
+		name, ok := names[k]
+		if !ok {
+			name = names[schemaKey{k.t, writing}]
+		}
+//line schema.ego:424
+		marker := fmt.Sprintf("#/components/schemas/\x00%d\x00", i)
+		for _, r := range s.refs[k] {
+			if r.Ref == marker {
+				r.Ref = "#/components/schemas/" + name
+			}
+		}
 	}
 	return out
 }
 
-// point fills in the $refs to the component of k.
-func (s *schemas) point(k schemaKey, name string) {
-	for _, r := range s.refs[k] {
-		r.Ref = "#/components/schemas/" + name
+// render writes sch as JSON, with each ref's marker replaced by the label
+// of its key, to compare schemas.
+func (s *schemas) render(sch *Schema, label func(schemaKey) string) string {
+	b, _ := json.Marshal(sch, json.Deterministic(true))
+	text := string(b)
+	for i, k := range s.order {
+		text = strings.ReplaceAll(text, fmt.Sprintf("\\u0000%d\\u0000", i), label(k))
 	}
-}
-
-// same reports whether two schemas are written the same. $refs that aren't
-// filled in yet count as equal.
-func same(a, b *Schema) bool {
-	ja, _ := json.Marshal(a, json.Deterministic(true))
-	jb, _ := json.Marshal(b, json.Deterministic(true))
-	return string(ja) == string(jb)
+	return text
 }
 
 // baseName is the name of a type, with the type arguments of a generic one
@@ -390,8 +525,12 @@ func baseName(t reflect.Type) string {
 
 // packageName is the name of t's package: the last element of its path.
 func packageName(t reflect.Type) string {
-	p := t.PkgPath()
-	return p[strings.LastIndexByte(p, '/')+1:]
+	parts := strings.Split(t.PkgPath(), "/")
+	last := parts[len(parts)-1]
+	if len(parts) > 1 && len(last) > 1 && last[0] == 'v' && strings.Trim(last[1:], "0123456789") == "" {
+		last = parts[len(parts)-2] // a major version: example.com/api/v2
+	}
+	return last
 }
 
 // exported returns s with its first letter upper case.
@@ -408,6 +547,27 @@ func exported(s string) string {
 func constrain(p *Schema, t reflect.Type, tag string) bool {
 	required := false
 	rules := strings.Split(tag, ",")
+	// With omitempty, the zero value passes every rule: only the upper
+	// bounds hold for all values.
+	empty := slices.Contains(rules[:slices.Index(append(rules, "dive"), "dive")], "omitempty")
+	if empty {
+		defer func() {
+			p.MinLength, p.MinItems, p.Minimum, p.ExclusiveMinimum = nil, nil, nil, nil
+			p.Pattern, p.Format = "", ""
+			if p.Enum != nil {
+				elem := t
+				for elem.Kind() == reflect.Pointer {
+					elem = elem.Elem()
+				}
+				p.Enum = append(p.Enum, reflect.Zero(elem).Interface())
+			}
+		}()
+	}
+	defer func() {
+		if p.Enum != nil && p.Type.Is("null") {
+			p.Enum = append(p.Enum, nil)
+		}
+	}()
 	for i, rule := range rules {
 		if rule == "dive" {
 			if items := itemsOf(p); items != nil && (t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map) {
@@ -489,7 +649,7 @@ func limit(p *Schema, t reflect.Type, param string, upper, inclusive bool) {
 				count = count + 1
 			}
 		}
-//line schema.ego:442
+//line schema.ego:583
 		if t.Kind() == reflect.String {
 			if upper {
 				p.MaxLength = &count
@@ -573,9 +733,4 @@ func jsonValue(t reflect.Type, s string) any {
 		}
 	}
 	return s
-}
-
-// sortedKeys returns the keys of m, sorted.
-func sortedKeys[V any](m map[string]V) []string {
-	return slices.Sorted(maps.Keys(m))
 }

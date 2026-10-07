@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,7 +23,7 @@ import (
 // Config is the part of a document that the code doesn't say, and where it
 // is served.
 //
-//line generate.ego:22
+//line generate.ego:23
 type Config struct {
 	// Title names the API; empty means "API".
 	Title string
@@ -120,6 +121,7 @@ func Generate(routes []routing.Info, k *httpkernel.Kernel, c Config, a Annotatio
 		a:       a,
 		schemas: newSchemas(a.Types),
 		ids:     map[string]string{},
+		shapes:  map[string]string{},
 	}
 	if g.doc.Info.Title == "" {
 		g.doc.Info.Title = "API"
@@ -132,7 +134,7 @@ func Generate(routes []routing.Info, k *httpkernel.Kernel, c Config, a Annotatio
 			return nil, err2
 		}
 	}
-//line generate.ego:129
+//line generate.ego:131
 	g.doc.Components.Schemas = g.schemas.finish()
 	for _, name := range g.tags {
 		g.doc.Tags = append(g.doc.Tags, Tag{Name: name})
@@ -148,6 +150,7 @@ type generator struct {
 	schemas *schemas
 	tags    []string
 	ids     map[string]string // operation IDs, to the routes that have them
+	shapes  map[string]string // methods and paths without wildcard names, to the routes
 }
 
 // route adds the operation of r, if it is one.
@@ -158,15 +161,21 @@ func (g *generator) route(r routing.Info) error {
 		return nil
 	}
 	path := pathOf(r.Path)
+	if (&PathItem{}).Operation(r.Method) == nil {
+		return nil // a method OpenAPI can't describe, such as CONNECT
+	}
+	// OpenAPI tells paths apart by their literal segments only.
+	shape := r.Method + " " + wildcards.ReplaceAllString(path, "{}")
+	if other, taken := g.shapes[shape]; taken {
+		return fmt.Errorf("openapi: %s %s and %s are the same operation for OpenAPI, which can't tell routes apart by their requirements: give them different paths", r.Method, r.Path, other)
+	}
+	g.shapes[shape] = r.Method + " " + r.Path
 	item := g.doc.Paths[path]
 	if item == nil {
 		item = &PathItem{}
 		g.doc.Paths[path] = item
 	}
 	field := item.Operation(r.Method)
-	if field == nil {
-		return nil // a method OpenAPI can't describe, such as CONNECT
-	}
 	op := &Op{Operation: &Operation{Responses: map[string]*Response{}}, Method: r.Method, Path: path, doc: g.doc}
 	if isEndpoint {
 		g.endpoint(op, d, r)
@@ -188,7 +197,7 @@ func (g *generator) route(r routing.Info) error {
 	for _, mw := range v {
 		mws = append(mws, mw)
 	}
-//line generate.ego:180
+//line generate.ego:189
 	mws = append(mws, r.Middleware...)
 	for _, mw := range mws {
 		if h, ok := mw(noop).(Describer); ok {
@@ -201,10 +210,16 @@ func (g *generator) route(r routing.Info) error {
 	if err := g.errors(op); err != nil {
 		return err
 	}
-//line generate.ego:190
+//line generate.ego:199
+	if len(op.Responses) == 0 {
+		op.Responses["default"] = &Response{Description: "The response"}
+	}
 	*field = op.Operation
 	return nil
 }
+
+// wildcards matches the wildcards of a path.
+var wildcards = regexp.MustCompile(`\{[^}]*\}`)
 
 // noop is the handler that middleware wraps, to describe what it returns.
 var noop = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
@@ -233,7 +248,8 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 	inDoc := g.a.Types[d.Input]
 	var paramViolation *httpkernel.Violation
 	for _, p := range d.Params {
-		param := &Parameter{Name: p.Name, In: p.In, Required: p.Required, Description: g.fieldDoc(d.Input, p.Field.Name), Schema: g.paramSchema(p)}
+		schema, required := g.paramSchema(p)
+		param := &Parameter{Name: p.Name, In: p.In, Required: p.Required || required, Description: g.fieldDoc(d.Input, p.Field.Name), Schema: schema}
 		if req, ok := r.Requirements[p.Name]; ok && p.In == "path" && param.Schema.Type.Is("string") {
 			param.Schema.Pattern = "^(?:" + req + ")$"
 		}
@@ -294,7 +310,7 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 	if v2 {
 		op.Errors = append(op.Errors, httpkernel.Invalid(invalid))
 	}
-//line generate.ego:270
+//line generate.ego:286
 	op.Errors = append(op.Errors, doc.Errors...)
 	res := &Response{Description: http.StatusText(d.Status)}
 	if d.Result != nil {
@@ -325,27 +341,28 @@ func (g *generator) fieldDoc(t reflect.Type, name string) string {
 // has its package's name, exported, as its receiver's.
 func splitFunc(name string) (recv, method string) {
 	name = name[strings.LastIndexByte(name, '/')+1:]
+	if i := strings.IndexByte(name, '['); i >= 0 {
+		name = name[:i] + name[strings.LastIndexByte(name, ']')+1:] // a generic receiver's type arguments
+	}
 	parts := strings.Split(name, ".")
 	method = exported(parts[len(parts)-1])
 	if len(parts) >= 3 {
-		recv = strings.Trim(parts[1], "(*)")
-		if i := strings.IndexByte(recv, '['); i >= 0 {
-			recv = recv[:i]
-		}
-		return recv, method
+		return strings.Trim(parts[len(parts)-2], "(*)"), method
 	}
 	return exported(parts[0]), method
 }
 
-// paramSchema is the schema of a parameter's values.
-func (g *generator) paramSchema(p httpkernel.ParamDescription) *Schema {
+// paramSchema is the schema of a parameter's values, and whether its
+// validate tag requires it.
+func (g *generator) paramSchema(p httpkernel.ParamDescription) (*Schema, bool) {
 	t := p.Field.Type
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	s := g.schemas.of(t, reading)
+	required := false
 	if v := p.Field.Tag.Get("validate"); v != "" {
-		constrain(s, t, v)
+		required = constrain(s, t, v)
 	}
 	if p.Enum != nil {
 		var target *Schema
@@ -354,7 +371,7 @@ func (g *generator) paramSchema(p httpkernel.ParamDescription) *Schema {
 		} else {
 			target = s
 		}
-//line generate.ego:324
+//line generate.ego:341
 		target.Enum = enumValues(t, p.Enum)
 	}
 	if p.Default != nil {
@@ -364,7 +381,7 @@ func (g *generator) paramSchema(p httpkernel.ParamDescription) *Schema {
 			s.Default = jsonValue(t, p.Default[0])
 		}
 	}
-	return s
+	return s, required
 }
 
 // canFail reports whether a parameter can be invalid: required, limited to
@@ -427,7 +444,7 @@ func (g *generator) errors(op *Op) (err error) {
 	} else {
 		render = httpkernel.RenderProblem
 	}
-//line generate.ego:391
+//line generate.ego:408
 	req := httptest.NewRequest(op.Method, "/", nil)
 	for _, e := range op.Errors {
 		rec := &recorder{header: http.Header{}}
@@ -443,7 +460,7 @@ func (g *generator) errors(op *Op) (err error) {
 		if err != nil {
 			return err
 		}
-//line generate.ego:404
+//line generate.ego:421
 		status := strconv.Itoa(rec.status)
 		res := op.Responses[status]
 		if res == nil {
@@ -460,10 +477,10 @@ func (g *generator) errors(op *Op) (err error) {
 		mt := res.Content[mediaType]
 		if mt == nil {
 			mt = &MediaType{}
-			if rec.value != nil {
-				mt.Schema = g.schemas.of(reflect.TypeOf(rec.value), writing)
-			}
 			res.Content[mediaType] = mt
+		}
+		if mt.Schema == nil && rec.value != nil {
+			mt.Schema = g.schemas.of(reflect.TypeOf(rec.value), writing)
 		}
 		if v := jsontext.Value(rec.body.Bytes()); v.IsValid() {
 			if mt.Examples == nil {

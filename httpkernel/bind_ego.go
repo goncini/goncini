@@ -113,9 +113,16 @@ func mustNotHide(in, t reflect.Type, index []int) {
 	for i := range t.NumField() {
 		f := t.Field(i)
 		at := append(slices.Clone(index), i)
-		if f.Anonymous && f.Type.Kind() == reflect.Struct {
-			mustNotHide(in, f.Type, at)
+		if ft := f.Type; f.Anonymous && (ft.Kind() == reflect.Struct || ft.Kind() == reflect.Pointer && ft.Elem().Kind() == reflect.Struct) {
+			var v reflect.Type
+			if ft.Kind() == reflect.Pointer {
+				v = ft.Elem()
+			} else {
+				v = ft
+			}
+			mustNotHide(in, v, at)
 		}
+//line bind.ego:109
 		if len(at) == 1 || !hasSourceTag(f) {
 			continue
 		}

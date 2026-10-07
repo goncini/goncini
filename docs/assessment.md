@@ -227,6 +227,18 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 6. Voters, and firewalls per route group.
 7. Uid; pagination and filtering helpers.
 
+### 4.2 Milestone 3
+
+**Gates** (proposed 2026-10-07, making the user's "killing a worker mid-message loses nothing; SIGTERM drains within the deadline" testable):
+
+1. **A killed worker loses nothing.** A test sends 100 messages to the SQL transport and runs `messenger:consume` as a separate process; it kills the worker with SIGKILL while a handler is running, then starts another. Every message is handled to completion, the one interrupted again after its lease runs out (at least once), and the transport ends empty.
+2. **SIGTERM drains within the deadline.** A worker sent SIGTERM mid-message takes no new message, finishes the one it has, and exits 0 before its shutdown timeout; a handler that outlives the timeout is cancelled, and its message goes back to the transport, not lost.
+3. **Failures are retried, then kept.** Under `testing/synctest`, a failing handler is retried on its schedule (exponential backoff), and after its last attempt the message lands in the failure transport, from which `messenger:failed:retry` sends it again.
+4. **One instance runs each task.** Two app instances sharing a database run a scheduled task each period, and the lock lets exactly one of them run it each time.
+5. **RealWorld uses them:** publishing an article dispatches an event, whose subscribers send a message that a worker handles, outside the request.
+
+**Order of work:** `event` (typed events, subscribers collected by `goncini generate`, kernel events); `lock` (memory and SQL); `messenger` (bus, handlers, memory and SQL transports, retries, the failure transport, `messenger:consume`); `scheduler`; then the gates.
+
 ## 5. Risks
 
 - **Tooling, once `goncini generate` comes.** Generation runs twice around `ego generate`, and stale generated files are the classic failure. If it's clumsy, ask effect-go for a hook between lowering and layer wiring; its maintainer session has offered to fix what a framework genuinely needs.

@@ -140,6 +140,17 @@ func TestBaseURL(t *testing.T) {
 	if base := httpkernel.BaseURL(context.Background()); base != "" {
 		t.Errorf("BaseURL outside a kernel = %q", base)
 	}
+	// A plain handler, behind the proxies' middleware.
+	plain := &httpkernel.Kernel{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip = httpkernel.ClientIPOf(r.Context())
+		}),
+		Middleware: []httpkernel.Middleware{proxies.Middleware},
+	}
+	plain.ServeHTTP(httptest.NewRecorder(), proxied)
+	if ip.String() != "198.51.100.9" {
+		t.Errorf("ClientIPOf in a plain handler = %v", ip)
+	}
 	if ip := httpkernel.ClientIPOf(context.Background()); ip.IsValid() {
 		t.Errorf("ClientIPOf outside a kernel = %v", ip)
 	}
@@ -150,7 +161,7 @@ func TestProxiesIPv4MappedRange(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line proxy_test.ego:139
+//line proxy_test.ego:150
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "[::ffff:10.0.0.5]:80"
 	r.Header.Set("X-Forwarded-For", "198.51.100.9")
@@ -168,7 +179,7 @@ func TestPrivateProxies(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line proxy_test.ego:153
+//line proxy_test.ego:164
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "[::ffff:172.17.0.2]:5000" // Docker's bridge, as IPv4-mapped IPv6
 	r.Header.Set("X-Forwarded-For", "198.51.100.9")

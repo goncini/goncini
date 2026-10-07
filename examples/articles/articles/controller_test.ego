@@ -48,8 +48,9 @@ func TestArticlesAPI(t *testing.T) {
 	}
 	c.Get("/articles/nope").Problem(404).HasDetail("no article nope")
 
-	c.Get("/articles/" + hello.ID.String()).Status(200).Contains(`"slug":"hello-world"`)
-	c.Get("/articles/" + uid.NewV7().String()).Problem(404)
+	c.Get("/articles/by-id/" + hello.ID.String()).Status(200).Contains(`"slug":"hello-world"`)
+	c.Get("/articles/by-id/" + strings.ToUpper(hello.ID.String())).Status(200)
+	c.Get("/articles/by-id/" + uid.NewV7().String()).Problem(404)
 
 	var list listing.Page[articles.Article]
 	c.Get("/articles").Status(200).JSON(&list)
@@ -90,7 +91,7 @@ func TestCreatedLocation(t *testing.T) {
 func TestRoutes(t *testing.T) {
 	var b strings.Builder
 	must routing.WriteTable(&b, boot(t).Router.List())
-	byID := "/articles/{id<" + routing.UUID + ">}"
+	byID := "/articles/by-id/{id<" + routing.UUID + ">}"
 	line := (name, method, path, handler string) => fmt.Sprintf("%-20s%-8s%-*s%s\n", name, method, len(byID)+2, path, handler)
 	want := line("NAME", "METHOD", "PATH", "HANDLER") +
 		line("article_list", "GET", "/articles", "articles.(*Articles).List") +

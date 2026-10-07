@@ -29,6 +29,7 @@ func TestStrategies(t *testing.T) {
 		{security.Access{Voters: []security.Voter{a}, AllowIfAllAbstain: true}, true},
 		{security.Access{Voters: []security.Voter{g, d, d}, Strategy: security.Consensus}, false},
 		{security.Access{Voters: []security.Voter{g, g, d}, Strategy: security.Consensus}, true},
+		{security.Access{Voters: []security.Voter{g, d}, Strategy: security.Consensus}, true}, // a tie
 		{security.Access{Voters: []security.Voter{g, g, d}, Strategy: security.Unanimous}, false},
 		{security.Access{Voters: []security.Voter{g, a}, Strategy: security.Unanimous}, true},
 	} {

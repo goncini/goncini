@@ -15,7 +15,7 @@ import (
 // which httpkernel.Endpoint serves.
 func (a *Articles) Routes(r *routing.Router) {
 	r.Get("/articles", httpkernel.Endpoint(a.List)).Name("article_list")
-	r.Get("/articles/{id}", httpkernel.Endpoint(a.ShowByID)).Name("article_show_by_id").Require("id", routing.UUID)
+	r.Get("/articles/by-id/{id}", httpkernel.Endpoint(a.ShowByID)).Name("article_show_by_id").Require("id", routing.UUID)
 	a.show = r.Get("/articles/{slug}", httpkernel.Endpoint(a.Show)).Name("article_show")
 	r.Post("/articles", httpkernel.Endpoint(a.Create)).Name("article_create")
 }

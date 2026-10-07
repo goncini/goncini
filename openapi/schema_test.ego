@@ -1,0 +1,175 @@
+package openapi_test
+
+import (
+	"context"
+	"encoding/json/v2"
+	"maps"
+	"net/http"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/openapi"
+	"github.com/goncini/goncini/routing"
+)
+
+// document returns the document of one endpoint taking In and returning
+// Out, at GET /.
+func document[In, Out any](t *testing.T) *openapi.Document {
+	t.Helper()
+	r := routing.New()
+	r.Get("/", httpkernel.Endpoint(func(ctx context.Context, in In) (Out, error) {
+		var out Out
+		return out, nil
+	}))
+	doc := must openapi.Generate(r.List(), nil, openapi.Config{}, openapi.Annotations{})
+	return doc
+}
+
+// encoded is a schema as JSON, to compare.
+func encoded(s *openapi.Schema) string {
+	b := must json.Marshal(s, json.Deterministic(true))
+	return string(b)
+}
+
+// byValue and byPointer give their schemas with value and pointer methods.
+type byValue struct{}
+
+func (byValue) OpenAPISchema() *openapi.Schema { return &openapi.Schema{Format: "value"} }
+
+type byPointer struct{}
+
+func (*byPointer) OpenAPISchema() *openapi.Schema { return &openapi.Schema{Format: "pointer"} }
+
+type providers struct {
+	A *byValue  `json:"a"`
+	B byPointer `json:"b"`
+}
+
+type base struct {
+	Name int `json:"name"`
+	X    string
+}
+
+type other struct {
+	X string
+}
+
+// dominance has members that json/v2 chooses among.
+type dominance struct {
+	Name string `json:"name"` // shallower than base's: wins
+	base
+	other         // with base, two X at the same depth: neither
+	Bytes [4]byte `json:"bytes"`
+}
+
+func TestSchemas(t *testing.T) {
+	doc := document[struct{}, providers](t)
+	p := doc.Components.Schemas["providers"].Properties
+	if encoded(p["a"]) != `{"format":"value"}` || encoded(p["b"]) != `{"format":"pointer"}` {
+		t.Errorf("providers: %s, %s", encoded(p["a"]), encoded(p["b"]))
+	}
+	doc = document[struct{}, dominance](t)
+	d := doc.Components.Schemas["dominance"]
+	if got := encoded(d); got != `{"type":"object","properties":{"bytes":{"type":"string","format":"byte"},"name":{"type":"string"}},"required":["name","bytes"]}` {
+		t.Errorf("dominance: %s", got)
+	}
+}
+
+type inner struct {
+	Name string `json:"name,omitempty" validate:"required"`
+}
+
+type outer struct {
+	In inner `json:"in"`
+}
+
+// item's reading and writing schemas differ; itemInput is named as item's
+// reading one would be.
+type item struct {
+	ID string `json:"id"`
+}
+
+type itemInput struct {
+	Other string `json:"other"`
+}
+
+type both struct {
+	Outer outer     `json:"outer"`
+	Item  item      `json:"item"`
+	Input itemInput `json:"input"`
+}
+
+// TestReadingAndWriting checks that a type whose two schemas differ, even
+// only through a type it holds, gets an Input component, and that names
+// don't collide.
+func TestReadingAndWriting(t *testing.T) {
+	doc := document[struct{ Body both }, both](t)
+	s := doc.Components.Schemas
+	body := doc.Paths["/"].Get.RequestBody.Content["application/json"].Schema
+	if got := s["bothInput"].Properties["outer"].Ref; body.Ref != "#/components/schemas/bothInput" || got != "#/components/schemas/outerInput" {
+		t.Errorf("body %s, its outer %s", body.Ref, got)
+	}
+	if got := encoded(s["innerInput"]); got != `{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}` {
+		t.Errorf("innerInput: %s", got)
+	}
+	if s["itemInput"] == nil || s["itemInput2"] == nil || s["itemInput"].Properties["other"] == nil {
+		t.Errorf("components: %v", strings.Join(slices.Sorted(maps.Keys(s)), " "))
+	}
+}
+
+type optionals struct {
+	Kind  *string `query:"kind" validate:"omitempty,oneof=a b"`
+	Code  string  `query:"code" validate:"omitempty,min=3,max=5"`
+	Query string  `query:"q" validate:"required"`
+}
+
+func TestOptionalRules(t *testing.T) {
+	doc := document[optionals, struct{}](t)
+	params := map[string]*openapi.Parameter{}
+	for _, p := range doc.Paths["/"].Get.Parameters {
+		params[p.Name] = p
+	}
+	if got := encoded(params["kind"].Schema); got != `{"type":"string","enum":["a","b",""]}` {
+		t.Errorf("kind: %s", got)
+	}
+	if got := encoded(params["code"].Schema); got != `{"type":"string","maxLength":5}` {
+		t.Errorf("code: %s", got)
+	}
+	if !params["q"].Required {
+		t.Error("q isn't required")
+	}
+}
+
+// TestSameOperations checks that routes that OpenAPI can't tell apart are
+// an error, not one hiding the other.
+func TestSameOperations(t *testing.T) {
+	h := httpkernel.Endpoint(func(ctx context.Context, in struct{}) (struct{}, error) { return struct{}{}, nil })
+	r := routing.New()
+	r.Get("/items/{id<\\d+>}", h).Name("by_id")
+	r.Get("/items/{slug}", h).Name("by_slug")
+	_, err := openapi.Generate(r.List(), nil, openapi.Config{}, openapi.Annotations{})
+	if err == nil || !strings.Contains(err.Error(), "are the same operation for OpenAPI") {
+		t.Errorf("%v", err)
+	}
+}
+
+// TestCheckRefsAndEscapes checks requests to escaped paths, and request
+// bodies that are components.
+func TestCheckRefsAndEscapes(t *testing.T) {
+	doc := &openapi.Document{
+		Paths: map[string]*openapi.PathItem{"/a b/{id}": {Post: &openapi.Operation{
+			RequestBody: &openapi.RequestBody{Ref: "#/components/requestBodies/Note"},
+			Responses:   map[string]*openapi.Response{"204": {}},
+		}}},
+		Components: openapi.Components{RequestBodies: map[string]*openapi.RequestBody{"Note": {
+			Required: true,
+			Content:  map[string]*openapi.MediaType{"application/json": {Schema: &openapi.Schema{Type: openapi.Types{"object"}, Required: []string{"title"}}}},
+		}}},
+	}
+	err := doc.Check(openapi.Exchange{Method: http.MethodPost, Path: "/a%20b/1", RequestType: "application/json", RequestBody: []byte(`{}`), Status: 204, Header: http.Header{}})
+	if err == nil || !strings.Contains(err.Error(), `the required member "title" is missing`) {
+		t.Errorf("%v", err)
+	}
+}

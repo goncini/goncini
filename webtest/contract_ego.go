@@ -26,8 +26,11 @@ func Contract(t testing.TB, doc *openapi.Document, h http.Handler) http.Handler 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var reqBody []byte
 		if r.Body != nil && r.Body != http.NoBody {
-			reqBody, _ = io.ReadAll(r.Body)
-			r.Body = io.NopCloser(bytes.NewReader(reqBody))
+			var err error
+			reqBody, err = io.ReadAll(r.Body)
+			// The app reads what the client sent, then the error reading it
+			// failed with, if any.
+			r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(reqBody), failing{err}))
 		}
 		tw := &teeWriter{ResponseWriter: w}
 		h.ServeHTTP(tw, r)
@@ -46,7 +49,20 @@ func Contract(t testing.TB, doc *openapi.Document, h http.Handler) http.Handler 
 	})
 }
 
+// failing is a reader that fails with err, or ends if it is nil.
+type failing struct{ err error }
+
+func (f failing) Read([]byte) (int, error) {
+	v := f.err
+	if v == nil {
+		v = io.EOF
+	}
+	return 0, v
+}
+
 // teeWriter writes a response, and keeps its status and body.
+//
+//line contract.ego:54
 type teeWriter struct {
 	http.ResponseWriter
 	status int
@@ -54,10 +70,16 @@ type teeWriter struct {
 }
 
 func (w *teeWriter) WriteHeader(status int) {
-	if w.status == 0 {
+	if w.status == 0 && status >= 200 { // not an informational 1xx
 		w.status = status
 	}
 	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *teeWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func (w *teeWriter) Write(b []byte) (int, error) {

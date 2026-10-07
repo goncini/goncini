@@ -9,6 +9,7 @@ import (
 	"math"
 	"mime"
 	"net/http"
+	"net/url"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -20,7 +21,7 @@ import (
 
 // Exchange is a request and its response, for Check.
 //
-//line check.ego:20
+//line check.ego:21
 type Exchange struct {
 	Method string
 	// Path is the request's path, escaped as in the request line.
@@ -44,12 +45,12 @@ func (d *Document) Check(x Exchange) error {
 	}
 	what := fmt.Sprintf("%s %s", x.Method, template)
 	var errs []error
-	if x.Status >= 200 && x.Status < 300 && op.RequestBody != nil {
+	if rb := d.requestBody(op.RequestBody); x.Status >= 200 && x.Status < 300 && rb != nil {
 		if len(x.RequestBody) == 0 {
-			if op.RequestBody.Required {
+			if rb.Required {
 				errs = append(errs, errors.New(fmt.Sprintf("%s: the request has no body, which the document requires", what)))
 			}
-		} else if err := d.checkContent(op.RequestBody.Content, x.RequestType, x.RequestBody); err != nil {
+		} else if err := d.checkContent(rb.Content, x.RequestType, x.RequestBody); err != nil {
 			errs = append(errs, errors.New(fmt.Sprintf("%s: the request body: %v", what, err)))
 		}
 	}
@@ -61,7 +62,7 @@ func (d *Document) Check(x Exchange) error {
 			res = op.Responses["default"]
 		}
 	}
-//line check.ego:53
+//line check.ego:54
 	if res == nil {
 		errs = append(errs, errors.New(fmt.Sprintf("%s: the document has no %d response", what, x.Status)))
 	} else if res = d.response(res); len(x.Body) > 0 || len(res.Content) > 0 {
@@ -77,6 +78,14 @@ func (d *Document) Check(x Exchange) error {
 // segments wins, as with ServeMux: /articles/feed over /articles/{slug}.
 func (d *Document) find(method, path string) (*Operation, string) {
 	segments := strings.Split(path, "/")
+	for i, seg := range segments {
+		if v, err := url.PathUnescape(seg); err != nil {
+			segments[i] = seg
+		} else {
+			segments[i] = v
+		}
+	}
+//line check.ego:72
 	var best *Operation
 	var bestTemplate string
 	bestLiterals := -1
@@ -108,6 +117,22 @@ func (d *Document) find(method, path string) (*Operation, string) {
 	return best, bestTemplate
 }
 
+// requestBody returns rb, or the component it refers to.
+func (d *Document) requestBody(rb *RequestBody) *RequestBody {
+	if rb == nil {
+		return nil
+	}
+	if name, ok := strings.CutPrefix(rb.Ref, "#/components/requestBodies/"); ok {
+		v, ok2 := d.Components.RequestBodies[name]
+		if !ok2 {
+			v = &RequestBody{}
+		}
+		return v
+	}
+//line check.ego:111
+	return rb
+}
+
 // response returns r, or the component it refers to.
 func (d *Document) response(r *Response) *Response {
 	if name, ok := strings.CutPrefix(r.Ref, "#/components/responses/"); ok {
@@ -117,7 +142,7 @@ func (d *Document) response(r *Response) *Response {
 		}
 		return v
 	}
-//line check.ego:104
+//line check.ego:119
 	return r
 }
 
@@ -195,11 +220,11 @@ func (c *checker) value(s *Schema, v any, at string) {
 	if str, ok2 := v.(string); ok2 {
 		c.text(s, str, at)
 	} else if n, ok3 := v.(float64); ok3 {
-//line check.ego:180
+//line check.ego:195
 		c.number(s, n, at)
 	} else if items, ok4 := v.([]any); ok4 {
 
-//line check.ego:182
+//line check.ego:197
 		if s.MinItems != nil && len(items) < *s.MinItems || s.MaxItems != nil && len(items) > *s.MaxItems {
 			c.fail(at, "has %d items, out of bounds", len(items))
 		}
@@ -209,7 +234,7 @@ func (c *checker) value(s *Schema, v any, at string) {
 
 	} else if members, ok := v.(map[string]any); ok {
 
-//line check.ego:190
+//line check.ego:205
 		for _, name := range s.Required {
 			if _, ok := members[name]; !ok {
 				c.fail(at, "the required member %q is missing", name)
@@ -220,7 +245,7 @@ func (c *checker) value(s *Schema, v any, at string) {
 			if !ok5 {
 				p = s.AdditionalProperties
 			}
-//line check.ego:197
+//line check.ego:212
 			c.value(p, m, at+"/"+strings.ReplaceAll(strings.ReplaceAll(name, "~", "~0"), "/", "~1"))
 		}
 
@@ -231,7 +256,7 @@ func (c *checker) value(s *Schema, v any, at string) {
 
 // text checks a string's length, pattern and date-time format.
 //
-//line check.ego:206
+//line check.ego:221
 func (c *checker) text(s *Schema, str, at string) {
 	n := utf8.RuneCountInString(str)
 	if s.MinLength != nil && n < *s.MinLength || s.MaxLength != nil && n > *s.MaxLength {
@@ -282,7 +307,7 @@ func kindOf(v any) string {
 
 // describe shows v in a message.
 //
-//line check.ego:243
+//line check.ego:258
 func describe(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil || len(b) > 40 {

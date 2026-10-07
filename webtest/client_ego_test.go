@@ -4,9 +4,11 @@ package webtest_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -23,7 +25,7 @@ import (
 
 // echo answers JSON describing the request.
 //
-//line client_test.ego:21
+//line client_test.ego:23
 var echo = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	w.Header().Set("Content-Type", "application/json")
@@ -64,7 +66,7 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:58
+//line client_test.ego:60
 	req.Header.Set("Authorization", "Token bob")
 	alice.Do(req).HasHeader("X-Seen", "Token bob") // the request's own header wins
 }
@@ -138,7 +140,7 @@ func TestFailedChecks(t *testing.T) {
 			t.Errorf("check %d: failures %q", i, rec.failures)
 		}
 	}
-//line client_test.ego:113
+//line client_test.ego:115
 	rec.failures = nil
 	problem.Get("/x").Problem(404).HasDetail("no route matches GET /x")
 	if rec.failures != nil {
@@ -160,7 +162,7 @@ func (i *isolator) Isolate(ctx context.Context) (context.Context, func() error, 
 	}, nil
 }
 
-//line client_test.ego:131
+//line client_test.ego:133
 func TestIsolate(t *testing.T) {
 	iso := &isolator{}
 	t.Run("test", func(t *testing.T) {
@@ -191,7 +193,7 @@ func TestInABubble(t *testing.T) {
 			r.Get("/slow", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				time.Sleep(time.Hour)
 			}))
-//line client_test.ego:159
+//line client_test.ego:161
 			return &goncini.App{Kernel: &httpkernel.Kernel{Handler: r}}, nil
 		}
 		a := webtest.Boot(t, func(env *goncini.Env) string { return env.Name }, build)
@@ -217,7 +219,7 @@ func TestContract(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:181
+//line client_test.ego:183
 	app := &goncini.App{Kernel: k, OpenAPI: doc}
 	rec := &recorder{TB: t}
 	webtest.NewClient(rec, app).Get("/hello").Status(200)
@@ -234,3 +236,28 @@ func TestContract(t *testing.T) {
 		t.Errorf("failures %q, want %q", rec.failures, want)
 	}
 }
+
+// TestContractPassesReadErrors checks that the contract's middleware gives
+// the app the error reading the body failed with, and checks the final
+// status after an informational one.
+func TestContractPassesReadErrors(t *testing.T) {
+	var got error
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, got = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusEarlyHints)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	r := routing.New()
+	r.Post("/", h)
+	doc := &openapi.Document{Paths: map[string]*openapi.PathItem{"/": {Post: &openapi.Operation{Responses: map[string]*openapi.Response{"204": {}}}}}}
+	rec := &recorder{TB: t}
+	req := httptest.NewRequest(http.MethodPost, "/", io.MultiReader(strings.NewReader(`{"a":`), failingReader{}))
+	webtest.Contract(rec, doc, r).ServeHTTP(httptest.NewRecorder(), req)
+	if !errors.Is(got, io.ErrUnexpectedEOF) || rec.failures != nil {
+		t.Errorf("read error %v, failures %q", got, rec.failures)
+	}
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }

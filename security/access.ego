@@ -57,7 +57,8 @@ func (v typedVoter[S]) Vote(ctx context.Context, attribute string, subject any) 
 enum Strategy {
 	// Affirmative grants access when a voter grants it: the default.
 	Affirmative
-	// Consensus grants access when more voters grant it than deny it.
+	// Consensus grants access when no fewer voters grant it than deny it,
+	// as Symfony's does by default.
 	Consensus
 	// Unanimous grants access when a voter grants it and none denies it.
 	Unanimous
@@ -113,7 +114,7 @@ func (a *Access) IsGranted(ctx context.Context, attribute string, subject any) b
 	}
 	return match a.Strategy {
 		Affirmative => grants > 0
-		Consensus   => grants > denials
+		Consensus   => grants >= denials
 		Unanimous   => grants > 0 && denials == 0
 	}
 }

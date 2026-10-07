@@ -63,6 +63,7 @@ func New(c Config) (func(http.Handler) http.Handler, error) {
 		maxAge:      strconv.Itoa(int(cmp.Or(c.MaxAge, 10*time.Minute).Seconds())),
 	}
 	for _, o := range c.AllowOrigins {
+		o = strings.ToLower(strings.TrimSuffix(o, "/"))
 		switch {
 		case o == "*":
 			if c.AllowCredentials {
@@ -71,12 +72,12 @@ func New(c Config) (func(http.Handler) http.Handler, error) {
 			p.any = true
 		case strings.Contains(o, "*"):
 			scheme, host, ok := strings.Cut(o, "://*.")
-			if !ok || strings.Contains(host, "*") {
+			if !ok || scheme == "" || strings.ContainsAny(scheme+host, "*/") {
 				return nil, errors.New("cors: invalid origin " + strconv.Quote(o) + ": a wildcard can only be a subdomain, as in https://*.example.com")
 			}
-			p.suffixes = append(p.suffixes, [2]string{scheme + "://", "." + strings.ToLower(host)})
+			p.suffixes = append(p.suffixes, [2]string{scheme + "://", "." + host})
 		default:
-			p.origins = append(p.origins, strings.ToLower(strings.TrimSuffix(o, "/")))
+			p.origins = append(p.origins, o)
 		}
 	}
 	p.anyHeader = slices.Contains(p.headers, "*")
@@ -128,13 +129,17 @@ type handler struct {
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	hd := w.Header()
+	if !h.p.any || h.p.credentials {
+		// The response depends on the origin, even without one: a shared
+		// cache mustn't give it to another origin.
+		hd.Add("Vary", "Origin")
+	}
 	origin := r.Header.Get("Origin")
 	if origin == "" {
 		h.next.ServeHTTP(w, r)
 		return
 	}
-	hd := w.Header()
-	hd.Add("Vary", "Origin")
 	if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 		h.preflight(w, r, origin)
 		return
@@ -158,8 +163,8 @@ func (h *handler) preflight(w http.ResponseWriter, r *http.Request, origin strin
 	if h.p.allows(origin) {
 		h.allow(hd, origin)
 		hd.Set("Access-Control-Allow-Methods", h.p.methods)
-		if requested := r.Header.Get("Access-Control-Request-Headers"); requested != "" {
-			hd.Set("Access-Control-Allow-Headers", h.allowedHeaders(requested))
+		if allowed := h.allowedHeaders(r.Header.Get("Access-Control-Request-Headers")); allowed != "" {
+			hd.Set("Access-Control-Allow-Headers", allowed)
 		}
 		hd.Set("Access-Control-Max-Age", h.p.maxAge)
 	}

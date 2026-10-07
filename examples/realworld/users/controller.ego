@@ -16,10 +16,15 @@ type Users struct {
 	hasher security.Hasher
 	tokens *security.Tokens
 	logins *ratelimit.Limiter // by email and client address
+	// dummy is the hash that a login with an unknown email checks, so that
+	// it takes as long as with a known one: the time doesn't tell which
+	// emails have users.
+	dummy string
 }
 
-func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins *ratelimit.Limiter) *Users {
-	return &Users{store: store, hasher: hasher, tokens: tokens, logins: logins}
+func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins *ratelimit.Limiter) (*Users, error) {
+	dummy := check hasher.Hash("no user has this password") ""
+	return &Users{store: store, hasher: hasher, tokens: tokens, logins: logins, dummy: dummy}, nil
 }
 
 // Routes registers the endpoints.
@@ -95,11 +100,9 @@ effect (u *Users) Login(in LoginInput) (UserBody, UserError) {
 		fail TooManyLogins{RetryAfter: attempt.RetryAfter}
 	}
 	user, ok := check u.store.ByEmail(in.Body.User.Email) as Unavailable
-	if !ok {
-		fail BadCredentials{}
-	}
-	valid := check u.hasher.Verify(user.PasswordHash, in.Body.User.Password) as Unavailable
-	if !valid {
+	hash := if ok { user.PasswordHash } else { u.dummy }
+	valid := check u.hasher.Verify(hash, in.Body.User.Password) as Unavailable
+	if !ok || !valid {
 		fail BadCredentials{}
 	}
 	check u.logins.Reset(ctx, key) as Unavailable

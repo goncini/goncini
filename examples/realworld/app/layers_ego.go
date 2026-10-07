@@ -45,7 +45,10 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	hasher2 := hasher()
 	v := clock()
 	limiter := logins(v)
-	users2 := users.NewUsers(store, hasher2, tokens, limiter)
+	users2, err := users.NewUsers(store, hasher2, tokens, limiter)
+	if err != nil {
+		return nil, fmt.Errorf("users.NewUsers: %w", err)
+	}
 	store2 := articles.NewStore(sql2, v)
 	authorship := articles.NewAuthorship()
 	v2 := autoVoters(authorship)

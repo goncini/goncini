@@ -16,16 +16,21 @@ its ecosystem, and [effect-go](https://github.com/effect-go/effect-go).
 - **Every setting has a default, and every default can be changed.** A new
   app works without writing any config; an app that needs another error body
   or request size limit changes that one default, in Go, and keeps the others.
+- **An OpenAPI document with nothing to annotate.** The document comes from
+  the endpoints' types, their validation rules, the error cases each one can
+  return and doc comments; tests check every response against it.
 - **Structured concurrency.** Each request runs in its own effect-go scope,
   and the server shuts down gracefully.
 
 Status: early. [`httpkernel`](httpkernel), [`routing`](routing),
 [`validator`](validator), config as code, the [`console`](console),
 `goncini.Main` and [`db`](db), with adapters for pgx, GORM, goose and
-golang-migrate, [`webtest`](webtest) and [`security`](security) are
-implemented ([CHANGELOG.md](CHANGELOG.md)).
-[examples/realworld](examples/realworld), the RealWorld API, passes its
-official test suite. The plan is in
+golang-migrate, [`webtest`](webtest), [`security`](security) with voters and
+API keys, [`openapi`](openapi), [`cors`](cors), [`ratelimit`](ratelimit),
+[`uid`](uid) and [`listing`](listing) are implemented
+([CHANGELOG.md](CHANGELOG.md)). [examples/realworld](examples/realworld), the
+RealWorld API, passes its official test suite, and a client generated from
+its OpenAPI document drives every operation. The plan is in
 [docs/assessment.md](docs/assessment.md), and the layout of an app in
 [docs/layout.md](docs/layout.md).
 

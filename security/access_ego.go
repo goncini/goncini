@@ -99,7 +99,8 @@ type Strategy int
 const (
 	// Affirmative grants access when a voter grants it: the default.
 	Affirmative Strategy = iota
-	// Consensus grants access when more voters grant it than deny it.
+	// Consensus grants access when no fewer voters grant it than deny it,
+	// as Symfony's does by default.
 	Consensus
 	// Unanimous grants access when a voter grants it and none denies it.
 	Unanimous
@@ -119,7 +120,7 @@ func (v Strategy) String() string {
 
 // Authenticated is the attribute that every authenticated user has.
 //
-//line access.ego:67
+//line access.ego:68
 const Authenticated = "IS_AUTHENTICATED"
 
 // RoleHolder is a user type that has roles, such as "ROLE_ADMIN".
@@ -155,16 +156,16 @@ func (a *Access) IsGranted(ctx context.Context, attribute string, subject any) b
 	count := func(v Vote) {
 		switch v {
 		case Grant:
-//line access.ego:101
+//line access.ego:102
 			grants++
 		case Deny:
-//line access.ego:102
+//line access.ego:103
 			denials++
 		case Abstain:
 
 		}
 	}
-//line access.ego:107
+//line access.ego:108
 	count(a.builtIn(ctx, attribute))
 	for _, v := range a.Voters {
 		count(v.Vote(ctx, attribute, subject))
@@ -177,7 +178,7 @@ func (a *Access) IsGranted(ctx context.Context, attribute string, subject any) b
 	case Affirmative:
 		v2 = grants > 0
 	case Consensus:
-		v2 = grants > denials
+		v2 = grants >= denials
 	case Unanimous:
 		v2 = grants > 0 && denials == 0
 	default:
@@ -191,7 +192,7 @@ func (a *Access) IsGranted(ctx context.Context, attribute string, subject any) b
 // request, which a user might be allowed: Symfony's
 // denyAccessUnlessGranted.
 //
-//line access.ego:125
+//line access.ego:126
 func (a *Access) Check(ctx context.Context, attribute string, subject any) error {
 	if a.IsGranted(ctx, attribute, subject) {
 		return nil
@@ -200,20 +201,20 @@ func (a *Access) Check(ctx context.Context, attribute string, subject any) error
 	if !ok {
 		st = nil
 	}
-//line access.ego:130
+//line access.ego:131
 	var v any
 	if st != nil {
 		v = st.user
 	}
 	if v == nil {
-//line access.ego:131
+//line access.ego:132
 		var v2 string
 		if st != nil {
 			v2 = st.scheme
 		}
 		return Unauthenticated{Scheme: v2}
 	}
-//line access.ego:133
+//line access.ego:134
 	return AccessDenied{Attribute: attribute}
 }
 
@@ -223,12 +224,12 @@ func (a *Access) builtIn(ctx context.Context, attribute string) Vote {
 	if !ok2 {
 		st = nil
 	}
-//line access.ego:139
+//line access.ego:140
 	var user any
 	if st != nil {
 		user = st.user
 	}
-//line access.ego:140
+//line access.ego:141
 	switch {
 	case attribute == Authenticated:
 		var v Vote
@@ -238,7 +239,7 @@ func (a *Access) builtIn(ctx context.Context, attribute string) Vote {
 			v = Deny
 		}
 		return v
-//line access.ego:143
+//line access.ego:144
 	case !strings.HasPrefix(attribute, "ROLE_"):
 		return Abstain
 	}
@@ -257,7 +258,7 @@ func (a *Access) builtIn(ctx context.Context, attribute string) Vote {
 
 // reachable returns the roles and those they include, through Hierarchy.
 //
-//line access.ego:154
+//line access.ego:155
 func (a *Access) reachable(roles []string) []string {
 	out := slices.Clone(roles)
 	for i := 0; i < len(out); i++ {

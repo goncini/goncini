@@ -56,8 +56,9 @@ func TestArticlesAPI(t *testing.T) {
 	}
 	c.Get("/articles/nope").Problem(404).HasDetail("no article nope")
 
-	c.Get("/articles/" + hello.ID.String()).Status(200).Contains(`"slug":"hello-world"`)
-	c.Get("/articles/" + uid.NewV7().String()).Problem(404)
+	c.Get("/articles/by-id/" + hello.ID.String()).Status(200).Contains(`"slug":"hello-world"`)
+	c.Get("/articles/by-id/" + strings.ToUpper(hello.ID.String())).Status(200)
+	c.Get("/articles/by-id/" + uid.NewV7().String()).Problem(404)
 
 	var list listing.Page[articles.Article]
 	c.Get("/articles").Status(200).JSON(&list)
@@ -100,8 +101,8 @@ func TestRoutes(t *testing.T) {
 	if err := routing.WriteTable(&b, boot(t).Router.List()); err != nil {
 		panic(err)
 	}
-//line controller_test.ego:93
-	byID := "/articles/{id<" + routing.UUID + ">}"
+//line controller_test.ego:94
+	byID := "/articles/by-id/{id<" + routing.UUID + ">}"
 	line := func(name, method, path, handler string) string {
 		return fmt.Sprintf("%-20s%-8s%-*s%s\n", name, method, len(byID)+2, path, handler)
 	}

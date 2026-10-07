@@ -7,6 +7,7 @@ import (
 	"math"
 	"mime"
 	"net/http"
+	"net/url"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -40,12 +41,12 @@ func (d *Document) Check(x Exchange) error {
 	}
 	what := f"{x.Method} {template}"
 	var errs []error
-	if x.Status >= 200 && x.Status < 300 && op.RequestBody != nil {
+	if rb := d.requestBody(op.RequestBody); x.Status >= 200 && x.Status < 300 && rb != nil {
 		if len(x.RequestBody) == 0 {
-			if op.RequestBody.Required {
+			if rb.Required {
 				errs = append(errs, errors.New(f"{what}: the request has no body, which the document requires"))
 			}
-		} else if err := d.checkContent(op.RequestBody.Content, x.RequestType, x.RequestBody); err != nil {
+		} else if err := d.checkContent(rb.Content, x.RequestType, x.RequestBody); err != nil {
 			errs = append(errs, errors.New(f"{what}: the request body: {err}"))
 		}
 	}
@@ -65,6 +66,9 @@ func (d *Document) Check(x Exchange) error {
 // segments wins, as with ServeMux: /articles/feed over /articles/{slug}.
 func (d *Document) find(method, path string) (*Operation, string) {
 	segments := strings.Split(path, "/")
+	for i, seg := range segments {
+		segments[i] = url.PathUnescape(seg) else seg
+	}
 	var best *Operation
 	var bestTemplate string
 	bestLiterals := -1
@@ -94,6 +98,17 @@ func (d *Document) find(method, path string) (*Operation, string) {
 		}
 	}
 	return best, bestTemplate
+}
+
+// requestBody returns rb, or the component it refers to.
+func (d *Document) requestBody(rb *RequestBody) *RequestBody {
+	if rb == nil {
+		return nil
+	}
+	if name, ok := strings.CutPrefix(rb.Ref, "#/components/requestBodies/"); ok {
+		return d.Components.RequestBodies[name] ?? &RequestBody{}
+	}
+	return rb
 }
 
 // response returns r, or the component it refers to.

@@ -241,6 +241,9 @@ func ClientIP(r *http.Request) netip.Addr {
 //
 //line proxy.ego:220
 func ClientIPOf(ctx context.Context) netip.Addr {
+	if c := clientOf(ctx); c.ip.IsValid() {
+		return c.ip
+	}
 	st := stateOf(ctx)
 	var v *http.Request
 	if st != nil {
@@ -249,8 +252,8 @@ func ClientIPOf(ctx context.Context) netip.Addr {
 	if v == nil {
 		return netip.Addr{}
 	}
-//line proxy.ego:225
-	return ClientIP(st.request)
+//line proxy.ego:228
+	return remoteAddr(st.request)
 }
 
 // Scheme returns "https" or "http": as reported by trusted proxies, or else
@@ -284,7 +287,7 @@ func BaseURL(ctx context.Context) string {
 	if st != nil {
 		r = st.request
 	}
-//line proxy.ego:256
+//line proxy.ego:259
 	if r == nil {
 		return ""
 	}
@@ -304,7 +307,7 @@ func schemeOf(c client, r *http.Request) string {
 	return v
 }
 
-//line proxy.ego:267
+//line proxy.ego:270
 func hostOf(c client, r *http.Request) string {
 	var v string
 	if c.host != "" {
@@ -318,7 +321,7 @@ func hostOf(c client, r *http.Request) string {
 // clientOf is what trusted proxies reported about the request ctx belongs
 // to: nothing, outside Proxies.Middleware.
 //
-//line proxy.ego:273
+//line proxy.ego:276
 func clientOf(ctx context.Context) client {
 	v, ok := ctx.Value(clientKey{}).(client)
 	if !ok {
@@ -329,7 +332,7 @@ func clientOf(ctx context.Context) client {
 
 // remoteAddr is the address r came from, without the port.
 //
-//line proxy.ego:278
+//line proxy.ego:281
 func remoteAddr(r *http.Request) netip.Addr {
 	return parseNode(r.RemoteAddr)
 }
@@ -364,7 +367,7 @@ func parseNode(node string) netip.Addr {
 	if err != nil {
 		ap = netip.AddrPort{}
 	}
-//line proxy.ego:309
+//line proxy.ego:312
 	if ap.IsValid() {
 		return ap.Addr().Unmap()
 	}
@@ -372,7 +375,7 @@ func parseNode(node string) netip.Addr {
 	if err != nil {
 		a = netip.Addr{}
 	}
-//line proxy.ego:313
+//line proxy.ego:316
 	return a.Unmap()
 }
 

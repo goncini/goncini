@@ -25,8 +25,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"net/http"
-	"net/url"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -74,19 +74,21 @@ func Links(r *http.Request, o Window, total int) []string {
 	if o.Limit <= 0 {
 		return nil
 	}
+	// The path as the request wrote it, which can't start with //: that
+	// would be another host's.
+	path := "/" + strings.TrimLeft(r.URL.EscapedPath(), "/")
 	link := func(offset int, rel string) string {
 		q := r.URL.Query()
 		q.Set("limit", strconv.Itoa(o.Limit))
 		q.Set("offset", strconv.Itoa(offset))
-		u := url.URL{Path: r.URL.Path, RawQuery: q.Encode()}
-		return "<" + u.String() + `>; rel="` + rel + `"`
+		return "<" + path + "?" + q.Encode() + `>; rel="` + rel + `"`
 	}
 	last := max(0, (total-1)/o.Limit*o.Limit)
 	links := []string{link(0, "first")}
 	if o.Offset > 0 {
-		links = append(links, link(max(0, o.Offset-o.Limit), "prev"))
+		links = append(links, link(min(max(0, o.Offset-o.Limit), last), "prev"))
 	}
-	if o.Offset+o.Limit < total {
+	if o.Offset < total-o.Limit { // o.Offset+o.Limit < total, without overflowing
 		links = append(links, link(o.Offset+o.Limit, "next"))
 	}
 	return append(links, link(last, "last"))
@@ -123,7 +125,7 @@ func (c Cursor[K]) MarshalText() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-//line listing.ego:119
+//line listing.ego:121
 	return []byte(base64.RawURLEncoding.EncodeToString(b)), nil
 }
 
@@ -188,7 +190,7 @@ func (s Sort[O]) MarshalText() ([]byte, error) {
 			parts[i] = f.Name
 		}
 	}
-//line listing.ego:179
+//line listing.ego:181
 	return []byte(strings.Join(parts, ",")), nil
 }
 
@@ -207,14 +209,18 @@ func (s Sort[O]) SQL() string {
 		}
 		parts[i] = allowed[f.Name] + v2
 	}
-//line listing.ego:191
+//line listing.ego:193
 	return strings.Join(parts, ", ")
 }
 
 // OpenAPISchema describes a sort as a string of the fields of O.
 func (Sort[O]) OpenAPISchema() *openapi.Schema {
 	var fields O
-	alts := strings.Join(names(fields.Fields()), "|")
+	var quoted []string
+	for _, name := range names(fields.Fields()) {
+		quoted = append(quoted, regexp.QuoteMeta(name))
+	}
+	alts := strings.Join(quoted, "|")
 	return &openapi.Schema{
 		Type:        openapi.Types{"string"},
 		Pattern:     "^-?(" + alts + ")(,-?(" + alts + "))*$",

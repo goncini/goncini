@@ -263,6 +263,12 @@ func TestEndpointRejectsBadInputs(t *testing.T) {
 			Page string
 		}](nil))
 	})
+	mustPanic(t, "has a query tag, is hidden by another field named Page", func() {
+		httpkernel.Endpoint(handler[struct {
+			*embedded
+			Page string
+		}](nil))
+	})
 	mustPanic(t, `has an invalid default "one"`, func() {
 		httpkernel.Endpoint(handler[struct {
 			X int `query:"x" default:"one"`

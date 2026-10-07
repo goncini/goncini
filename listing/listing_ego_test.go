@@ -90,6 +90,26 @@ func TestLinks(t *testing.T) {
 	}
 }
 
+// TestLinkEdges checks links past the end, with huge offsets, and to
+// escaped paths.
+func TestLinkEdges(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/files/a%2Fb/items?q=x", nil)
+	links := listing.Links(r, listing.Window{Limit: 10, Offset: 1 << 62}, 25)
+	want := []string{
+		`</files/a%2Fb/items?limit=10&offset=0&q=x>; rel="first"`,
+		`</files/a%2Fb/items?limit=10&offset=20&q=x>; rel="prev"`,
+		`</files/a%2Fb/items?limit=10&offset=20&q=x>; rel="last"`,
+	}
+	if !slices.Equal(links, want) {
+		t.Errorf("links:\n%s", strings.Join(links, "\n"))
+	}
+	r = httptest.NewRequest(http.MethodGet, "/x", nil)
+	r.URL.Path = "//evil.example/x"
+	if l := listing.Links(r, listing.Window{Limit: 10}, 5)[0]; !strings.HasPrefix(l, "</evil.example/x?") {
+		t.Errorf("link %s", l)
+	}
+}
+
 func TestSort(t *testing.T) {
 	_, k := notes()
 	if w := get(k, "/notes?sort=title,-createdAt"); !strings.Contains(w.Body.String(), `"n.title, n.created_at DESC"`) {
@@ -103,12 +123,12 @@ func TestSort(t *testing.T) {
 	if err := s.UnmarshalText([]byte("-title")); err != nil {
 		panic(err)
 	}
-//line listing_test.ego:100
+//line listing_test.ego:120
 	text, err := s.MarshalText()
 	if err != nil {
 		panic(err)
 	}
-//line listing_test.ego:101
+//line listing_test.ego:121
 	if string(text) != "-title" {
 		t.Errorf("%s", text)
 	}
@@ -120,12 +140,12 @@ func TestCursor(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line listing_test.ego:109
+//line listing_test.ego:129
 	var back listing.Cursor[[]any]
 	if err := back.UnmarshalText(text); err != nil {
 		panic(err)
 	}
-//line listing_test.ego:111
+//line listing_test.ego:131
 	if !back.Set || back.Key[0] != "2026-10-07" || back.Key[1] != 42.0 {
 		t.Errorf("%+v", back)
 	}
@@ -145,7 +165,7 @@ func TestDocumented(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line listing_test.ego:127
+//line listing_test.ego:147
 	op := doc.Paths["/notes"].Get
 	params := map[string]*openapi.Schema{}
 	for _, p := range op.Parameters {

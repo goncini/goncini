@@ -43,7 +43,9 @@ func TestCORS(t *testing.T) {
 		status int
 		want   map[string]string // headers; "" for absent
 	}{
-		{"no origin", site, "GET", nil, 200, map[string]string{"Access-Control-Allow-Origin": "", "Vary": ""}},
+		{"no origin", site, "GET", nil, 200, map[string]string{"Access-Control-Allow-Origin": "", "Vary": "Origin"}},
+		{"no origin, any allowed", cors.Config{AllowOrigins: []string{"*"}}, "GET", nil, 200, map[string]string{"Vary": ""}},
+		{"a normalized wildcard", cors.Config{AllowOrigins: []string{"HTTPS://*.Example.org/"}}, "GET", map[string]string{"Origin": "https://a.example.org"}, 200, map[string]string{"Access-Control-Allow-Origin": "https://a.example.org"}},
 		{"an allowed origin", site, "GET", map[string]string{"Origin": "https://app.example.com"}, 200, map[string]string{
 			"Access-Control-Allow-Origin": "https://app.example.com", "Access-Control-Expose-Headers": "X-Total", "Vary": "Origin",
 		}},
@@ -84,6 +86,8 @@ func TestInvalidConfigs(t *testing.T) {
 		{AllowOrigins: []string{"*"}, AllowCredentials: true},
 		{AllowOrigins: []string{"https://app.*.com"}},
 		{AllowOrigins: []string{"*.example.com"}},
+		{AllowOrigins: []string{"*://*.example.com"}},
+		{AllowOrigins: []string{"https://*.example.com/path"}},
 	} {
 		if _, err := cors.New(c); err == nil {
 			t.Errorf("%+v: no error", c)

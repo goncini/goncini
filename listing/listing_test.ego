@@ -86,6 +86,26 @@ func TestLinks(t *testing.T) {
 	}
 }
 
+// TestLinkEdges checks links past the end, with huge offsets, and to
+// escaped paths.
+func TestLinkEdges(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/files/a%2Fb/items?q=x", nil)
+	links := listing.Links(r, listing.Window{Limit: 10, Offset: 1 << 62}, 25)
+	want := []string{
+		`</files/a%2Fb/items?limit=10&offset=0&q=x>; rel="first"`,
+		`</files/a%2Fb/items?limit=10&offset=20&q=x>; rel="prev"`,
+		`</files/a%2Fb/items?limit=10&offset=20&q=x>; rel="last"`,
+	}
+	if !slices.Equal(links, want) {
+		t.Errorf("links:\n%s", strings.Join(links, "\n"))
+	}
+	r = httptest.NewRequest(http.MethodGet, "/x", nil)
+	r.URL.Path = "//evil.example/x"
+	if l := listing.Links(r, listing.Window{Limit: 10}, 5)[0]; !strings.HasPrefix(l, "</evil.example/x?") {
+		t.Errorf("link %s", l)
+	}
+}
+
 func TestSort(t *testing.T) {
 	_, k := notes()
 	if w := get(k, "/notes?sort=title,-createdAt"); !strings.Contains(w.Body.String(), `"n.title, n.created_at DESC"`) {

@@ -148,8 +148,8 @@ func TestMiddleware(t *testing.T) {
 	}
 	get("192.0.2.1")
 	w := get("192.0.2.1")
-	if w.Code != 429 || w.Header().Get("Retry-After") != "60" {
-		t.Errorf("third: %d, Retry-After %q", w.Code, w.Header().Get("Retry-After"))
+	if w.Code != 429 || w.Header().Get("Retry-After") != "60" || w.Header().Get("RateLimit-Remaining") != "0" {
+		t.Errorf("third: %d %v", w.Code, w.Header())
 	}
 	if w := get("192.0.2.2"); w.Code != 200 {
 		t.Errorf("another client: %d", w.Code)
@@ -183,5 +183,42 @@ func TestDocumented(t *testing.T) {
 	res := doc.Paths["/"].Get.Responses["429"]
 	if res == nil || res.Headers["Retry-After"] == nil {
 		t.Errorf("429: %+v", res)
+	}
+}
+
+// TestStoreClock checks that the memory store keeps a state for the TTL by
+// the limiter's clock, not the system's.
+func TestStoreClock(t *testing.T) {
+	c := newClock()
+	l := &ratelimit.Limiter{Policy: ratelimit.FixedWindow{Limit: 1, Interval: 10 * time.Millisecond}, Now: c.Now}
+	if _, err := l.Take(context.Background(), "k", 1); err != nil {
+		panic(err)
+	}
+//line ratelimit_test.ego:161
+	time.Sleep(20 * time.Millisecond) // the system's time passes, not the limiter's
+	res, err := l.Take(context.Background(), "k", 1)
+	if err != nil {
+		panic(err)
+	}
+//line ratelimit_test.ego:163
+	if res.Allowed {
+		t.Error("the store forgot the state by the system's clock")
+	}
+}
+
+func TestInvalidTakes(t *testing.T) {
+	ctx := context.Background()
+	ok := &ratelimit.Limiter{Policy: ratelimit.FixedWindow{Limit: 1, Interval: time.Minute}}
+	for name, l := range map[string]*ratelimit.Limiter{
+		"no limit":  {Policy: ratelimit.FixedWindow{Interval: time.Minute}},
+		"no rate":   {Policy: ratelimit.TokenBucket{Burst: 1, Interval: time.Minute}},
+		"no window": {Policy: ratelimit.SlidingWindow{Limit: 1}},
+	} {
+		if _, err := l.Take(ctx, "k", 1); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+	if _, err := ok.Take(ctx, "k", -10); err == nil {
+		t.Error("negative tokens taken")
 	}
 }

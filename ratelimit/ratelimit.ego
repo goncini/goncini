@@ -12,6 +12,8 @@ package ratelimit
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -94,8 +96,9 @@ type Policy interface {
 // one to share their limits.
 type Store interface {
 	// Update calls f with the state of key, which it changes, with no other
-	// update of key in between, and keeps the result for ttl.
-	Update(ctx context.Context, key string, ttl time.Duration, f func(*State)) error
+	// update of key in between, and keeps the result for ttl from now, the
+	// limiter's time.
+	Update(ctx context.Context, key string, now time.Time, ttl time.Duration, f func(*State)) error
 }
 
 // Limiter limits how often each key takes tokens.
@@ -114,16 +117,22 @@ type Limiter struct {
 // Take takes n tokens for key, if the policy allows it. A Result that
 // isn't allowed isn't an error: Err makes one.
 func (l *Limiter) Take(ctx context.Context, key string, n int) (Result, error) {
+	if n <= 0 {
+		return Result{}, fmt.Errorf("ratelimit: can't take %d tokens", n)
+	}
+	if v, ok := l.Policy.(interface{ valid() error }); ok {
+		check v.valid() ""
+	}
 	now := (l.Now ?? time.Now)()
 	var res Result
-	err := l.store().Update(ctx, key, l.Policy.TTL(), st => { res = l.Policy.Take(st, n, now) })
+	err := l.store().Update(ctx, key, now, l.Policy.TTL(), st => { res = l.Policy.Take(st, n, now) })
 	return res, err
 }
 
 // Reset forgets key's state: it has its whole limit again, as after a
 // successful login.
 func (l *Limiter) Reset(ctx context.Context, key string) error {
-	return l.store().Update(ctx, key, l.Policy.TTL(), st => { *st = State{} })
+	return l.store().Update(ctx, key, (l.Now ?? time.Now)(), l.Policy.TTL(), st => { *st = State{} })
 }
 
 // store is the limiter's store.
@@ -160,6 +169,8 @@ func (p FixedWindow) Take(st *State, n int, now time.Time) Result {
 }
 
 func (p FixedWindow) TTL() time.Duration { return p.Interval }
+
+func (p FixedWindow) valid() error { return positive("FixedWindow", p.Limit, p.Interval) }
 
 // SlidingWindow allows Limit tokens per Interval, counting the previous
 // window's tokens in proportion to how much of the interval it still
@@ -223,6 +234,8 @@ func (p SlidingWindow) retryAfter(st *State, n float64, elapsed time.Duration) t
 
 func (p SlidingWindow) TTL() time.Duration { return 2 * p.Interval }
 
+func (p SlidingWindow) valid() error { return positive("SlidingWindow", p.Limit, p.Interval) }
+
 // TokenBucket allows bursts of up to Burst tokens, refilled at Rate tokens
 // per Interval.
 type TokenBucket struct {
@@ -257,6 +270,21 @@ func (p TokenBucket) TTL() time.Duration {
 	return p.Interval * time.Duration(p.Burst) / time.Duration(p.Rate)
 }
 
+func (p TokenBucket) valid() error {
+	if p.Rate <= 0 {
+		return errors.New("ratelimit: TokenBucket.Rate must be positive")
+	}
+	return positive("TokenBucket", p.Burst, p.Interval)
+}
+
+// positive checks a policy's limit and interval.
+func positive(policy string, limit int, interval time.Duration) error {
+	if limit <= 0 || interval <= 0 {
+		return fmt.Errorf("ratelimit: %s needs a positive limit and interval", policy)
+	}
+	return nil
+}
+
 // MemoryStore keeps states in memory: the limits of one process. Its zero
 // value is ready.
 type MemoryStore struct {
@@ -272,10 +300,9 @@ type entry struct {
 }
 
 // Update calls f with key's state, under the store's lock.
-func (m *MemoryStore) Update(ctx context.Context, key string, ttl time.Duration, f func(*State)) error {
+func (m *MemoryStore) Update(ctx context.Context, key string, now time.Time, ttl time.Duration, f func(*State)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	now := time.Now()
 	if m.states == nil {
 		m.states = map[string]*entry{}
 	}
@@ -319,9 +346,6 @@ type limited struct {
 
 func (h *limited) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	res, err := h.l.Take(r.Context(), h.key(r), 1)
-	if err == nil {
-		err = res.Err()
-	}
 	if err != nil {
 		httpkernel.WriteError(w, r, err)
 		return
@@ -330,6 +354,10 @@ func (h *limited) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hd.Set("RateLimit-Limit", strconv.Itoa(res.Limit))
 	hd.Set("RateLimit-Remaining", strconv.Itoa(res.Remaining))
 	hd.Set("RateLimit-Reset", strconv.Itoa(seconds(res.Reset)))
+	if err := res.Err(); err != nil {
+		httpkernel.WriteError(w, r, err)
+		return
+	}
 	h.next.ServeHTTP(w, r)
 }
 
