@@ -322,6 +322,19 @@ runs in one instance of an app: the one that takes the tick's lock.
 next runs. Lock stores now prune expired locks, which keys used once, as
 ticks are, would leave.
 
+### translation (M4)
+
+Symfony's Translation, for an API's messages: a `Catalog` maps messages,
+written in the app's language, to their translations, with no keys to
+invent; a message with `{placeholders}` translates every message it
+matches, so validators' and error sets' messages translate without
+changing them. The `Translator` subscribes to the kernel's `ErrorEvent`
+and translates problems' titles, details and violations into the language
+that `Accept-Language` prefers, falling back from `fr-CA` to `fr`, then to
+the message, and sets `Content-Language`. `translation:lint` lists the
+messages each catalog lacks. The articles example speaks French: M4's
+fifth gate.
+
 ### notifier (M4)
 
 Symfony's Notifier: a `Notification`'s importance chooses its channels,

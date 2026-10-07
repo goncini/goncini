@@ -99,7 +99,7 @@ var kinds = []kind{
 }
 
 // sections are the config sections that goncini's providers take.
-var sections = []string{"goncini.HTTP", "goncini.Log", "openapi.Config", "messenger.Config", "scheduler.Config", "cache.Config"}
+var sections = []string{"goncini.HTTP", "goncini.Log", "openapi.Config", "messenger.Config", "scheduler.Config", "cache.Config", "translation.Config"}
 
 // hasField reports whether the struct has a field of type t.
 func hasField(st *types.Struct, t types.Type) bool {
@@ -427,9 +427,9 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 		return params, list
 	}
 	// The services whose packages give them commands: the migrator's, the
-	// bus's and the scheduler's.
+	// bus's, the scheduler's and the translator's.
 	var lists []string
-	for _, svc := range []struct{ typ, param string }{{"db.Migrator", "m"}, {"*messenger.Bus", "bus"}, {"*scheduler.Scheduler", "s"}} {
+	for _, svc := range []struct{ typ, param string }{{"db.Migrator", "m"}, {"*messenger.Bus", "bus"}, {"*scheduler.Scheduler", "s"}, {"*translation.Translator", "tr"}} {
 		t := a.lookup(strings.TrimPrefix(svc.typ, "*"))
 		if t == nil {
 			continue

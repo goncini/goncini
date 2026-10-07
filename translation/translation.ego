@@ -1,0 +1,214 @@
+// Package translation speaks the client's language, as Symfony's
+// Translation component does: catalogs map messages, written in the app's
+// default language, to their translations, and the kernel's problems are
+// translated in the language that the request's Accept-Language prefers.
+//
+//	var French = translation.Catalog{
+//		"Not Found":            "Introuvable",
+//		"can't be blank":       "ne peut pas être vide",
+//		"must be at least {n}": "doit valoir au moins {n}",
+//	}
+//
+// A message is its own ID: an app's messages need no keys, and an untranslated
+// one shows as written. A message with {placeholders} translates every
+// message it matches, the values carried over: "must be at least 1" is
+// "doit valoir au moins 1".
+package translation
+
+import (
+	"cmp"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"net/http"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+
+	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/event"
+	"github.com/goncini/goncini/httpkernel"
+)
+
+// Catalog maps messages to their translations in a language.
+type Catalog map[string]string
+
+// Config configures a translator.
+type Config struct {
+	// Default is the language messages are written in; empty means "en".
+	Default string
+}
+
+// Catalogs are the translations of an app, by language: "fr", "fr-CA".
+type Catalogs map[string]Catalog
+
+// Translator translates messages.
+type Translator struct {
+	Default  string
+	Catalogs Catalogs
+	patterns map[string][]pattern // by language: the messages with placeholders
+}
+
+// pattern is a message with placeholders, as a regular expression that
+// captures their values, and its translation.
+type pattern struct {
+	re          *regexp.Regexp
+	names       []string
+	translation string
+}
+
+// New returns the translator of the catalogs.
+func New(c Config, catalogs Catalogs) *Translator {
+	t := &Translator{Default: cmp.Or(c.Default, "en"), Catalogs: catalogs, patterns: map[string][]pattern{}}
+	for lang, cat := range catalogs {
+		for _, msg := range slices.Sorted(maps.Keys(cat)) {
+			if p, ok := compile(msg, cat[msg]); ok {
+				t.patterns[lang] = append(t.patterns[lang], p)
+			}
+		}
+	}
+	return t
+}
+
+var placeholder = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
+
+// compile makes the pattern of a message with placeholders.
+func compile(msg, translation string) (pattern, bool) {
+	locs := placeholder.FindAllStringIndex(msg, -1)
+	if len(locs) == 0 {
+		return pattern{}, false
+	}
+	var b strings.Builder
+	var names []string
+	last := 0
+	b.WriteString("^")
+	for _, l := range locs {
+		b.WriteString(regexp.QuoteMeta(msg[last:l[0]]))
+		b.WriteString("(.+?)")
+		names = append(names, msg[l[0]:l[1]])
+		last = l[1]
+	}
+	b.WriteString(regexp.QuoteMeta(msg[last:]) + "$")
+	return pattern{regexp.MustCompile(b.String()), names, translation}, true
+}
+
+// Translate returns msg in the language lang: its translation in lang's
+// catalog, or in the catalog of lang's base language ("fr" for "fr-CA"), or
+// else msg.
+func (t *Translator) Translate(lang, msg string) string {
+	for _, l := range candidates(lang) {
+		if tr, ok := t.Catalogs[l][msg]; ok {
+			return tr
+		}
+		for _, p := range t.patterns[l] {
+			if m := p.re.FindStringSubmatch(msg); m != nil {
+				out := p.translation
+				for i, name := range p.names {
+					out = strings.ReplaceAll(out, name, m[i+1])
+				}
+				return out
+			}
+		}
+	}
+	return msg
+}
+
+// candidates are the languages to look up for lang: itself, then its bases.
+func candidates(lang string) []string {
+	var out []string
+	for lang != "" {
+		out = append(out, lang)
+		i := strings.LastIndexByte(lang, '-')
+		if i < 0 {
+			break
+		}
+		lang = lang[:i]
+	}
+	return out
+}
+
+// Languages are the languages the translator speaks: the default, and its
+// catalogs'.
+func (t *Translator) Languages() []string {
+	langs := []string{t.Default}
+	for _, l := range slices.Sorted(maps.Keys(t.Catalogs)) {
+		if l != t.Default {
+			langs = append(langs, l)
+		}
+	}
+	return langs
+}
+
+// Language returns the language of the request: the one of Languages that
+// its Accept-Language prefers, or the default.
+func (t *Translator) Language(r *http.Request) string {
+	return cmp.Or(httpkernel.NegotiateLanguage(r, t.Languages()...), t.Default)
+}
+
+// Subscribe translates the kernel's problems into the request's language:
+// their titles, or their statuses' text, their details and their
+// violations' details, and sets Content-Language.
+func (t *Translator) Subscribe(d *event.Dispatcher) {
+	event.On(d, func(ctx context.Context, e *httpkernel.ErrorEvent) error {
+		lang := t.Language(e.Request)
+		if lang == t.Default {
+			return nil
+		}
+		p := &e.Problem
+		title := cmp.Or(p.Title, http.StatusText(p.Status))
+		p.Title = t.Translate(lang, title)
+		p.Detail = t.Translate(lang, p.Detail)
+		p.Errors = slices.Clone(p.Errors)
+		for i := range p.Errors {
+			p.Errors[i].Detail = t.Translate(lang, p.Errors[i].Detail)
+		}
+		if p.Header == nil {
+			p.Header = http.Header{}
+		}
+		p.Header.Set("Content-Language", lang)
+		return nil
+	})
+}
+
+// Lint writes, for each catalog, the messages that another catalog
+// translates and it doesn't, and reports whether there were any.
+func (t *Translator) Lint(out io.Writer) bool {
+	all := map[string]bool{}
+	for _, cat := range t.Catalogs {
+		for msg := range cat {
+			all[msg] = true
+		}
+	}
+	missing := false
+	for _, lang := range slices.Sorted(maps.Keys(t.Catalogs)) {
+		var lacks []string
+		for msg := range all {
+			if _, ok := t.Catalogs[lang][msg]; !ok {
+				lacks = append(lacks, msg)
+			}
+		}
+		sort.Strings(lacks)
+		for _, msg := range lacks {
+			fmt.Fprintf(out, "%s lacks %q\n", lang, msg)
+			missing = true
+		}
+	}
+	return missing
+}
+
+// Commands returns t's console commands: translation:lint, which lists the
+// messages each catalog lacks, and fails if there are any.
+func Commands(t *Translator) []console.Command {
+	return []console.Command{
+		console.New("translation:lint", "Lists the messages that each catalog lacks", func(ctx context.Context, out io.Writer, args []string) error {
+			if t.Lint(out) {
+				return errors.New("translation: some catalogs lack messages")
+			}
+			fmt.Fprintln(out, "Every catalog has every message.")
+			return nil
+		}),
+	}
+}

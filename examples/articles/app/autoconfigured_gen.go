@@ -16,11 +16,12 @@ import (
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/translation"
 )
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoSubscribers, autoBackground, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoDefaultOpenapiConfig)
+var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoSubscribers, autoBackground, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoDefaultOpenapiConfig, autoDefaultTranslationConfig)
 
 // autoRoutes are the services that have routes, in the order they are provided.
 func autoRoutes(p1 *articles.Articles) []routing.Routes {
@@ -33,8 +34,8 @@ func autoProblems() []httpkernel.ErrorMapper {
 }
 
 // autoCommands are the services that are console commands, and the commands of the migrator.
-func autoCommands(p1 *articles.SlugCommand, m db.Migrator) []console.Command {
-	return append(db.Commands(m), []console.Command{p1}...)
+func autoCommands(p1 *articles.SlugCommand, m db.Migrator, tr *translation.Translator) []console.Command {
+	return append(append(db.Commands(m), translation.Commands(tr)...), []console.Command{p1}...)
 }
 
 // autoChecks ping the services that can be pinged, such as the database, before serving.
@@ -43,8 +44,8 @@ func autoChecks(p1 *sql.DB) []goncini.Check {
 }
 
 // autoSubscribers are the services that subscribe to events.
-func autoSubscribers() []event.Subscriber {
-	return []event.Subscriber{}
+func autoSubscribers(p1 *translation.Translator) []event.Subscriber {
+	return []event.Subscriber{p1}
 }
 
 // autoBackground is the work that serve runs beside the server.
@@ -68,7 +69,10 @@ func autoServices() []goncini.Service {
 		{Type: "[]httpkernel.ErrorMapper", Provider: "autoProblems", Needs: []string{}},
 		{Type: "httpkernel.Renderer", Provider: "goncini.NewRenderer", Needs: []string{}},
 		{Type: "httpkernel.Validator", Provider: "goncini.NewValidator", Needs: []string{}},
-		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{}},
+		{Type: "translation.Config", Provider: "autoDefaultTranslationConfig", Needs: []string{}},
+		{Type: "translation.Catalogs", Provider: "translations.All", Needs: []string{}},
+		{Type: "*translation.Translator", Provider: "translation.New", Needs: []string{"translation.Config", "translation.Catalogs"}},
+		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{"*translation.Translator"}},
 		{Type: "*event.Dispatcher", Provider: "goncini.NewDispatcher", Needs: []string{"[]event.Subscriber"}},
 		{Type: "goncini.Log", Provider: "autoConfigLog", Needs: []string{"config.Config"}},
 		{Type: "*zap.Logger", Provider: "zaplog.NewLogger", Needs: []string{"goncini.Log"}},
@@ -78,7 +82,7 @@ func autoServices() []goncini.Service {
 		{Type: "*httpkernel.Server", Provider: "goncini.NewServer", Needs: []string{"goncini.HTTP", "*httpkernel.Kernel", "*slog.Logger"}},
 		{Type: "*articles.SlugCommand", Provider: "articles.NewSlugCommand", Needs: []string{"*articles.Articles"}},
 		{Type: "db.Migrator", Provider: "migrator", Needs: []string{"*sql.DB"}},
-		{Type: "[]console.Command", Provider: "autoCommands", Needs: []string{"*articles.SlugCommand", "db.Migrator"}},
+		{Type: "[]console.Command", Provider: "autoCommands", Needs: []string{"*articles.SlugCommand", "db.Migrator", "*translation.Translator"}},
 		{Type: "[]goncini.Check", Provider: "autoChecks", Needs: []string{"*sql.DB"}},
 		{Type: "[]goncini.Service", Provider: "autoServices", Needs: []string{}},
 		{Type: "openapi.Config", Provider: "autoDefaultOpenapiConfig", Needs: []string{}},
@@ -118,3 +122,6 @@ func autoConfigDB(c config.Config) db.Config { return c.DB }
 
 // autoDefaultOpenapiConfig is the default of openapi.Config, which the config doesn't have.
 func autoDefaultOpenapiConfig() openapi.Config { return openapi.Config{} }
+
+// autoDefaultTranslationConfig is the default of translation.Config, which the config doesn't have.
+func autoDefaultTranslationConfig() translation.Config { return translation.Config{} }

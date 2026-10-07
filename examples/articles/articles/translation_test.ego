@@ -1,0 +1,27 @@
+package articles_test
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini/webtest"
+)
+
+// TestFrench is M4's fifth gate: Accept-Language: fr gives French problem
+// titles and violations, from the catalog, and English for the rest.
+func TestFrench(t *testing.T) {
+	a := boot(t)
+	c := webtest.NewClient(t, a)
+	fr := c.WithHeader("Accept-Language", "fr-FR,fr;q=0.9,en;q=0.5")
+	fr.Get("/articles/nope").Status(404).Contains(`"title":"Introuvable"`).Contains(`"detail":"aucun article nope"`).HasHeader("Content-Language", "fr")
+	fr.Post("/articles", `{"title":" ","body":""}`).Problem(422).
+		Violation("#/title", "ne peut pas être vide").
+		Violation("#/body", "ne peut pas être vide")
+	fr.Get("/articles?limit=0").Problem(422).Violation("limit", "doit valoir au moins 1")
+	c.Get("/articles/nope").Status(404).Contains(`"title":"Not Found"`) // no Accept-Language
+	c.WithHeader("Accept-Language", "ja").Get("/articles/nope").Contains(`"detail":"no article nope"`)
+	out := webtest.Run(t, a, "translation:lint")
+	if !strings.Contains(out, "Every catalog has every message.") {
+		t.Errorf("lint: %s", out)
+	}
+}

@@ -14,7 +14,9 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/examples/articles/articles"
 	"github.com/goncini/goncini/examples/articles/config"
+	"github.com/goncini/goncini/examples/articles/translations"
 	"github.com/goncini/goncini/log/zaplog"
+	"github.com/goncini/goncini/translation"
 )
 
 // Build builds the app for cfg. It logs with zap, whose handler replaces
@@ -37,7 +39,10 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v4 := autoProblems()
 	renderer := goncini.NewRenderer()
 	validator := goncini.NewValidator()
-	v5 := autoSubscribers()
+	config3 := autoDefaultTranslationConfig()
+	catalogs := translations.All()
+	translator := translation.New(config3, catalogs)
+	v5 := autoSubscribers(translator)
 	dispatcher := goncini.NewDispatcher(v5)
 	log := autoConfigLog(cfg)
 	logger, cleanup2, err := zaplog.NewLogger(log)
@@ -57,12 +62,12 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v6 := autoCommands(slugCommand, migrator2)
+	v6 := autoCommands(slugCommand, migrator2, translator)
 	v7 := autoChecks(db2)
 	v8 := autoServices()
-	config3 := autoDefaultOpenapiConfig()
+	config4 := autoDefaultOpenapiConfig()
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config3, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config4, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
@@ -89,7 +94,10 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	v3 := autoProblems()
 	renderer := goncini.NewRenderer()
 	validator := goncini.NewValidator()
-	v4 := autoSubscribers()
+	config3 := autoDefaultTranslationConfig()
+	catalogs := translations.All()
+	translator := translation.New(config3, catalogs)
+	v4 := autoSubscribers(translator)
 	dispatcher := goncini.NewDispatcher(v4)
 	log := autoConfigLog(cfg)
 	logger, cleanup2, err := zaplog.NewLogger(log)
@@ -109,12 +117,12 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v5 := autoCommands(slugCommand, migrator2)
+	v5 := autoCommands(slugCommand, migrator2, translator)
 	v6 := autoChecks(db2)
 	v7 := autoServices()
-	config3 := autoDefaultOpenapiConfig()
+	config4 := autoDefaultOpenapiConfig()
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config3, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config4, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
