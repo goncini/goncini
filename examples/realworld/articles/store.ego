@@ -2,9 +2,7 @@ package articles
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json/v2"
-	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -70,35 +68,24 @@ FROM articles a JOIN users u ON u.id = a.author_id`
 // bodies, from offset and at most limit of them, with how many there are.
 effect (s *Store) List(viewer int64, f Filter, limit, offset int) ([]Article, int, error) {
 	where, args := f.where()
-	var count int
-	check s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT count(*) FROM articles a JOIN users u ON u.id = a.author_id"+where, args...).Scan(&count)
+	conn := s.sql.Conn(ctx)
+	count := check db.Value[int](ctx, conn, "SELECT count(*) FROM articles a JOIN users u ON u.id = a.author_id"+where, args...)
 	query := selectArticles + where + " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
-	rows := check s.sql.Conn(ctx).QueryContext(ctx, query, append(append([]any{viewer, viewer}, args...), limit, offset)...)
-	defer rows.Close()
-	list := []Article{}
-	for rows.Next() {
-		art := check scanArticle(rows) ""
-		art.Body = nil
-		list = append(list, art)
+	list := check db.All(ctx, conn, scanArticle, query, append(append([]any{viewer, viewer}, args...), limit, offset)...)
+	for i := range list {
+		list[i].Body = nil
 	}
-	check rows.Err()
 	return list, count, nil
 }
 
 // BySlug returns the article with the slug, as the viewer sees it, and
 // reports whether there is one.
 effect (s *Store) BySlug(viewer int64, slug string) (Article, bool, error) {
-	row := s.sql.Conn(ctx).QueryRowContext(ctx, selectArticles+" WHERE a.slug = ?", viewer, viewer, slug)
-	art, err := scanArticle(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Article{}, false, nil
-	}
-	check err ""
-	return art, true, nil
+	return db.One(ctx, s.sql.Conn(ctx), scanArticle, selectArticles+" WHERE a.slug = ?", viewer, viewer, slug)
 }
 
 // scanArticle reads an article that selectArticles selects.
-func scanArticle(row interface{ Scan(dest ...any) error }) (Article, error) {
+func scanArticle(row db.Scanner) (Article, error) {
 	var art Article
 	var body, tags string
 	var created, updated int64
@@ -144,8 +131,7 @@ effect (s *Store) Save(art Article, tags []string) (string, error) {
 func (s *Store) freeSlug(ctx context.Context, base string) (string, error) {
 	slug := base
 	for n := 2; ; n++ {
-		var taken bool
-		check s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM articles WHERE slug = ?)", slug).Scan(&taken) ""
+		taken := check db.Value[bool](ctx, s.sql.Conn(ctx), "SELECT EXISTS (SELECT 1 FROM articles WHERE slug = ?)", slug) ""
 		if !taken {
 			return slug, nil
 		}
@@ -169,16 +155,13 @@ effect (s *Store) Favorite(user, article int64, favorite bool) error {
 
 // Tags returns every tag of an article, sorted.
 effect (s *Store) Tags() ([]string, error) {
-	rows := check s.sql.Conn(ctx).QueryContext(ctx, "SELECT DISTINCT tag FROM article_tags ORDER BY tag")
-	defer rows.Close()
-	tags := []string{}
-	for rows.Next() {
-		var tag string
-		check rows.Scan(&tag)
-		tags = append(tags, tag)
-	}
-	check rows.Err()
-	return tags, nil
+	return db.All(ctx, s.sql.Conn(ctx), scanTag, "SELECT DISTINCT tag FROM article_tags ORDER BY tag")
+}
+
+func scanTag(row db.Scanner) (string, error) {
+	var tag string
+	err := row.Scan(&tag)
+	return tag, err
 }
 
 // selectComments selects a comment as the viewer, a user ID or 0, sees it.
@@ -188,31 +171,17 @@ FROM comments c JOIN users u ON u.id = c.author_id`
 
 // Comments returns the comments of the article, oldest first.
 effect (s *Store) Comments(viewer, article int64) ([]Comment, error) {
-	rows := check s.sql.Conn(ctx).QueryContext(ctx, selectComments+" WHERE c.article_id = ? ORDER BY c.id", viewer, article)
-	defer rows.Close()
-	comments := []Comment{}
-	for rows.Next() {
-		c := check scanComment(rows) ""
-		comments = append(comments, c)
-	}
-	check rows.Err()
-	return comments, nil
+	return db.All(ctx, s.sql.Conn(ctx), scanComment, selectComments+" WHERE c.article_id = ? ORDER BY c.id", viewer, article)
 }
 
 // Comment returns the comment of the article with the ID, and reports
 // whether there is one.
 effect (s *Store) Comment(viewer, article, id int64) (Comment, bool, error) {
-	row := s.sql.Conn(ctx).QueryRowContext(ctx, selectComments+" WHERE c.article_id = ? AND c.id = ?", viewer, article, id)
-	c, err := scanComment(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Comment{}, false, nil
-	}
-	check err ""
-	return c, true, nil
+	return db.One(ctx, s.sql.Conn(ctx), scanComment, selectComments+" WHERE c.article_id = ? AND c.id = ?", viewer, article, id)
 }
 
 // scanComment reads a comment that selectComments selects.
-func scanComment(row interface{ Scan(dest ...any) error }) (Comment, error) {
+func scanComment(row db.Scanner) (Comment, error) {
 	var c Comment
 	var created, updated int64
 	check row.Scan(&c.ID, &c.AuthorID, &c.Body, &created, &updated, &c.Author.Username, &c.Author.Bio, &c.Author.Image, &c.Author.Following) ""

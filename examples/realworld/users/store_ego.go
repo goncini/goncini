@@ -4,8 +4,6 @@ package users
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 
 	"github.com/goncini/goncini/db"
@@ -15,7 +13,7 @@ import (
 
 // Store keeps the users and who follows whom.
 //
-//line store.ego:12
+//line store.ego:10
 type Store struct {
 	sql *db.SQL
 }
@@ -31,42 +29,35 @@ const columns = "id, username, email, password_hash, bio, image"
 func (s *Store) ByID(ctx context.Context, id string) (_ *User, _ bool, err error) {
 	ctx, span := trace.Start(ctx, "users.Store.ByID")
 	defer trace.End(span, &err)
-	return s.one(ctx, "SELECT "+columns+" FROM users WHERE id = ?", id)
+	return db.One(ctx, s.sql.Conn(ctx), scanUser, "SELECT "+columns+" FROM users WHERE id = ?", id)
 }
 
 // ByEmail returns the user with the email, and reports whether there is one.
 //
-//line store.ego:29
+//line store.ego:27
 func (s *Store) ByEmail(ctx context.Context, email string) (_ *User, _ bool, err error) {
 	ctx, span := trace.Start(ctx, "users.Store.ByEmail")
 	defer trace.End(span, &err)
-	return s.one(ctx, "SELECT "+columns+" FROM users WHERE email = ?", email)
+	return db.One(ctx, s.sql.Conn(ctx), scanUser, "SELECT "+columns+" FROM users WHERE email = ?", email)
 }
 
 // ByUsername returns the user with the username, and reports whether there
 // is one.
 //
-//line store.ego:35
+//line store.ego:33
 func (s *Store) ByUsername(ctx context.Context, username string) (_ *User, _ bool, err error) {
 	ctx, span := trace.Start(ctx, "users.Store.ByUsername")
 	defer trace.End(span, &err)
-	return s.one(ctx, "SELECT "+columns+" FROM users WHERE username = ?", username)
+	return db.One(ctx, s.sql.Conn(ctx), scanUser, "SELECT "+columns+" FROM users WHERE username = ?", username)
 }
 
-// one returns the user that a query selects.
+// scanUser reads the columns of a user.
 //
-//line store.ego:40
-func (s *Store) one(ctx context.Context, query string, arg any) (*User, bool, error) {
+//line store.ego:38
+func scanUser(row db.Scanner) (*User, error) {
 	var u User
-	err := s.sql.Conn(ctx).QueryRowContext(ctx, query, arg).Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Bio, &u.Image)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-//line store.ego:47
-	return &u, true, nil
+	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Bio, &u.Image)
+	return &u, err
 }
 
 // Save inserts u if its ID is 0, or else updates it, unless another user
@@ -75,7 +66,7 @@ func (s *Store) one(ctx context.Context, query string, arg any) (*User, bool, er
 func (s *Store) Save(ctx context.Context, u *User) (taken string, err error) {
 	ctx, span := trace.Start(ctx, "users.Store.Save")
 	defer trace.End(span, &err)
-//line store.ego:54
+//line store.ego:48
 	if err2 := s.sql.InTx(ctx, func(ctx context.Context) error {
 		for _, field := range []string{"username", "email"} {
 			var value string
@@ -84,12 +75,12 @@ func (s *Store) Save(ctx context.Context, u *User) (taken string, err error) {
 			} else {
 				value = u.Email
 			}
-//line store.ego:57
-			var n int
-			if err := s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT count(*) FROM users WHERE "+field+" = ? AND id != ?", value, u.ID).Scan(&n); err != nil {
-				return fmt.Errorf("QueryRowContext.Scan: %w", err)
+//line store.ego:51
+			n, err := db.Value[int](ctx, s.sql.Conn(ctx), "SELECT count(*) FROM users WHERE "+field+" = ? AND id != ?", value, u.ID)
+			if err != nil {
+				return fmt.Errorf("db.Value: %w", err)
 			}
-//line store.ego:59
+//line store.ego:52
 			if n > 0 {
 				taken = field
 				return nil
@@ -100,7 +91,7 @@ func (s *Store) Save(ctx context.Context, u *User) (taken string, err error) {
 				u.Username, u.Email, u.PasswordHash, u.Bio, u.Image, u.ID); err2 != nil {
 				return fmt.Errorf("Conn.ExecContext: %w", err2)
 			}
-//line store.ego:67
+//line store.ego:60
 			return nil
 		}
 		res, err3 := s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO users (username, email, password_hash, bio, image) VALUES (?, ?, ?, ?, ?)",
@@ -108,18 +99,18 @@ func (s *Store) Save(ctx context.Context, u *User) (taken string, err error) {
 		if err3 != nil {
 			return fmt.Errorf("Conn.ExecContext: %w", err3)
 		}
-//line store.ego:71
+//line store.ego:64
 		v, err4 := res.LastInsertId()
 		if err4 != nil {
 			return fmt.Errorf("res.LastInsertId: %w", err4)
 		}
 		u.ID = v
-//line store.ego:72
+//line store.ego:65
 		return nil
 	}); err2 != nil {
 		return "", err2
 	}
-//line store.ego:74
+//line store.ego:67
 	return taken, nil
 }
 
@@ -127,18 +118,18 @@ func (s *Store) Save(ctx context.Context, u *User) (taken string, err error) {
 func (s *Store) Follow(ctx context.Context, follower, followed int64, follow bool) (err error) {
 	ctx, span := trace.Start(ctx, "users.Store.Follow")
 	defer trace.End(span, &err)
-//line store.ego:79
+//line store.ego:72
 	var query string
 	if follow {
 		query = "INSERT OR IGNORE INTO follows (follower_id, followed_id) VALUES (?, ?)"
 	} else {
 		query = "DELETE FROM follows WHERE follower_id = ? AND followed_id = ?"
 	}
-//line store.ego:80
+//line store.ego:73
 	if _, err := s.sql.Conn(ctx).ExecContext(ctx, query, follower, followed); err != nil {
 		return fmt.Errorf("Conn.ExecContext: %w", err)
 	}
-//line store.ego:81
+//line store.ego:74
 	return nil
 }
 
@@ -146,11 +137,5 @@ func (s *Store) Follow(ctx context.Context, follower, followed int64, follow boo
 func (s *Store) Follows(ctx context.Context, follower, followed int64) (_ bool, err error) {
 	ctx, span := trace.Start(ctx, "users.Store.Follows")
 	defer trace.End(span, &err)
-//line store.ego:86
-	var yes bool
-	if err := s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM follows WHERE follower_id = ? AND followed_id = ?)", follower, followed).Scan(&yes); err != nil {
-		return false, fmt.Errorf("QueryRowContext.Scan: %w", err)
-	}
-//line store.ego:88
-	return yes, nil
+	return db.Value[bool](ctx, s.sql.Conn(ctx), "SELECT EXISTS (SELECT 1 FROM follows WHERE follower_id = ? AND followed_id = ?)", follower, followed)
 }

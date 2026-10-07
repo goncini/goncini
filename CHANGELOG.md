@@ -121,7 +121,9 @@ Databases, whatever library an app queries them with:
   the `db.Config` section, without connecting, and closes it with the app.
   `SQL.InTx` runs a function in a transaction that `SQL.Conn` finds in its
   `ctx`, joining an outer one; `db.Conn` is sqlc's `DBTX`. `Migrator` is
-  behind `db:migrate`, `db:migrate:status` and `db:rollback`.
+  behind `db:migrate`, `db:migrate:status` and `db:rollback`. `db.All`,
+  `db.One` and `db.Value` run a query and read its rows with the app's
+  scan function, or its one value.
 - **Checks:** an app's `[]goncini.Check`, such as `pool.PingContext`, run
   before `serve` listens. Nothing connects while the app is built, so
   `help`, `list` and `debug:*` work without the database.
@@ -189,8 +191,10 @@ M1's gates:
 - The same API written with plain `net/http` and hand wiring,
   [examples/realworld-plain](examples/realworld-plain), passes the same
   suite. Without blank lines and comments, goncini's articles feature is
-  29% shorter (453 lines against 640), the whole app 31% (915 against
-  1,333), the users feature 3%: half of each feature is SQL in both.
+  34% shorter (421 lines against 640), the whole app 34% (874 against
+  1,333), the users feature 6%. Half of each feature is SQL in both: the
+  articles feature was 29% shorter until `db.All`, `db.One` and `db.Value`
+  took the rows' boilerplate.
 - An agent given only [AGENTS.md](AGENTS.md) added an endpoint with
   validation and a new error case, and hidden tests passed at the first
   attempt; its feedback went into AGENTS.md. The task and the tests are

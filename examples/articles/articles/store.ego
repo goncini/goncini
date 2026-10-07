@@ -2,9 +2,7 @@ package articles
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json/v2"
-	"errors"
 	"time"
 
 	"github.com/goncini/goncini/db"
@@ -26,28 +24,15 @@ effect (s *Store) List(tag string, limit int) ([]Article, int, error) {
 	if tag != "" {
 		where, args = " WHERE EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)", []any{tag}
 	}
-	var count int
-	check s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT count(*) FROM articles"+where, args...).Scan(&count)
-	rows := check s.sql.Conn(ctx).QueryContext(ctx, "SELECT slug, title, body, tags, created_at FROM articles"+where+" ORDER BY created_at DESC LIMIT ?", append(args, limit)...)
-	defer rows.Close()
-	var list []Article
-	for rows.Next() {
-		art := check scan(rows) ""
-		list = append(list, art)
-	}
-	check rows.Err()
+	conn := s.sql.Conn(ctx)
+	count := check db.Value[int](ctx, conn, "SELECT count(*) FROM articles"+where, args...)
+	list := check db.All(ctx, conn, scan, "SELECT slug, title, body, tags, created_at FROM articles"+where+" ORDER BY created_at DESC LIMIT ?", append(args, limit)...)
 	return list, count, nil
 }
 
 // Get returns the article with the slug, and reports whether there is one.
 effect (s *Store) Get(slug string) (Article, bool, error) {
-	row := s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT slug, title, body, tags, created_at FROM articles WHERE slug = ?", slug)
-	art, err := scan(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Article{}, false, nil
-	}
-	check err ""
-	return art, true, nil
+	return db.One(ctx, s.sql.Conn(ctx), scan, "SELECT slug, title, body, tags, created_at FROM articles WHERE slug = ?", slug)
 }
 
 // Add adds an article, unless its slug is taken, and reports whether it
@@ -70,7 +55,7 @@ effect (s *Store) Add(art Article) (bool, error) {
 }
 
 // scan reads an article from a row.
-func scan(row interface{ Scan(dest ...any) error }) (Article, error) {
+func scan(row db.Scanner) (Article, error) {
 	var art Article
 	var tags string
 	var created int64

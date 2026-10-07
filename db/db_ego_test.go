@@ -209,3 +209,81 @@ func TestIsolate(t *testing.T) {
 		t.Errorf("log %q: the test's transaction should take in the app's", got)
 	}
 }
+
+func TestQueries(t *testing.T) {
+	pool, err := sql.Open("words", "")
+	if err != nil {
+		panic(err)
+	}
+//line db_test.ego:185
+	defer pool.Close()
+	ctx := context.Background()
+	scan := func(row db.Scanner) (string, error) {
+		var s string
+		err := row.Scan(&s)
+		return s, err
+	}
+	all, err := db.All(ctx, pool, scan, "a b c")
+	if err != nil {
+		panic(err)
+	}
+//line db_test.ego:193
+	none, err := db.All(ctx, pool, scan, "")
+	if err != nil {
+		panic(err)
+	}
+//line db_test.ego:194
+	first, ok, err := db.One(ctx, pool, scan, "x y")
+	if err != nil {
+		panic(err)
+	}
+//line db_test.ego:195
+	_, missing, err := db.One(ctx, pool, scan, "")
+	if err != nil {
+		panic(err)
+	}
+//line db_test.ego:196
+	value, err := db.Value[string](ctx, pool, "v")
+	if err != nil {
+		panic(err)
+	}
+//line db_test.ego:197
+	if strings.Join(all, " ") != "a b c" || none == nil || len(none) != 0 || first != "x" || !ok || missing || value != "v" {
+		t.Errorf("All %q, %q; One %q %v, %v; Value %q", all, none, first, ok, missing, value)
+	}
+}
+
+// rowsDriver answers each query with a row per word of the query, in one
+// column.
+type rowsDriver struct{}
+
+func (rowsDriver) Open(string) (driver.Conn, error) { return rowsConn{}, nil }
+
+type rowsConn struct{}
+
+func (rowsConn) Prepare(query string) (driver.Stmt, error) { return rowsStmt(query), nil }
+func (rowsConn) Close() error                              { return nil }
+func (rowsConn) Begin() (driver.Tx, error)                 { return nil, errors.New("no transactions") }
+
+type rowsStmt string
+
+func (s rowsStmt) Close() error                                    { return nil }
+func (s rowsStmt) NumInput() int                                   { return -1 }
+func (s rowsStmt) Exec(args []driver.Value) (driver.Result, error) { return nil, errors.New("no exec") }
+func (s rowsStmt) Query(args []driver.Value) (driver.Rows, error) {
+	return &words{words: strings.Fields(string(s))}, nil
+}
+
+type words struct{ words []string }
+
+func (w *words) Columns() []string { return []string{"word"} }
+func (w *words) Close() error      { return nil }
+func (w *words) Next(dest []driver.Value) error {
+	if len(w.words) == 0 {
+		return io.EOF
+	}
+	dest[0], w.words = w.words[0], w.words[1:]
+	return nil
+}
+
+func init() { sql.Register("words", rowsDriver{}) }

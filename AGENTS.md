@@ -158,14 +158,28 @@ one. In the RealWorld app, `users.Current(ctx)` and `users.Viewer(ctx)`
 
 ## Database
 
-Stores query through `db.SQL`:
+Stores query through `db.SQL`, with `db.All`, `db.One` and `db.Value`:
 
 ```go
-effect (s *Store) Get(id int64) (Comment, bool, error) {
-	row := s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT … WHERE id = ?", id)
-	…
+effect (s *Store) Get(id int64) (Comment, bool, error) { // false: no such row
+	return db.One(ctx, s.sql.Conn(ctx), scanComment, "SELECT id, body FROM comments WHERE id = ?", id)
 }
+
+effect (s *Store) List(article int64) ([]Comment, error) { // empty, not nil, for no rows
+	return db.All(ctx, s.sql.Conn(ctx), scanComment, "SELECT id, body FROM comments WHERE article_id = ?", article)
+}
+
+// scanComment reads the columns that the queries select, in order.
+func scanComment(row db.Scanner) (Comment, error) {
+	var c Comment
+	err := row.Scan(&c.ID, &c.Body)
+	return c, err
+}
+
+n := check db.Value[int](ctx, s.sql.Conn(ctx), "SELECT count(*) FROM comments") // one column, one row
 ```
+
+`s.sql.Conn(ctx).ExecContext(ctx, …)` runs a statement.
 
 `s.sql.InTx(ctx, func(ctx context.Context) error { … })` runs a function in
 a transaction, which the store calls made with that `ctx` take part in. A

@@ -4,9 +4,7 @@ package articles
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -19,7 +17,7 @@ import (
 
 // Store keeps the articles, their tags, favorites and comments.
 //
-//line store.ego:16
+//line store.ego:14
 type Store struct {
 	sql *db.SQL
 	now func() time.Time
@@ -78,34 +76,23 @@ FROM articles a JOIN users u ON u.id = a.author_id`
 func (s *Store) List(ctx context.Context, viewer int64, f Filter, limit, offset int) (_ []Article, _ int, err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.List")
 	defer trace.End(span, &err)
-//line store.ego:72
+//line store.ego:70
 	where, args := f.where()
-	var count int
-	if err := s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT count(*) FROM articles a JOIN users u ON u.id = a.author_id"+where, args...).Scan(&count); err != nil {
-		return nil, 0, fmt.Errorf("QueryRowContext.Scan: %w", err)
+	conn := s.sql.Conn(ctx)
+	count, err := db.Value[int](ctx, conn, "SELECT count(*) FROM articles a JOIN users u ON u.id = a.author_id"+where, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("db.Value: %w", err)
+	}
+//line store.ego:73
+	query := selectArticles + where + " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
+	list, err := db.All(ctx, conn, scanArticle, query, append(append([]any{viewer, viewer}, args...), limit, offset)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("db.All: %w", err)
 	}
 //line store.ego:75
-	query := selectArticles + where + " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
-	rows, err := s.sql.Conn(ctx).QueryContext(ctx, query, append(append([]any{viewer, viewer}, args...), limit, offset)...)
-	if err != nil {
-		return nil, 0, fmt.Errorf("Conn.QueryContext: %w", err)
+	for i := range list {
+		list[i].Body = nil
 	}
-//line store.ego:77
-	defer rows.Close()
-	list := []Article{}
-	for rows.Next() {
-		art, err := scanArticle(rows)
-		if err != nil {
-			return nil, 0, err
-		}
-//line store.ego:81
-		art.Body = nil
-		list = append(list, art)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("rows.Err: %w", err)
-	}
-//line store.ego:85
 	return list, count, nil
 }
 
@@ -114,21 +101,13 @@ func (s *Store) List(ctx context.Context, viewer int64, f Filter, limit, offset 
 func (s *Store) BySlug(ctx context.Context, viewer int64, slug string) (_ Article, _ bool, err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.BySlug")
 	defer trace.End(span, &err)
-//line store.ego:91
-	row := s.sql.Conn(ctx).QueryRowContext(ctx, selectArticles+" WHERE a.slug = ?", viewer, viewer, slug)
-	art, err := scanArticle(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Article{}, false, nil
-	}
-	if err != nil {
-		return Article{}, false, err
-	}
-//line store.ego:97
-	return art, true, nil
+	return db.One(ctx, s.sql.Conn(ctx), scanArticle, selectArticles+" WHERE a.slug = ?", viewer, viewer, slug)
 }
 
 // scanArticle reads an article that selectArticles selects.
-func scanArticle(row interface{ Scan(dest ...any) error }) (Article, error) {
+//
+//line store.ego:88
+func scanArticle(row db.Scanner) (Article, error) {
 	var art Article
 	var body, tags string
 	var created, updated int64
@@ -137,11 +116,11 @@ func scanArticle(row interface{ Scan(dest ...any) error }) (Article, error) {
 		&art.FavoritesCount, &art.Favorited, &art.Author.Following, &tags); err != nil {
 		return Article{}, err
 	}
-//line store.ego:108
+//line store.ego:95
 	if err := json.Unmarshal([]byte(tags), &art.TagList); err != nil {
 		return Article{}, err
 	}
-//line store.ego:109
+//line store.ego:96
 	art.Body = &body
 	art.CreatedAt, art.UpdatedAt = time.UnixMicro(created).UTC(), time.UnixMicro(updated).UTC()
 	return art, nil
@@ -153,7 +132,7 @@ func scanArticle(row interface{ Scan(dest ...any) error }) (Article, error) {
 func (s *Store) Save(ctx context.Context, art Article, tags []string) (_ string, err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.Save")
 	defer trace.End(span, &err)
-//line store.ego:118
+//line store.ego:105
 	now := s.now().UnixMicro()
 	if err := s.sql.InTx(ctx, func(ctx context.Context) error {
 		conn := s.sql.Conn(ctx)
@@ -163,44 +142,44 @@ func (s *Store) Save(ctx context.Context, art Article, tags []string) (_ string,
 				return fmt.Errorf("conn.ExecContext: %w", err)
 			}
 		} else {
-//line store.ego:125
+//line store.ego:112
 			v, err := s.freeSlug(ctx, slugify(art.Title))
 			if err != nil {
 				return err
 			}
 			art.Slug = v
-//line store.ego:126
+//line store.ego:113
 			res, err := conn.ExecContext(ctx, "INSERT INTO articles (slug, title, description, body, author_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 				art.Slug, art.Title, art.Description, *art.Body, art.AuthorID, now, now)
 			if err != nil {
 				return fmt.Errorf("conn.ExecContext: %w", err)
 			}
-//line store.ego:128
+//line store.ego:115
 			v2, err := res.LastInsertId()
 			if err != nil {
 				return fmt.Errorf("res.LastInsertId: %w", err)
 			}
 			art.ID = v2
 		}
-//line store.ego:130
+//line store.ego:117
 		if tags == nil {
 			return nil
 		}
 		if _, err := conn.ExecContext(ctx, "DELETE FROM article_tags WHERE article_id = ?", art.ID); err != nil {
 			return fmt.Errorf("conn.ExecContext: %w", err)
 		}
-//line store.ego:134
+//line store.ego:121
 		for i, tag := range tags {
 			if _, err := conn.ExecContext(ctx, "INSERT INTO article_tags (article_id, position, tag) VALUES (?, ?, ?)", art.ID, i, tag); err != nil {
 				return fmt.Errorf("conn.ExecContext: %w", err)
 			}
 		}
-//line store.ego:137
+//line store.ego:124
 		return nil
 	}); err != nil {
 		return "", err
 	}
-//line store.ego:139
+//line store.ego:126
 	return art.Slug, nil
 }
 
@@ -209,11 +188,11 @@ func (s *Store) Save(ctx context.Context, art Article, tags []string) (_ string,
 func (s *Store) freeSlug(ctx context.Context, base string) (string, error) {
 	slug := base
 	for n := 2; ; n++ {
-		var taken bool
-		if err := s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM articles WHERE slug = ?)", slug).Scan(&taken); err != nil {
+		taken, err := db.Value[bool](ctx, s.sql.Conn(ctx), "SELECT EXISTS (SELECT 1 FROM articles WHERE slug = ?)", slug)
+		if err != nil {
 			return "", err
 		}
-//line store.ego:149
+//line store.ego:135
 		if !taken {
 			return slug, nil
 		}
@@ -226,11 +205,11 @@ func (s *Store) freeSlug(ctx context.Context, base string) (string, error) {
 func (s *Store) Delete(ctx context.Context, id int64) (err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.Delete")
 	defer trace.End(span, &err)
-//line store.ego:159
+//line store.ego:145
 	if _, err := s.sql.Conn(ctx).ExecContext(ctx, "DELETE FROM articles WHERE id = ?", id); err != nil {
 		return fmt.Errorf("Conn.ExecContext: %w", err)
 	}
-//line store.ego:160
+//line store.ego:146
 	return nil
 }
 
@@ -238,18 +217,18 @@ func (s *Store) Delete(ctx context.Context, id int64) (err error) {
 func (s *Store) Favorite(ctx context.Context, user, article int64, favorite bool) (err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.Favorite")
 	defer trace.End(span, &err)
-//line store.ego:165
+//line store.ego:151
 	var query string
 	if favorite {
 		query = "INSERT OR IGNORE INTO favorites (user_id, article_id) VALUES (?, ?)"
 	} else {
 		query = "DELETE FROM favorites WHERE user_id = ? AND article_id = ?"
 	}
-//line store.ego:166
+//line store.ego:152
 	if _, err := s.sql.Conn(ctx).ExecContext(ctx, query, user, article); err != nil {
 		return fmt.Errorf("Conn.ExecContext: %w", err)
 	}
-//line store.ego:167
+//line store.ego:153
 	return nil
 }
 
@@ -257,27 +236,14 @@ func (s *Store) Favorite(ctx context.Context, user, article int64, favorite bool
 func (s *Store) Tags(ctx context.Context) (_ []string, err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.Tags")
 	defer trace.End(span, &err)
-//line store.ego:172
-	rows, err := s.sql.Conn(ctx).QueryContext(ctx, "SELECT DISTINCT tag FROM article_tags ORDER BY tag")
-	if err != nil {
-		return nil, fmt.Errorf("Conn.QueryContext: %w", err)
-	}
-//line store.ego:173
-	defer rows.Close()
-	tags := []string{}
-	for rows.Next() {
-		var tag string
-		if err := rows.Scan(&tag); err != nil {
-			return nil, fmt.Errorf("rows.Scan: %w", err)
-		}
-//line store.ego:178
-		tags = append(tags, tag)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows.Err: %w", err)
-	}
-//line store.ego:181
-	return tags, nil
+	return db.All(ctx, s.sql.Conn(ctx), scanTag, "SELECT DISTINCT tag FROM article_tags ORDER BY tag")
+}
+
+//line store.ego:161
+func scanTag(row db.Scanner) (string, error) {
+	var tag string
+	err := row.Scan(&tag)
+	return tag, err
 }
 
 // selectComments selects a comment as the viewer, a user ID or 0, sees it.
@@ -289,55 +255,29 @@ FROM comments c JOIN users u ON u.id = c.author_id`
 func (s *Store) Comments(ctx context.Context, viewer, article int64) (_ []Comment, err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.Comments")
 	defer trace.End(span, &err)
-//line store.ego:191
-	rows, err := s.sql.Conn(ctx).QueryContext(ctx, selectComments+" WHERE c.article_id = ? ORDER BY c.id", viewer, article)
-	if err != nil {
-		return nil, fmt.Errorf("Conn.QueryContext: %w", err)
-	}
-//line store.ego:192
-	defer rows.Close()
-	comments := []Comment{}
-	for rows.Next() {
-		c, err := scanComment(rows)
-		if err != nil {
-			return nil, err
-		}
-//line store.ego:196
-		comments = append(comments, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows.Err: %w", err)
-	}
-//line store.ego:199
-	return comments, nil
+	return db.All(ctx, s.sql.Conn(ctx), scanComment, selectComments+" WHERE c.article_id = ? ORDER BY c.id", viewer, article)
 }
 
 // Comment returns the comment of the article with the ID, and reports
 // whether there is one.
+//
+//line store.ego:179
 func (s *Store) Comment(ctx context.Context, viewer, article, id int64) (_ Comment, _ bool, err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.Comment")
 	defer trace.End(span, &err)
-//line store.ego:205
-	row := s.sql.Conn(ctx).QueryRowContext(ctx, selectComments+" WHERE c.article_id = ? AND c.id = ?", viewer, article, id)
-	c, err := scanComment(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Comment{}, false, nil
-	}
-	if err != nil {
-		return Comment{}, false, err
-	}
-//line store.ego:211
-	return c, true, nil
+	return db.One(ctx, s.sql.Conn(ctx), scanComment, selectComments+" WHERE c.article_id = ? AND c.id = ?", viewer, article, id)
 }
 
 // scanComment reads a comment that selectComments selects.
-func scanComment(row interface{ Scan(dest ...any) error }) (Comment, error) {
+//
+//line store.ego:184
+func scanComment(row db.Scanner) (Comment, error) {
 	var c Comment
 	var created, updated int64
 	if err := row.Scan(&c.ID, &c.AuthorID, &c.Body, &created, &updated, &c.Author.Username, &c.Author.Bio, &c.Author.Image, &c.Author.Following); err != nil {
 		return Comment{}, err
 	}
-//line store.ego:219
+//line store.ego:188
 	c.CreatedAt, c.UpdatedAt = time.UnixMicro(created).UTC(), time.UnixMicro(updated).UTC()
 	return c, nil
 }
@@ -347,14 +287,14 @@ func scanComment(row interface{ Scan(dest ...any) error }) (Comment, error) {
 func (s *Store) AddComment(ctx context.Context, article, author int64, body string) (_ int64, err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.AddComment")
 	defer trace.End(span, &err)
-//line store.ego:226
+//line store.ego:195
 	now := s.now().UnixMicro()
 	res, err := s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO comments (article_id, author_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
 		article, author, body, now, now)
 	if err != nil {
 		return 0, fmt.Errorf("Conn.ExecContext: %w", err)
 	}
-//line store.ego:229
+//line store.ego:198
 	return res.LastInsertId()
 }
 
@@ -362,10 +302,10 @@ func (s *Store) AddComment(ctx context.Context, article, author int64, body stri
 func (s *Store) DeleteComment(ctx context.Context, id int64) (err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.DeleteComment")
 	defer trace.End(span, &err)
-//line store.ego:234
+//line store.ego:203
 	if _, err := s.sql.Conn(ctx).ExecContext(ctx, "DELETE FROM comments WHERE id = ?", id); err != nil {
 		return fmt.Errorf("Conn.ExecContext: %w", err)
 	}
-//line store.ego:235
+//line store.ego:204
 	return nil
 }

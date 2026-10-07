@@ -179,3 +179,57 @@ func TestIsolate(t *testing.T) {
 		t.Errorf("log %q: the test's transaction should take in the app's", got)
 	}
 }
+
+func TestQueries(t *testing.T) {
+	pool := must sql.Open("words", "")
+	defer pool.Close()
+	ctx := context.Background()
+	scan := func(row db.Scanner) (string, error) {
+		var s string
+		err := row.Scan(&s)
+		return s, err
+	}
+	all := must db.All(ctx, pool, scan, "a b c")
+	none := must db.All(ctx, pool, scan, "")
+	first, ok := must db.One(ctx, pool, scan, "x y")
+	_, missing := must db.One(ctx, pool, scan, "")
+	value := must db.Value[string](ctx, pool, "v")
+	if strings.Join(all, " ") != "a b c" || none == nil || len(none) != 0 || first != "x" || !ok || missing || value != "v" {
+		t.Errorf("All %q, %q; One %q %v, %v; Value %q", all, none, first, ok, missing, value)
+	}
+}
+
+// rowsDriver answers each query with a row per word of the query, in one
+// column.
+type rowsDriver struct{}
+
+func (rowsDriver) Open(string) (driver.Conn, error) { return rowsConn{}, nil }
+
+type rowsConn struct{}
+
+func (rowsConn) Prepare(query string) (driver.Stmt, error) { return rowsStmt(query), nil }
+func (rowsConn) Close() error                              { return nil }
+func (rowsConn) Begin() (driver.Tx, error)                 { return nil, errors.New("no transactions") }
+
+type rowsStmt string
+
+func (s rowsStmt) Close() error                                    { return nil }
+func (s rowsStmt) NumInput() int                                   { return -1 }
+func (s rowsStmt) Exec(args []driver.Value) (driver.Result, error) { return nil, errors.New("no exec") }
+func (s rowsStmt) Query(args []driver.Value) (driver.Rows, error) {
+	return &words{words: strings.Fields(string(s))}, nil
+}
+
+type words struct{ words []string }
+
+func (w *words) Columns() []string { return []string{"word"} }
+func (w *words) Close() error      { return nil }
+func (w *words) Next(dest []driver.Value) error {
+	if len(w.words) == 0 {
+		return io.EOF
+	}
+	dest[0], w.words = w.words[0], w.words[1:]
+	return nil
+}
+
+func init() { sql.Register("words", rowsDriver{}) }

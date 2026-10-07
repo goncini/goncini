@@ -2,8 +2,6 @@ package users
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 
 	"github.com/goncini/goncini/db"
 )
@@ -22,29 +20,25 @@ const columns = "id, username, email, password_hash, bio, image"
 // ByID returns the user with the ID, and reports whether there is one: the
 // firewall's Load.
 effect (s *Store) ByID(id string) (*User, bool, error) {
-	return s.one(ctx, "SELECT "+columns+" FROM users WHERE id = ?", id)
+	return db.One(ctx, s.sql.Conn(ctx), scanUser, "SELECT "+columns+" FROM users WHERE id = ?", id)
 }
 
 // ByEmail returns the user with the email, and reports whether there is one.
 effect (s *Store) ByEmail(email string) (*User, bool, error) {
-	return s.one(ctx, "SELECT "+columns+" FROM users WHERE email = ?", email)
+	return db.One(ctx, s.sql.Conn(ctx), scanUser, "SELECT "+columns+" FROM users WHERE email = ?", email)
 }
 
 // ByUsername returns the user with the username, and reports whether there
 // is one.
 effect (s *Store) ByUsername(username string) (*User, bool, error) {
-	return s.one(ctx, "SELECT "+columns+" FROM users WHERE username = ?", username)
+	return db.One(ctx, s.sql.Conn(ctx), scanUser, "SELECT "+columns+" FROM users WHERE username = ?", username)
 }
 
-// one returns the user that a query selects.
-func (s *Store) one(ctx context.Context, query string, arg any) (*User, bool, error) {
+// scanUser reads the columns of a user.
+func scanUser(row db.Scanner) (*User, error) {
 	var u User
-	err := s.sql.Conn(ctx).QueryRowContext(ctx, query, arg).Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Bio, &u.Image)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, false, nil
-	}
-	check err ""
-	return &u, true, nil
+	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Bio, &u.Image)
+	return &u, err
 }
 
 // Save inserts u if its ID is 0, or else updates it, unless another user
@@ -54,8 +48,7 @@ effect (s *Store) Save(u *User) (taken string, err error) {
 	check s.sql.InTx(ctx, func(ctx context.Context) error {
 		for _, field := range []string{"username", "email"} {
 			value := if field == "username" { u.Username } else { u.Email }
-			var n int
-			check s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT count(*) FROM users WHERE "+field+" = ? AND id != ?", value, u.ID).Scan(&n)
+			n := check db.Value[int](ctx, s.sql.Conn(ctx), "SELECT count(*) FROM users WHERE "+field+" = ? AND id != ?", value, u.ID)
 			if n > 0 {
 				taken = field
 				return nil
@@ -83,7 +76,5 @@ effect (s *Store) Follow(follower, followed int64, follow bool) error {
 
 // Follows reports whether follower follows followed.
 effect (s *Store) Follows(follower, followed int64) (bool, error) {
-	var yes bool
-	check s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM follows WHERE follower_id = ? AND followed_id = ?)", follower, followed).Scan(&yes)
-	return yes, nil
+	return db.Value[bool](ctx, s.sql.Conn(ctx), "SELECT EXISTS (SELECT 1 FROM follows WHERE follower_id = ? AND followed_id = ?)", follower, followed)
 }
