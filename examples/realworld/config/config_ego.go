@@ -6,6 +6,7 @@ package config
 
 import (
 	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/cors"
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/security"
@@ -13,7 +14,7 @@ import (
 
 // Config is the API's config, one section per part of the app.
 //
-//line config.ego:13
+//line config.ego:14
 type Config struct {
 	HTTP     goncini.HTTP
 	Log      goncini.Log
@@ -26,6 +27,7 @@ type Config struct {
 // env changes.
 func Load(env *goncini.Env) Config {
 	c := Config{
+		HTTP:     goncini.HTTP{CORS: cors.Config{AllowOrigins: []string{"*"}}}, // the API is public: any frontend may call it
 		DB:       db.Config{Driver: "sqlite", URL: env.Secret("DATABASE_URL")},
 		Security: security.Config{Secret: env.Secret("APP_SECRET"), Scheme: "Token"},
 		OpenAPI:  openapi.Config{Title: "RealWorld Conduit API", Version: "2.0.0"},

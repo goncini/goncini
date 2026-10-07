@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/cors"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
@@ -22,7 +23,7 @@ import (
 // HTTP configures how an app serves HTTP. Each field's zero value is the
 // default it names.
 //
-//line app.ego:19
+//line app.ego:20
 type HTTP struct {
 	// Addr is the TCP address to listen on; empty means ":8080".
 	Addr string
@@ -35,6 +36,9 @@ type HTTP struct {
 	// proxy in front checks the host: a URL built from a host the client
 	// made up can be used against other users.
 	TrustedHosts []string
+	// CORS lets browsers call the API from the origins it allows; none by
+	// default.
+	CORS cors.Config
 	// BodyLimit is the most bytes read from a request body; zero means
 	// httpkernel.DefaultBodyLimit.
 	BodyLimit int64
@@ -153,7 +157,7 @@ func NewValidator() httpkernel.Validator {
 }
 
 // NewKernel returns the kernel that serves router: behind the trusted
-// proxies and hosts of c and an access log, then the app's middleware, with
+// proxies and hosts of c, an access log and CORS, then the app's middleware, with
 // mappers turning errors into problems that renderer writes.
 func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middleware, mappers []httpkernel.ErrorMapper, renderer httpkernel.Renderer, v httpkernel.Validator, logger *slog.Logger) (*httpkernel.Kernel, error) {
 	var mw []httpkernel.Middleware
@@ -162,7 +166,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:155
+//line app.ego:159
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -170,10 +174,18 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:159
+//line app.ego:163
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
+	if len(c.CORS.AllowOrigins) > 0 {
+		cors, err := cors.New(c.CORS)
+		if err != nil {
+			return nil, err
+		}
+//line app.ego:168
+		mw = append(mw, cors)
+	}
 	return &httpkernel.Kernel{
 		Handler:      router,
 		Middleware:   append(mw, middleware...),
@@ -212,17 +224,17 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 // serves, with the doc comments and errors of a, and serves it on router
 // as c says.
 //
-//line app.ego:193
+//line app.ego:201
 func NewOpenAPI(c openapi.Config, router *routing.Router, kernel *httpkernel.Kernel, a openapi.Annotations) (*openapi.Document, error) {
 	doc, err := openapi.Generate(router.List(), kernel, c, a)
 	if err != nil {
 		return nil, err
 	}
-//line app.ego:195
+//line app.ego:203
 	if err := openapi.Mount(router, doc, c); err != nil {
 		return nil, err
 	}
-//line app.ego:196
+//line app.ego:204
 	return doc, nil
 }
 

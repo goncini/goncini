@@ -1,0 +1,187 @@
+// Package cors lets browsers call an API from other origins, by
+// Cross-Origin Resource Sharing, as NelmioCorsBundle does for Symfony.
+// New returns the middleware for a Config:
+//
+//	mw := must cors.New(cors.Config{AllowOrigins: []string{"https://app.example.com"}})
+//
+// It answers preflight requests itself, and adds the CORS headers to the
+// responses to the origins it allows. A request from another origin goes
+// through without them, and the browser keeps its response from the page.
+package cors
+
+import (
+	"cmp"
+	"errors"
+	"net/http"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Config says which origins may call the API, and how. The zero value
+// allows no origin.
+type Config struct {
+	// AllowOrigins are the origins allowed, such as https://example.com,
+	// with an optional wildcard for subdomains, https://*.example.com; or
+	// "*" for any.
+	AllowOrigins []string
+	// AllowMethods are the methods allowed; none means GET, HEAD, POST,
+	// PUT, PATCH and DELETE.
+	AllowMethods []string
+	// AllowHeaders are the request headers allowed, besides those that
+	// browsers always allow, such as Accept; none means Authorization and
+	// Content-Type, and "*" any.
+	AllowHeaders []string
+	// ExposeHeaders are the response headers that the page may read,
+	// besides those that browsers always expose, such as Content-Type.
+	ExposeHeaders []string
+	// AllowCredentials lets requests carry cookies and HTTP
+	// authentication. It can't go with the origin "*".
+	AllowCredentials bool
+	// MaxAge is how long browsers may cache a preflight's answer; zero
+	// means 10 minutes, and browsers cap it, at 2 hours for Chromium.
+	MaxAge time.Duration
+}
+
+var (
+	defaultMethods = []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete}
+	defaultHeaders = []string{"Authorization", "Content-Type"}
+)
+
+// New returns the middleware for c, or an error if c is invalid.
+func New(c Config) (func(http.Handler) http.Handler, error) {
+	p := &policy{
+		methods:     strings.Join(orDefault(c.AllowMethods, defaultMethods), ", "),
+		headers:     orDefault(c.AllowHeaders, defaultHeaders),
+		expose:      strings.Join(c.ExposeHeaders, ", "),
+		credentials: c.AllowCredentials,
+		maxAge:      strconv.Itoa(int(cmp.Or(c.MaxAge, 10*time.Minute).Seconds())),
+	}
+	for _, o := range c.AllowOrigins {
+		switch {
+		case o == "*":
+			if c.AllowCredentials {
+				return nil, errors.New("cors: the origin * can't allow credentials: list the origins")
+			}
+			p.any = true
+		case strings.Contains(o, "*"):
+			scheme, host, ok := strings.Cut(o, "://*.")
+			if !ok || strings.Contains(host, "*") {
+				return nil, errors.New("cors: invalid origin " + strconv.Quote(o) + ": a wildcard can only be a subdomain, as in https://*.example.com")
+			}
+			p.suffixes = append(p.suffixes, [2]string{scheme + "://", "." + strings.ToLower(host)})
+		default:
+			p.origins = append(p.origins, strings.ToLower(strings.TrimSuffix(o, "/")))
+		}
+	}
+	p.anyHeader = slices.Contains(p.headers, "*")
+	return next => &handler{p, next}, nil
+}
+
+// orDefault returns values, or def if there are none.
+func orDefault(values, def []string) []string {
+	if len(values) == 0 {
+		return def
+	}
+	return values
+}
+
+// policy is a Config, ready to check requests.
+type policy struct {
+	any         bool
+	origins     []string
+	suffixes    [][2]string // a scheme and a host suffix
+	methods     string
+	headers     []string
+	anyHeader   bool
+	expose      string
+	credentials bool
+	maxAge      string
+}
+
+// allows reports whether the origin may call the API.
+func (p *policy) allows(origin string) bool {
+	if p.any {
+		return true
+	}
+	origin = strings.ToLower(origin)
+	if slices.Contains(p.origins, origin) {
+		return true
+	}
+	for _, s := range p.suffixes {
+		if rest, ok := strings.CutPrefix(origin, s[0]); ok && strings.HasSuffix(rest, s[1]) && len(rest) > len(s[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+// handler is a handler behind CORS.
+type handler struct {
+	p    *policy
+	next http.Handler
+}
+
+func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		h.next.ServeHTTP(w, r)
+		return
+	}
+	hd := w.Header()
+	hd.Add("Vary", "Origin")
+	if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+		h.preflight(w, r, origin)
+		return
+	}
+	if h.p.allows(origin) {
+		h.allow(hd, origin)
+		if h.p.expose != "" {
+			hd.Set("Access-Control-Expose-Headers", h.p.expose)
+		}
+	}
+	h.next.ServeHTTP(w, r)
+}
+
+// preflight answers a preflight request: with what the origin may do, or,
+// for an origin that may not call the API, without, so that the browser
+// refuses.
+func (h *handler) preflight(w http.ResponseWriter, r *http.Request, origin string) {
+	hd := w.Header()
+	hd.Add("Vary", "Access-Control-Request-Method")
+	hd.Add("Vary", "Access-Control-Request-Headers")
+	if h.p.allows(origin) {
+		h.allow(hd, origin)
+		hd.Set("Access-Control-Allow-Methods", h.p.methods)
+		if requested := r.Header.Get("Access-Control-Request-Headers"); requested != "" {
+			hd.Set("Access-Control-Allow-Headers", h.allowedHeaders(requested))
+		}
+		hd.Set("Access-Control-Max-Age", h.p.maxAge)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// allow sets the headers that let the origin read the response.
+func (h *handler) allow(hd http.Header, origin string) {
+	if h.p.any && !h.p.credentials {
+		hd.Set("Access-Control-Allow-Origin", "*")
+	} else {
+		hd.Set("Access-Control-Allow-Origin", origin)
+	}
+	if h.p.credentials {
+		hd.Set("Access-Control-Allow-Credentials", "true")
+	}
+}
+
+// allowedHeaders returns the requested headers that are allowed.
+func (h *handler) allowedHeaders(requested string) string {
+	var allowed []string
+	for name := range strings.SplitSeq(requested, ",") {
+		name = strings.TrimSpace(name)
+		if name != "" && (h.p.anyHeader || slices.ContainsFunc(h.p.headers, a => strings.EqualFold(a, name))) {
+			allowed = append(allowed, name)
+		}
+	}
+	return strings.Join(allowed, ", ")
+}

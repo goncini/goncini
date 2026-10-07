@@ -203,6 +203,14 @@ document generated from the code, with nothing to annotate.
 - `httpkernel.Describe` says what an endpoint takes and returns, and
   `routing.Info` has the route's middleware.
 
+### cors
+
+NelmioCorsBundle's role: `cors.New(Config)` is middleware that answers
+preflight requests and adds the CORS headers for the origins it allows,
+exact or with a wildcard subdomain (`https://*.example.com`), with the
+methods, headers, exposed headers, credentials and max age it says. A
+goncini app sets it in `goncini.HTTP.CORS`; RealWorld allows any origin.
+
 ### The RealWorld app
 
 [`examples/realworld`](examples/realworld) is the RealWorld "Conduit" API,

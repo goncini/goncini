@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/cors"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
@@ -28,6 +29,9 @@ type HTTP struct {
 	// proxy in front checks the host: a URL built from a host the client
 	// made up can be used against other users.
 	TrustedHosts []string
+	// CORS lets browsers call the API from the origins it allows; none by
+	// default.
+	CORS cors.Config
 	// BodyLimit is the most bytes read from a request body; zero means
 	// httpkernel.DefaultBodyLimit.
 	BodyLimit int64
@@ -146,7 +150,7 @@ func NewValidator() httpkernel.Validator {
 }
 
 // NewKernel returns the kernel that serves router: behind the trusted
-// proxies and hosts of c and an access log, then the app's middleware, with
+// proxies and hosts of c, an access log and CORS, then the app's middleware, with
 // mappers turning errors into problems that renderer writes.
 func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middleware, mappers []httpkernel.ErrorMapper, renderer httpkernel.Renderer, v httpkernel.Validator, logger *slog.Logger) (*httpkernel.Kernel, error) {
 	var mw []httpkernel.Middleware
@@ -159,6 +163,10 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
+	if len(c.CORS.AllowOrigins) > 0 {
+		cors := check cors.New(c.CORS) ""
+		mw = append(mw, cors)
+	}
 	return &httpkernel.Kernel{
 		Handler:      router,
 		Middleware:   append(mw, middleware...),
