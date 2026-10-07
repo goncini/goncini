@@ -1,0 +1,225 @@
+package messenger
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"runtime/debug"
+	"sync"
+	"time"
+
+	"github.com/effect-go/effect-go/scope"
+)
+
+// Worker receives messages from transports and handles them, as
+// messenger:consume does.
+type Worker struct {
+	Bus *Bus
+	// Transports are the names of the transports to receive from, the
+	// first first: a message of the second is received when the first has
+	// none.
+	Transports []string
+	// Concurrency is how many messages are handled at once; zero means 1.
+	Concurrency int
+	// Lease is how long a message stays a worker's without word from it;
+	// zero means 30 seconds. The worker extends it every third while it
+	// handles the message, so a worker that dies loses it that long after.
+	Lease time.Duration
+	// Poll is how long to wait when there is no message; zero means a
+	// second.
+	Poll time.Duration
+	// StopTimeout is how long the messages being handled have to finish
+	// once the worker is told to stop; zero means 30 seconds. Those that
+	// don't are cancelled, and go back to their transport.
+	StopTimeout time.Duration
+	// Limit stops the worker after it handled that many messages; zero
+	// means no limit.
+	Limit int
+	// Logger logs what goes wrong; nil means slog.Default().
+	Logger *slog.Logger
+}
+
+// Run handles messages until ctx is done, or Limit is reached; then it
+// waits for the messages being handled, up to StopTimeout, and returns.
+func (w *Worker) Run(ctx context.Context) error {
+	for _, name := range w.Transports {
+		if w.Bus.Transports[name] == nil {
+			return fmt.Errorf("messenger: no transport %q", name)
+		}
+	}
+	// Handlers run in a context that outlives ctx by StopTimeout, so that
+	// stopping lets them finish.
+	handling, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
+	defer cancel(nil)
+	stop := context.AfterFunc(ctx, () => {
+		time.AfterFunc(w.stopTimeout(), () => cancel(errStopTimeout))
+	})
+	defer stop()
+	receiving, done := context.WithCancel(ctx)
+	defer done()
+	var mu sync.Mutex
+	handled := 0
+	// take reports whether the worker may handle one more message, and
+	// whether it is its last.
+	take := func() (ok, last bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if w.Limit > 0 && handled >= w.Limit {
+			return false, false
+		}
+		handled++
+		return true, w.Limit > 0 && handled == w.Limit
+	}
+	_, err := scope.Run(receiving, func(s *scope.Scope) (struct{}, error) {
+		var fibers []*scope.Fiber[struct{}]
+		for range max(w.Concurrency, 1) {
+			fibers = append(fibers, scope.Fork(s, func(ctx context.Context) (struct{}, error) {
+				return struct{}{}, w.loop(ctx, handling, take, done)
+			}))
+		}
+		var errs []error
+		for _, f := range fibers {
+			_, err := f.Join()
+			errs = append(errs, err)
+		}
+		return struct{}{}, errors.Join(errs...)
+	}, scope.StopTimeout(w.stopTimeout()+time.Second))
+	if ctx.Err() != nil && errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
+var errStopTimeout = errors.New("messenger: the worker's stop timeout ran out")
+
+func (w *Worker) stopTimeout() time.Duration {
+	return if w.StopTimeout > 0 { w.StopTimeout } else { 30 * time.Second }
+}
+
+// loop receives and handles messages until ctx is done or take refuses.
+func (w *Worker) loop(ctx, handling context.Context, take func() (bool, bool), done func()) error {
+	for ctx.Err() == nil {
+		lease, ok := check w.receive(ctx) ""
+		if !ok {
+			poll := if w.Poll > 0 { w.Poll } else { time.Second }
+			select {
+			case <-ctx.Done():
+			case <-time.After(poll):
+			}
+			continue
+		}
+		ok, last := take()
+		if !ok {
+			// Another fiber handled the last one: give it back, untouched.
+			return lease.Retry(handling, lease.Message())
+		}
+		w.process(handling, lease)
+		if last {
+			done()
+		}
+	}
+	return nil
+}
+
+// receive leases the next message of the first transport that has one.
+func (w *Worker) receive(ctx context.Context) (Lease, bool, error) {
+	for _, name := range w.Transports {
+		lease, ok, err := w.Bus.Transports[name].Receive(ctx, w.lease())
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+		if ok {
+			return lease, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (w *Worker) lease() time.Duration {
+	return if w.Lease > 0 { w.Lease } else { 30 * time.Second }
+}
+
+// process handles a leased message, extending its lease meanwhile, then
+// acknowledges it, retries it later, or fails it over.
+func (w *Worker) process(ctx context.Context, lease Lease) {
+	msg := lease.Message()
+	log := (w.Logger ?? slog.Default()).With(slog.String("message", msg.Type), slog.String("id", msg.ID))
+	hctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	extended := make(chan struct{})
+	go func() {
+		defer close(extended)
+		tick := time.NewTicker(w.lease() / 3)
+		defer tick.Stop()
+		for {
+			select {
+			case <-hctx.Done():
+				return
+			case <-tick.C:
+				if held, err := lease.Extend(ctx, w.lease()); err != nil || !held {
+					cancel(errLeaseLost)
+					return
+				}
+			}
+		}
+	}()
+	err := w.handle(hctx, msg)
+	cancel(nil)
+	<-extended
+	switch {
+	case err == nil:
+		if err := lease.Ack(ctx); err != nil {
+			log.ErrorContext(ctx, "acknowledging a message failed: it will be handled again", slog.Any("error", err))
+		}
+		return
+	case errors.Is(context.Cause(hctx), errLeaseLost):
+		log.WarnContext(ctx, "a message's lease was lost while it was handled: another worker may handle it", slog.Any("error", err))
+		return
+	case errors.Is(context.Cause(ctx), errStopTimeout):
+		// Stopping cut the handler short: the message goes back as it was.
+		msg.AvailableAt = w.Bus.now()
+		if err := lease.Retry(context.WithoutCancel(ctx), msg); err != nil {
+			log.ErrorContext(ctx, "giving back a message failed: it will be handled once its lease runs out", slog.Any("error", err))
+		}
+		return
+	}
+	msg.Attempts++
+	msg.Error = err.Error()
+	if at, again := w.Bus.retry(msg, err); again {
+		log.WarnContext(ctx, "handling a message failed: it will be retried", slog.Any("error", err), slog.Int("attempts", msg.Attempts), slog.Time("at", at))
+		msg.AvailableAt = at
+		if err := lease.Retry(ctx, msg); err != nil {
+			log.ErrorContext(ctx, "retrying a message failed", slog.Any("error", err))
+		}
+		return
+	}
+	failed := w.Bus.Transports[w.Bus.Failed]
+	if failed == nil {
+		log.ErrorContext(ctx, "handling a message failed for the last time, and there is no failure transport: it is dropped", slog.Any("error", err))
+		lease.Ack(ctx)
+		return
+	}
+	log.ErrorContext(ctx, "handling a message failed for the last time: it goes to the failure transport", slog.Any("error", err), slog.Int("attempts", msg.Attempts))
+	msg.AvailableAt = w.Bus.now()
+	if err := failed.Send(ctx, msg); err != nil {
+		log.ErrorContext(ctx, "sending a message to the failure transport failed: it will be handled again", slog.Any("error", err))
+		return
+	}
+	lease.Ack(ctx)
+}
+
+var errLeaseLost = errors.New("messenger: the message's lease was lost")
+
+// handle calls the bus's handlers of msg, turning a panic into an error.
+func (w *Worker) handle(ctx context.Context, msg Message) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = fmt.Errorf("messenger: the handler panicked: %v\n%s", v, debug.Stack())
+		}
+	}()
+	return w.Bus.HandleMessage(ctx, msg)
+}

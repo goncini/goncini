@@ -1,0 +1,27 @@
+package messenger_test
+
+import (
+	"database/sql"
+	"testing"
+	"time"
+
+	_ "modernc.org/sqlite"
+
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/messenger/transporttest"
+)
+
+func TestMemoryTransport(t *testing.T) {
+	transporttest.Run(t, (t *testing.T, now func() time.Time) => &messenger.MemoryTransport{Now: now})
+}
+
+func TestSQLiteTransport(t *testing.T) {
+	transporttest.Run(t, func(t *testing.T, now func() time.Time) messenger.Transport {
+		pool := must sql.Open("sqlite", "file::memory:")
+		pool.SetMaxOpenConns(1) // one database: each connection to :memory: has its own
+		t.Cleanup(() => { pool.Close() })
+		tr := must messenger.NewSQLTransport(pool, "async")
+		tr.Now = now
+		return tr
+	})
+}

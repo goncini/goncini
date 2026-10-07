@@ -11,6 +11,8 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/pgxdb"
 	"github.com/goncini/goncini/lock"
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/messenger/transporttest"
 )
 
 // TestLockStore checks goncini's SQL lock store on PostgreSQL, through
@@ -42,4 +44,23 @@ func TestLockStore(t *testing.T) {
 	if !expired || !released {
 		t.Errorf("after expiry %v, after release %v", expired, released)
 	}
+}
+
+// TestMessengerTransport checks goncini's SQL transport on PostgreSQL.
+func TestMessengerTransport(t *testing.T) {
+	url := os.Getenv("PGXDB_TEST_URL")
+	if url == "" {
+		t.Skip("PGXDB_TEST_URL names no PostgreSQL database to test with")
+	}
+	ctx := context.Background()
+	pool, closePool := must pgxdb.Open(ctx, db.Config{URL: url, MaxOpenConns: 4})
+	t.Cleanup(closePool)
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	transporttest.Run(t, func(t *testing.T, now func() time.Time) messenger.Transport {
+		tr := must messenger.NewSQLTransport(sqlDB, "async")
+		tr.Table, tr.Now = "pgxdb_test_messages", now
+		sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_messages")
+		t.Cleanup(() => { sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_messages") })
+		return tr
+	})
 }

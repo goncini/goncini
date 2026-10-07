@@ -1,0 +1,268 @@
+// Package messenger sends messages to their handlers, now or through
+// transports for workers to handle later, as Symfony's Messenger does.
+//
+//	type SendWelcome struct{ UserID int64 }
+//
+//	messenger.Handle(bus, (ctx context.Context, m SendWelcome) => mailer.Welcome(ctx, m.UserID))
+//	messenger.Route[SendWelcome](bus, "async")
+//	check messenger.Dispatch(ctx, bus, SendWelcome{UserID: u.ID}) ""
+//
+// A message whose type has no route is handled when it is dispatched, and
+// its handlers' error is Dispatch's. A routed message is encoded as JSON
+// and sent to its transport, from which a worker (messenger:consume)
+// receives it, handles it, and acknowledges it. Handling fails over to
+// retries on the bus's schedule, then to the failure transport, from which
+// messenger:failed:retry sends it again.
+//
+// A worker leases each message it receives: if the worker dies, the lease
+// runs out and another worker receives the message. Messages are handled
+// at least once, so handlers should be idempotent.
+package messenger
+
+import (
+	"context"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"log/slog"
+	"reflect"
+	"sync"
+	"time"
+
+	"github.com/effect-go/effect-go/schedule"
+
+	"github.com/goncini/goncini/uid"
+)
+
+// Message is a message as transports keep it: its type's name and its
+// body, encoded.
+type Message struct {
+	// ID identifies the message, a UUID made when it was dispatched.
+	ID string
+	// Type is the name its type is registered with.
+	Type string
+	// Body is the message, as JSON.
+	Body []byte
+	// Attempts is how many times handling it failed.
+	Attempts int
+	// Error is why it failed last, if it did.
+	Error string
+	// AvailableAt is when a worker may receive it.
+	AvailableAt time.Time
+}
+
+// Transport keeps messages for workers.
+type Transport interface {
+	// Send keeps m until a worker receives it, from m.AvailableAt.
+	Send(ctx context.Context, m Message) error
+	// Receive leases the next message that is available, for ttl, and
+	// reports whether there was one. A message whose lease runs out without
+	// an Ack or a Retry is available again.
+	Receive(ctx context.Context, ttl time.Duration) (Lease, bool, error)
+}
+
+// Lease is a message that a worker received, until it acknowledges it,
+// retries it, or its lease runs out.
+type Lease interface {
+	Message() Message
+	// Extend keeps the lease for ttl more, and reports whether the worker
+	// still held it.
+	Extend(ctx context.Context, ttl time.Duration) (bool, error)
+	// Ack removes the message: it was handled.
+	Ack(ctx context.Context) error
+	// Retry makes the message available again at, with its attempts and
+	// error as m says.
+	Retry(ctx context.Context, m Message) error
+}
+
+// Transports are a bus's transports, by name.
+type Transports map[string]Transport
+
+// Bus sends messages to their handlers, or to their transports.
+type Bus struct {
+	// Transports are where routed messages go, by name.
+	Transports Transports
+	// Failed is the name of the transport that messages go to once their
+	// retries ran out; empty means none: they are dropped, and logged.
+	Failed string
+	// Retry is the schedule of a failing message's retries, from its
+	// attempts and error; the zero Schedule never retries. NewBus gives 3
+	// retries, after 1, 2 and 4 seconds.
+	Retry schedule.Schedule
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
+	// Config is the config the bus was made with, whose worker settings
+	// messenger:consume uses.
+	Config Config
+	// Logger logs what workers do; nil means slog.Default().
+	Logger *slog.Logger
+
+	mu       sync.RWMutex
+	handlers map[reflect.Type][]func(context.Context, any) error
+	routes   map[reflect.Type]string
+	names    map[reflect.Type]string
+	types    map[string]reflect.Type
+}
+
+// Handlers registers handlers and routes on a bus: the services that do are
+// what goncini generate hands NewBus.
+type Handlers interface {
+	Handlers(b *Bus)
+}
+
+// Config configures a bus.
+type Config struct {
+	// Failed names the failure transport; empty means "failed".
+	Failed string
+	// Retries is how many times a failing message is retried; zero means
+	// 3, and a negative number none.
+	Retries int
+	// Delay is the first retry's delay, which doubles at each; zero means a
+	// second.
+	Delay time.Duration
+	// Concurrency, Lease and StopTimeout are messenger:consume's workers',
+	// as Worker has them.
+	Concurrency int
+	Lease       time.Duration
+	StopTimeout time.Duration
+}
+
+// NewBus returns a bus with the transports, whose retries and failure
+// transport c says, and the handlers of each of handlers.
+func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.Logger) *Bus {
+	retries := if c.Retries == 0 { 3 } else { max(c.Retries, 0) }
+	delay := if c.Delay == 0 { time.Second } else { c.Delay }
+	b := &Bus{
+		Transports: transports,
+		Failed:     if c.Failed == "" { "failed" } else { c.Failed },
+		Retry:      schedule.Max(schedule.Exponential(delay), schedule.Recurs(retries)),
+		Config:     c,
+		Logger:     logger,
+	}
+	for _, h := range handlers {
+		h.Handlers(b)
+	}
+	return b
+}
+
+// Handle adds a handler of the messages of type M. A message can have
+// several: they run in the order they were added, and the first error
+// stops them.
+func Handle[M any](b *Bus, h func(ctx context.Context, m M) error) {
+	t := reflect.TypeFor[M]()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.register(t)
+	if b.handlers == nil {
+		b.handlers = map[reflect.Type][]func(context.Context, any) error{}
+	}
+	b.handlers[t] = append(b.handlers[t], (ctx context.Context, m any) => h(ctx, m.(M)))
+}
+
+// Route sends the messages of type M to the transport, for workers to
+// handle, instead of handling them when they are dispatched.
+func Route[M any](b *Bus, transport string) {
+	t := reflect.TypeFor[M]()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.register(t)
+	if b.routes == nil {
+		b.routes = map[reflect.Type]string{}
+	}
+	b.routes[t] = transport
+}
+
+// register names t, for transports: as Go writes it, with its package's
+// path.
+func (b *Bus) register(t reflect.Type) {
+	if b.names == nil {
+		b.names, b.types = map[reflect.Type]string{}, map[string]reflect.Type{}
+	}
+	name := t.String()
+	if t.PkgPath() != "" {
+		name = t.PkgPath() + "." + t.Name()
+	}
+	b.names[t], b.types[name] = name, t
+}
+
+// Option changes how a message is dispatched.
+type Option func(*Message)
+
+// Delay makes a routed message available after d, as Symfony's
+// DelayStamp does.
+func Delay(d time.Duration) Option {
+	return m => { m.AvailableAt = m.AvailableAt.Add(d) }
+}
+
+// Dispatch handles m now, if its type has no route, or sends it to its
+// transport.
+func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
+	t := reflect.TypeFor[M]()
+	b.mu.RLock()
+	transport, routed := b.routes[t]
+	name := b.names[t]
+	b.mu.RUnlock()
+	if !routed {
+		return b.handle(ctx, t, m)
+	}
+	tr, ok := b.Transports[transport]
+	if !ok {
+		return fmt.Errorf("messenger: %s goes to the transport %q, which the bus doesn't have", name, transport)
+	}
+	body := check json.Marshal(m) ""
+	msg := Message{ID: uid.NewV7().String(), Type: name, Body: body, AvailableAt: b.now()}
+	for _, o := range opts {
+		o(&msg)
+	}
+	return tr.Send(ctx, msg)
+}
+
+// handle calls m's handlers, of type t.
+func (b *Bus) handle(ctx context.Context, t reflect.Type, m any) error {
+	b.mu.RLock()
+	hs := b.handlers[t]
+	b.mu.RUnlock()
+	if len(hs) == 0 {
+		return NoHandler{Type: t.String()}
+	}
+	for _, h := range hs {
+		check h(ctx, m) ""
+	}
+	return nil
+}
+
+// HandleMessage decodes msg and calls its handlers, as a worker does.
+func (b *Bus) HandleMessage(ctx context.Context, msg Message) error {
+	b.mu.RLock()
+	t, ok := b.types[msg.Type]
+	b.mu.RUnlock()
+	if !ok {
+		return NoHandler{Type: msg.Type}
+	}
+	v := reflect.New(t)
+	if err := json.Unmarshal(msg.Body, v.Interface()); err != nil {
+		return fmt.Errorf("messenger: decoding %s: %w", msg.Type, err)
+	}
+	return b.handle(ctx, t, v.Elem().Interface())
+}
+
+// NoHandler is the error of a message whose type has no handler.
+type NoHandler struct {
+	Type string
+}
+
+func (e NoHandler) Error() string { return "messenger: no handler of " + e.Type }
+
+// retry returns when msg, which failed with err, should be tried again,
+// and whether it should.
+func (b *Bus) retry(msg Message, err error) (time.Time, bool) {
+	if _, ok := errors.AsType[NoHandler](err); ok {
+		return time.Time{}, false // trying again won't help
+	}
+	wait, ok := b.Retry.Next(msg.Attempts, err)
+	return b.now().Add(wait), ok
+}
+
+func (b *Bus) now() time.Time {
+	return (b.Now ?? time.Now)()
+}

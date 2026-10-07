@@ -1,0 +1,156 @@
+package messenger
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/uid"
+)
+
+// SQLTransport keeps the messages of a queue in a table of a SQLite or
+// PostgreSQL database, which the transports of other queues may share. It
+// creates the table the first time it needs it, unless told not to.
+type SQLTransport struct {
+	pool    *sql.DB
+	dialect db.Dialect
+	queue   string
+	// Table is the table's name; empty means goncini_messages.
+	Table string
+	// NoSetup leaves creating the table to the app's migrations, with
+	// Schema.
+	NoSetup bool
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
+
+	setup sync.Once
+	err   error
+}
+
+// NewSQLTransport returns the transport of the queue in pool, a SQLite or
+// PostgreSQL database.
+func NewSQLTransport(pool *sql.DB, queue string) (*SQLTransport, error) {
+	d := db.DialectOf(pool)
+	if d == db.Unknown {
+		return nil, fmt.Errorf("messenger: the SQL transport works with SQLite and PostgreSQL, not the %T driver", pool.Driver())
+	}
+	return &SQLTransport{pool: pool, dialect: d, queue: queue}, nil
+}
+
+func (t *SQLTransport) table() string {
+	return if t.Table != "" { t.Table } else { "goncini_messages" }
+}
+
+func (t *SQLTransport) now() time.Time {
+	return (t.Now ?? time.Now)()
+}
+
+// Schema returns the statements that create the transport's table, for an
+// app's migrations.
+func (t *SQLTransport) Schema() []string {
+	tb := t.table()
+	return []string{
+		f"CREATE TABLE IF NOT EXISTS {tb} (id VARCHAR(36) PRIMARY KEY, queue VARCHAR(255) NOT NULL, type VARCHAR(255) NOT NULL, body TEXT NOT NULL, attempts INTEGER NOT NULL, error TEXT NOT NULL, available_at BIGINT NOT NULL, leased_until BIGINT NOT NULL, lease VARCHAR(36) NOT NULL)",
+		f"CREATE INDEX IF NOT EXISTS {tb}_available ON {tb} (queue, available_at)",
+	}
+}
+
+// ready creates the table once, unless NoSetup says not to.
+func (t *SQLTransport) ready(ctx context.Context) error {
+	if t.NoSetup {
+		return nil
+	}
+	t.setup.Do(() => {
+		for _, stmt := range t.Schema() {
+			if _, err := t.pool.ExecContext(ctx, stmt); err != nil {
+				t.err = err
+				return
+			}
+		}
+	})
+	return t.err
+}
+
+// exec runs a statement written with ? placeholders, and returns how many
+// rows it changed.
+func (t *SQLTransport) exec(ctx context.Context, query string, args ...any) (int64, error) {
+	check t.ready(ctx) ""
+	res := check t.pool.ExecContext(ctx, t.dialect.Rebind(query), args...)
+	return res.RowsAffected()
+}
+
+func (t *SQLTransport) Send(ctx context.Context, m Message) error {
+	_, err := t.exec(ctx, f"INSERT INTO {t.table()} (id, queue, type, body, attempts, error, available_at, leased_until, lease) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '')",
+		m.ID, t.queue, m.Type, string(m.Body), m.Attempts, m.Error, m.AvailableAt.UnixMilli())
+	return err
+}
+
+func (t *SQLTransport) Receive(ctx context.Context, ttl time.Duration) (Lease, bool, error) {
+	check t.ready(ctx) ""
+	now := t.now()
+	tb := t.table()
+	skipLocked := if t.dialect == db.PostgreSQL { " FOR UPDATE SKIP LOCKED" } else { "" }
+	// One statement leases the next available message: SQLite runs it
+	// alone, and PostgreSQL's workers skip the rows others are leasing.
+	query := f"UPDATE {tb} SET leased_until = ?, lease = ? WHERE id = (SELECT id FROM {tb} WHERE queue = ? AND available_at <= ? AND leased_until <= ? ORDER BY available_at, id LIMIT 1{skipLocked}) AND leased_until <= ? RETURNING id, type, body, attempts, error, available_at"
+	token := uid.NewV4().String()
+	var m Message
+	var body string
+	var available int64
+	err := t.pool.QueryRowContext(ctx, t.dialect.Rebind(query), now.Add(ttl).UnixMilli(), token, t.queue, now.UnixMilli(), now.UnixMilli(), now.UnixMilli()).
+		Scan(&m.ID, &m.Type, &body, &m.Attempts, &m.Error, &available)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	check err ""
+	m.Body, m.AvailableAt = []byte(body), time.UnixMilli(available)
+	return &sqlLease{t: t, msg: m, token: token}, true, nil
+}
+
+func (t *SQLTransport) List(ctx context.Context) ([]Message, error) {
+	check t.ready(ctx) ""
+	return db.All(ctx, t.pool, scanMessage, t.dialect.Rebind(f"SELECT id, type, body, attempts, error, available_at FROM {t.table()} WHERE queue = ? ORDER BY available_at, id"), t.queue)
+}
+
+func (t *SQLTransport) Remove(ctx context.Context, id string) error {
+	_, err := t.exec(ctx, f"DELETE FROM {t.table()} WHERE queue = ? AND id = ?", t.queue, id)
+	return err
+}
+
+// scanMessage reads a message that List selects.
+func scanMessage(row db.Scanner) (Message, error) {
+	var m Message
+	var body string
+	var available int64
+	err := row.Scan(&m.ID, &m.Type, &body, &m.Attempts, &m.Error, &available)
+	m.Body, m.AvailableAt = []byte(body), time.UnixMilli(available)
+	return m, err
+}
+
+// sqlLease is a message that a worker leased, with the lease's token.
+type sqlLease struct {
+	t     *SQLTransport
+	msg   Message
+	token string
+}
+
+func (l *sqlLease) Message() Message { return l.msg }
+
+func (l *sqlLease) Extend(ctx context.Context, ttl time.Duration) (bool, error) {
+	n := check l.t.exec(ctx, f"UPDATE {l.t.table()} SET leased_until = ? WHERE id = ? AND lease = ?", l.t.now().Add(ttl).UnixMilli(), l.msg.ID, l.token)
+	return n == 1, nil
+}
+
+func (l *sqlLease) Ack(ctx context.Context) error {
+	_, err := l.t.exec(ctx, f"DELETE FROM {l.t.table()} WHERE id = ? AND lease = ?", l.msg.ID, l.token)
+	return err
+}
+
+func (l *sqlLease) Retry(ctx context.Context, m Message) error {
+	_, err := l.t.exec(ctx, f"UPDATE {l.t.table()} SET attempts = ?, error = ?, available_at = ?, leased_until = 0, lease = '' WHERE id = ? AND lease = ?",
+		m.Attempts, m.Error, m.AvailableAt.UnixMilli(), l.msg.ID, l.token)
+	return err
+}

@@ -1,0 +1,126 @@
+package messenger
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"slices"
+	"text/tabwriter"
+	"time"
+
+	"github.com/goncini/goncini/console"
+)
+
+// Commands returns the console commands of b: messenger:consume, which runs
+// a worker, and messenger:failed:show, retry and remove, which deal with
+// the messages of the failure transport.
+func Commands(b *Bus) []console.Command {
+	return []console.Command{
+		&consumeCommand{bus: b},
+		console.New("messenger:failed:show", "Lists the messages that failed for good", (ctx context.Context, out io.Writer, args []string) => b.showFailed(ctx, out)),
+		console.New("messenger:failed:retry", "Sends failed messages again, all of them or those whose IDs are given", (ctx context.Context, out io.Writer, ids []string) => b.retryFailed(ctx, out, ids)),
+		console.New("messenger:failed:remove", "Removes the failed messages whose IDs are given", (ctx context.Context, out io.Writer, ids []string) => b.removeFailed(ctx, out, ids)),
+	}
+}
+
+// consumeCommand is messenger:consume.
+type consumeCommand struct {
+	bus         *Bus
+	limit       int
+	concurrency int
+}
+
+func (*consumeCommand) Name() string { return "messenger:consume" }
+func (*consumeCommand) Summary() string {
+	return "Handles the messages of transports, given by name, all but the failure transport's by default"
+}
+
+func (c *consumeCommand) Flags(fs *flag.FlagSet) {
+	fs.IntVar(&c.limit, "limit", 0, "stop after handling that many messages")
+	fs.IntVar(&c.concurrency, "concurrency", 0, "how many messages to handle at once, instead of the config's")
+}
+
+// Run runs a worker until ctx is done: on SIGTERM, it stops receiving, and
+// lets the messages it handles finish, up to the stop timeout.
+func (c *consumeCommand) Run(ctx context.Context, out io.Writer, transports []string) error {
+	if len(transports) == 0 {
+		for name := range c.bus.Transports {
+			if name != c.bus.Failed {
+				transports = append(transports, name)
+			}
+		}
+		slices.Sort(transports)
+	}
+	if len(transports) == 0 {
+		return errors.New("messenger: no transport to consume")
+	}
+	w := &Worker{
+		Bus:         c.bus,
+		Transports:  transports,
+		Concurrency: if c.concurrency > 0 { c.concurrency } else { c.bus.Config.Concurrency },
+		Lease:       c.bus.Config.Lease,
+		StopTimeout: c.bus.Config.StopTimeout,
+		Limit:       c.limit,
+		Logger:      c.bus.Logger,
+	}
+	fmt.Fprintf(out, "Consuming %v\n", transports)
+	return w.Run(ctx)
+}
+
+// failed returns the failure transport, which must be a Browser.
+func (b *Bus) failed() (Browser, error) {
+	tr, ok := b.Transports[b.Failed].(Browser)
+	if !ok {
+		return nil, fmt.Errorf("messenger: no failure transport %q that can be listed", b.Failed)
+	}
+	return tr, nil
+}
+
+func (b *Bus) showFailed(ctx context.Context, out io.Writer) error {
+	tr := check b.failed() ""
+	list := check tr.List(ctx) ""
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tTYPE\tATTEMPTS\tFAILED AT\tERROR")
+	for _, m := range list {
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", m.ID, m.Type, m.Attempts, m.AvailableAt.Format(time.DateTime), m.Error)
+	}
+	return tw.Flush()
+}
+
+// retryFailed sends the failed messages with the IDs, or all of them, to
+// their types' transports, as new.
+func (b *Bus) retryFailed(ctx context.Context, out io.Writer, ids []string) error {
+	tr := check b.failed() ""
+	list := check tr.List(ctx) ""
+	for _, m := range list {
+		if len(ids) > 0 && !slices.Contains(ids, m.ID) {
+			continue
+		}
+		b.mu.RLock()
+		transport := b.routes[b.types[m.Type]]
+		b.mu.RUnlock()
+		dest := b.Transports[transport]
+		if dest == nil {
+			return fmt.Errorf("messenger: %s %s has no transport to go back to", m.Type, m.ID)
+		}
+		m.Attempts, m.Error, m.AvailableAt = 0, "", b.now()
+		check dest.Send(ctx, m) ""
+		check tr.Remove(ctx, m.ID) ""
+		fmt.Fprintf(out, "Sent %s %s to %s\n", m.Type, m.ID, transport)
+	}
+	return nil
+}
+
+func (b *Bus) removeFailed(ctx context.Context, out io.Writer, ids []string) error {
+	if len(ids) == 0 {
+		return console.Usage{Command: "messenger:failed:remove", Reason: "no ID given"}
+	}
+	tr := check b.failed() ""
+	for _, id := range ids {
+		check tr.Remove(ctx, id) ""
+		fmt.Fprintf(out, "Removed %s\n", id)
+	}
+	return nil
+}

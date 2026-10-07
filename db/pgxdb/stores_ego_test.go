@@ -13,12 +13,14 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/pgxdb"
 	"github.com/goncini/goncini/lock"
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/messenger/transporttest"
 )
 
 // TestLockStore checks goncini's SQL lock store on PostgreSQL, through
 // pgx's database/sql driver.
 //
-//line stores_test.ego:18
+//line stores_test.ego:20
 func TestLockStore(t *testing.T) {
 	url := os.Getenv("PGXDB_TEST_URL")
 	if url == "" {
@@ -29,32 +31,32 @@ func TestLockStore(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:25
+//line stores_test.ego:27
 	t.Cleanup(closePool)
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	store, err := lock.NewSQLStore(sqlDB)
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:28
+//line stores_test.ego:30
 	store.Table = "pgxdb_test_locks"
 	t.Cleanup(func() {
 		sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_locks")
 	})
 
-//line stores_test.ego:31
+//line stores_test.ego:33
 	f := &lock.Factory{Store: store, TTL: 200 * time.Millisecond}
 	a, b := f.New("report"), f.New("report")
 	gotA, err := a.Acquire(ctx)
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:34
+//line stores_test.ego:36
 	gotB, err := b.Acquire(ctx)
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:35
+//line stores_test.ego:37
 	if !gotA || gotB {
 		t.Fatalf("a %v, b %v", gotA, gotB)
 	}
@@ -63,17 +65,47 @@ func TestLockStore(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:40
+//line stores_test.ego:42
 	if err := b.Release(ctx); err != nil {
 		panic(err)
 	}
-//line stores_test.ego:41
+//line stores_test.ego:43
 	released, err := a.Acquire(ctx)
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:42
+//line stores_test.ego:44
 	if !expired || !released {
 		t.Errorf("after expiry %v, after release %v", expired, released)
 	}
+}
+
+// TestMessengerTransport checks goncini's SQL transport on PostgreSQL.
+func TestMessengerTransport(t *testing.T) {
+	url := os.Getenv("PGXDB_TEST_URL")
+	if url == "" {
+		t.Skip("PGXDB_TEST_URL names no PostgreSQL database to test with")
+	}
+	ctx := context.Background()
+	pool, closePool, err := pgxdb.Open(ctx, db.Config{URL: url, MaxOpenConns: 4})
+	if err != nil {
+		panic(err)
+	}
+//line stores_test.ego:57
+	t.Cleanup(closePool)
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	transporttest.Run(t, func(t *testing.T, now func() time.Time) messenger.Transport {
+		tr, err := messenger.NewSQLTransport(sqlDB, "async")
+		if err != nil {
+			panic(err)
+		}
+//line stores_test.ego:61
+		tr.Table, tr.Now = "pgxdb_test_messages", now
+		sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_messages")
+		t.Cleanup(func() {
+			sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_messages")
+		})
+//line stores_test.ego:64
+		return tr
+	})
 }
