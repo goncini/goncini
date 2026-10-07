@@ -24,6 +24,14 @@ func NewArticles(store *Store, access *security.Access, events *event.Dispatcher
 	return &Articles{store: store, access: access, events: events, cache: c}
 }
 
+// Deleted is the event of an article deleted, by its author or a
+// moderator.
+type Deleted struct {
+	ID       int64
+	Title    string
+	AuthorID int64
+}
+
 // Published is the event of an article published, for the features that
 // care, such as notifications.
 type Published struct {
@@ -211,6 +219,7 @@ effect (a *Articles) Delete(in SlugInput) (httpkernel.NoContent, ArticleError) {
 	art := check a.findGranted(in.Slug, "delete") ""
 	check a.store.Delete(art.ID) as Unavailable
 	check a.cache.Invalidate(ctx, "articles") as Unavailable
+	check event.Dispatch(ctx, a.events, &Deleted{ID: art.ID, Title: art.Title, AuthorID: art.AuthorID}) as Unavailable
 	return httpkernel.NoContent{}, nil
 }
 

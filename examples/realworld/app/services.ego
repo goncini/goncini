@@ -15,6 +15,7 @@ import (
 	"github.com/goncini/goncini/lock"
 	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/notifier"
 	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/scheduler"
@@ -34,7 +35,7 @@ var Services = layer.Set(
 	users.NewStore, users.NewUsers, logins,
 	articles.NewStore, articles.NewArticles, articles.NewAuthorship, articles.NewInvalidator,
 	cache.Memory, mailer.Async,
-	moderation.NewFirewall, moderation.NewModeration,
+	moderation.NewFirewall, moderation.NewModeration, moderation.NewNotices, notifier.Async,
 	notifications.NewNotifications, notifications.NewSubscriber,
 	messenger.SQL, lock.SQL, scheduler.New,
 	routes, clock,

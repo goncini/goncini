@@ -11,6 +11,7 @@ import (
 	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/mime"
+	"github.com/goncini/goncini/notifier"
 	"github.com/goncini/goncini/openapi"
 
 	"github.com/goncini/goncini/examples/realworld/moderation"
@@ -19,7 +20,7 @@ import (
 
 // Config is the API's config, one section per part of the app.
 //
-//line config.ego:19
+//line config.ego:20
 type Config struct {
 	HTTP       goncini.HTTP
 	Log        goncini.Log
@@ -29,6 +30,7 @@ type Config struct {
 	Moderation moderation.Config
 	Messenger  messenger.Config
 	Mailer     mailer.Config
+	Notifier   notifier.Config
 }
 
 // Load returns the config of env: what every environment shares, then what
@@ -41,6 +43,12 @@ func Load(env *goncini.Env) Config {
 		OpenAPI:    openapi.Config{Title: "RealWorld Conduit API", Version: "2.0.0"},
 		Mailer:     mailer.Config{DSN: env.Secret("MAILER_DSN"), From: mime.Address{Name: "Conduit", Email: "hello@conduit.example"}},
 		Moderation: moderation.Config{Keys: map[string]string{env.Secret("MODERATOR_KEY"): "moderator"}},
+	}
+	// The moderators' chat, if they have one, hears of what they remove.
+	c.Notifier.Policy = map[string][]string{"high": {"email"}}
+	if chat := env.OptionalSecret("MODERATORS_CHAT_URL"); chat != "" {
+		c.Notifier.Chat = map[string]string{"moderators": chat}
+		c.Notifier.Policy["high"] = append(c.Notifier.Policy["high"], "moderators")
 	}
 	switch env.Name {
 	case "dev":

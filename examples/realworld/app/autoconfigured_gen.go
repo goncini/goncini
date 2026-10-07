@@ -21,6 +21,7 @@ import (
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/notifier"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/scheduler"
 	"github.com/goncini/goncini/security"
@@ -28,7 +29,7 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger, autoConfigMailer, autoDefaultSchedulerConfig, autoDefaultCacheConfig)
+var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger, autoConfigMailer, autoConfigNotifier, autoDefaultSchedulerConfig, autoDefaultCacheConfig)
 
 // autoProblems are the error mappers that the app's packages declare.
 func autoProblems() []httpkernel.ErrorMapper {
@@ -51,13 +52,13 @@ func autoVoters(p1 articles.Authorship) []security.Voter {
 }
 
 // autoSubscribers are the services that subscribe to events.
-func autoSubscribers(p1 *articles.Invalidator, p2 *notifications.Subscriber) []event.Subscriber {
-	return []event.Subscriber{p1, p2}
+func autoSubscribers(p1 *articles.Invalidator, p2 *moderation.Notices, p3 *notifications.Subscriber) []event.Subscriber {
+	return []event.Subscriber{p1, p2, p3}
 }
 
 // autoHandlers are the services that handle messages.
-func autoHandlers(p1 *mailer.Handler, p2 *notifications.Notifications) []messenger.Handlers {
-	return []messenger.Handlers{p1, p2}
+func autoHandlers(p1 *mailer.Handler, p2 *notifier.Handler, p3 *notifications.Notifications) []messenger.Handlers {
+	return []messenger.Handlers{p1, p2, p3}
 }
 
 // autoTasks are the services that schedule tasks.
@@ -90,19 +91,24 @@ func autoServices() []goncini.Service {
 		{Type: "*cache.MemoryStore", Provider: "cache.NewMemoryStore", Needs: []string{}},
 		{Type: "*cache.Cache", Provider: "cache.New", Needs: []string{"cache.Config", "*cache.MemoryStore"}},
 		{Type: "*articles.Invalidator", Provider: "articles.NewInvalidator", Needs: []string{"*cache.Cache"}},
-		{Type: "messenger.Config", Provider: "autoConfigMessenger", Needs: []string{"config.Config"}},
-		{Type: "messenger.Transports", Provider: "messenger.NewSQLTransports", Needs: []string{"*sql.DB", "messenger.Config"}},
+		{Type: "notifier.Config", Provider: "autoConfigNotifier", Needs: []string{"config.Config"}},
 		{Type: "mailer.Config", Provider: "autoConfigMailer", Needs: []string{"config.Config"}},
 		{Type: "goncini.Log", Provider: "autoConfigLog", Needs: []string{"config.Config"}},
 		{Type: "slog.Handler", Provider: "goncini.NewLogHandler", Needs: []string{"goncini.Log"}},
 		{Type: "*slog.Logger", Provider: "goncini.NewLogger", Needs: []string{"slog.Handler"}},
 		{Type: "mailer.Transport", Provider: "mailer.NewTransport", Needs: []string{"mailer.Config", "*slog.Logger"}},
+		{Type: "notifier.Channels", Provider: "notifier.NewChannels", Needs: []string{"notifier.Config", "mailer.Config", "mailer.Transport"}},
+		{Type: "messenger.Config", Provider: "autoConfigMessenger", Needs: []string{"config.Config"}},
+		{Type: "messenger.Transports", Provider: "messenger.NewSQLTransports", Needs: []string{"*sql.DB", "messenger.Config"}},
 		{Type: "*mailer.Handler", Provider: "mailer.NewHandler", Needs: []string{"mailer.Config", "mailer.Transport"}},
+		{Type: "*notifier.Handler", Provider: "notifier.NewHandler", Needs: []string{"notifier.Config", "notifier.Channels"}},
 		{Type: "*notifications.Notifications", Provider: "notifications.NewNotifications", Needs: []string{"*db.SQL", "func() time.Time"}},
-		{Type: "[]messenger.Handlers", Provider: "autoHandlers", Needs: []string{"*mailer.Handler", "*notifications.Notifications"}},
+		{Type: "[]messenger.Handlers", Provider: "autoHandlers", Needs: []string{"*mailer.Handler", "*notifier.Handler", "*notifications.Notifications"}},
 		{Type: "*messenger.Bus", Provider: "messenger.NewBus", Needs: []string{"messenger.Config", "messenger.Transports", "[]messenger.Handlers", "*slog.Logger"}},
+		{Type: "*notifier.Notifier", Provider: "notifier.NewAsync", Needs: []string{"notifier.Config", "notifier.Channels", "*messenger.Bus"}},
+		{Type: "*moderation.Notices", Provider: "moderation.NewNotices", Needs: []string{"*notifier.Notifier", "*users.Store"}},
 		{Type: "*notifications.Subscriber", Provider: "notifications.NewSubscriber", Needs: []string{"*messenger.Bus"}},
-		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{"*articles.Invalidator", "*notifications.Subscriber"}},
+		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{"*articles.Invalidator", "*moderation.Notices", "*notifications.Subscriber"}},
 		{Type: "*event.Dispatcher", Provider: "goncini.NewDispatcher", Needs: []string{"[]event.Subscriber"}},
 		{Type: "*mailer.Mailer", Provider: "mailer.NewAsync", Needs: []string{"mailer.Config", "*messenger.Bus"}},
 		{Type: "*users.Users", Provider: "users.NewUsers", Needs: []string{"*users.Store", "security.Hasher", "*security.Tokens", "*ratelimit.Limiter", "*event.Dispatcher", "*mailer.Mailer"}},
@@ -205,6 +211,9 @@ func autoConfigMessenger(c config.Config) messenger.Config { return c.Messenger 
 
 // autoConfigMailer is the Mailer section of the config.
 func autoConfigMailer(c config.Config) mailer.Config { return c.Mailer }
+
+// autoConfigNotifier is the Notifier section of the config.
+func autoConfigNotifier(c config.Config) notifier.Config { return c.Notifier }
 
 // autoDefaultSchedulerConfig is the default of scheduler.Config, which the config doesn't have.
 func autoDefaultSchedulerConfig() scheduler.Config { return scheduler.Config{} }

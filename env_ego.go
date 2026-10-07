@@ -160,6 +160,17 @@ func (e *Env) Secret(name string) string {
 	return v
 }
 
+// OptionalSecret returns the value of the environment variable name, or ""
+// when it is missing or empty, which is no error: for what an app can do
+// without, such as a chat webhook. debug:config masks it like a secret.
+func (e *Env) OptionalSecret(name string) string {
+	v := e.vars[name]
+	if v != "" {
+		e.read = append(e.read, v)
+	}
+	return v
+}
+
 // Unknown records that Name names none of the app's environments, for Err
 // to report. A config's Load calls it for the names it doesn't know.
 func (e *Env) Unknown() {
@@ -189,7 +200,7 @@ func loadDotenv(path string, vars map[string]string) error {
 	if err != nil {
 		return err
 	}
-//line env.ego:126
+//line env.ego:137
 	for i, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || line[0] == '#' {
@@ -254,7 +265,7 @@ func dotenvValue(s string) (value, reason string) {
 			default:
 				esc = ""
 			}
-//line env.ego:182
+//line env.ego:193
 			if esc == "" {
 				return "", fmt.Sprintf("unknown escape \\%c", s[i])
 			}

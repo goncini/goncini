@@ -119,6 +119,9 @@ func TestSecrets(t *testing.T) {
 	if got := env.Secret("DATABASE_URL"); got != "postgres://db" {
 		t.Errorf("DATABASE_URL = %q", got)
 	}
+	if got := env.OptionalSecret("CHAT_URL") + env.OptionalSecret("EMPTY"); got != "" {
+		t.Errorf("optional secrets = %q", got)
+	}
 	if err := env.Err(); err != nil {
 		t.Fatal(err)
 	}

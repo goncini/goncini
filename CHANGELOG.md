@@ -322,6 +322,22 @@ runs in one instance of an app: the one that takes the tick's lock.
 next runs. Lock stores now prune expired locks, which keys used once, as
 ticks are, would leave.
 
+### notifier (M4)
+
+Symfony's Notifier: a `Notification`'s importance chooses its channels,
+through the config's policy, and a `Recipient` may choose theirs. The
+channels are email, through the mailer's transport, and chat webhooks that
+take Slack's `{"text": …}`, through `httpclient`, so they're retried.
+`notifier.Async` makes each delivery a Messenger message, retried on its
+own. `Env.OptionalSecret` reads the secrets an app can do without, such as
+a chat's webhook.
+
+RealWorld tells an author by email when a moderator removes their article,
+and the moderators' chat if `MODERATORS_CHAT_URL` is set, through its
+queue: M4's fourth gate. `goncini generate` now wires the app's package
+before the others, so that a layer's error, such as a dependency cycle,
+shows instead of the import errors it causes.
+
 ### mime and mailer (M4)
 
 Symfony's Mime and Mailer. `mime.Email` has its addresses, subject, text

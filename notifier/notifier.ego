@@ -1,0 +1,227 @@
+// Package notifier tells people what happened, on the channels that suit
+// it, as Symfony's Notifier does: a notification's importance chooses its
+// channels, email or chat, and each recipient may choose theirs.
+//
+//	check n.Send(ctx, notifier.Notification{
+//		Subject:    "Your article was removed",
+//		Content:    "A moderator removed “Spam”.",
+//		Importance: notifier.High,
+//	}, notifier.Recipient{Email: "bob@example.com"}) ""
+//
+// Channels are "email", through a mailer, and chat webhooks named in the
+// config, which get Slack's {"text": …}: Slack, Mattermost, Rocket.Chat,
+// Discord's /slack endpoints, and others take it. With Async, each delivery
+// is a message of its own, retried on its own.
+package notifier
+
+import (
+	"cmp"
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"slices"
+	"sort"
+	"strings"
+
+	"github.com/effect-go/effect-go/layer"
+
+	"github.com/goncini/goncini/httpclient"
+	"github.com/goncini/goncini/mailer"
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/mime"
+)
+
+// Importance is how much a notification matters, which chooses its
+// channels.
+enum Importance {
+	Low
+	Medium
+	High
+	Urgent
+}
+
+// Notification is what to tell.
+type Notification struct {
+	Subject    string     `json:"subject"`
+	Content    string     `json:"content"`
+	Importance Importance `json:"importance"`
+	// Channels, when set, are the channels to use, whatever the
+	// importance.
+	Channels []string `json:"channels,omitempty"`
+}
+
+// Recipient is who to tell. Chat channels tell everyone who reads them, and
+// ignore it.
+type Recipient struct {
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email,omitempty"`
+	// Channels, when set, are the channels the recipient wants, among
+	// those the notification goes to.
+	Channels []string `json:"channels,omitempty"`
+}
+
+// Channel delivers notifications.
+type Channel interface {
+	Notify(ctx context.Context, n Notification, r Recipient) error
+}
+
+// Config configures a notifier.
+type Config struct {
+	// Chat are the URLs of the chat webhooks, by channel name: secrets.
+	Chat map[string]string
+	// Policy are the channels of each importance, by its name: "low",
+	// "medium", "high" and "urgent". An importance it lacks goes to email,
+	// and urgent ones to every channel.
+	Policy map[string][]string
+	// Async is the Messenger transport that Async's deliveries go through;
+	// empty means "async".
+	Async string
+}
+
+// Channels are a notifier's channels, by name.
+type Channels map[string]Channel
+
+// Sync is the providers of a notifier that delivers when it's told to.
+var Sync = layer.Set(NewChannels, New)
+
+// Async is the providers of a notifier that delivers through Messenger.
+var Async = layer.Set(NewChannels, NewHandler, NewAsync)
+
+// NewChannels returns the email channel, sending through t from mc.From,
+// and the chat channels of c. A notifier's deliveries are its own
+// messages, when it is Async: the email channel sends at once.
+func NewChannels(c Config, mc mailer.Config, t mailer.Transport) Channels {
+	cs := Channels{"email": &EmailChannel{Mailer: mailer.New(mc, t)}}
+	for name, url := range c.Chat {
+		cs[name] = &ChatChannel{Client: httpclient.New(httpclient.Config{}), URL: url}
+	}
+	return cs
+}
+
+// Notifier delivers notifications on their channels.
+type Notifier struct {
+	Config   Config
+	Channels Channels
+	bus      *messenger.Bus
+}
+
+// New returns a notifier that delivers when it's told to.
+func New(c Config, cs Channels) *Notifier {
+	return &Notifier{Config: c, Channels: cs}
+}
+
+// NewAsync returns a notifier that delivers through Messenger: each
+// delivery is a Deliver message, which NewHandler's handler delivers.
+func NewAsync(c Config, cs Channels, bus *messenger.Bus) *Notifier {
+	return &Notifier{Config: c, Channels: cs, bus: bus}
+}
+
+// Deliver is the message of a notification to deliver on a channel.
+type Deliver struct {
+	Channel      string       `json:"channel"`
+	Notification Notification `json:"notification"`
+	Recipient    Recipient    `json:"recipient"`
+}
+
+// Send delivers n to the recipients, on the channels its importance or
+// its Channels say, and the recipients want. A chat channel gets n once.
+func (nt *Notifier) Send(ctx context.Context, n Notification, recipients ...Recipient) error {
+	channels := nt.channels(n)
+	var errs []error
+	for _, name := range channels {
+		if _, ok := nt.Channels[name]; !ok {
+			errs = append(errs, fmt.Errorf("notifier: no channel %q", name))
+			continue
+		}
+		if name != "email" {
+			errs = append(errs, nt.deliver(ctx, Deliver{Channel: name, Notification: n}))
+			continue
+		}
+		for _, r := range recipients {
+			if len(r.Channels) > 0 && !slices.Contains(r.Channels, name) || r.Email == "" {
+				continue
+			}
+			errs = append(errs, nt.deliver(ctx, Deliver{Channel: name, Notification: n, Recipient: r}))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// channels returns the channels of n.
+func (nt *Notifier) channels(n Notification) []string {
+	if len(n.Channels) > 0 {
+		return n.Channels
+	}
+	if cs, ok := nt.Config.Policy[strings.ToLower(n.Importance.String())]; ok {
+		return cs
+	}
+	if n.Importance == Urgent {
+		all := make([]string, 0, len(nt.Channels))
+		for name := range nt.Channels {
+			all = append(all, name)
+		}
+		sort.Strings(all)
+		return all
+	}
+	return []string{"email"}
+}
+
+// deliver delivers d now, or sends it to Messenger.
+func (nt *Notifier) deliver(ctx context.Context, d Deliver) error {
+	if nt.bus != nil {
+		return messenger.Dispatch(ctx, nt.bus, d)
+	}
+	return nt.Channels[d.Channel].Notify(ctx, d.Notification, d.Recipient)
+}
+
+// Handler delivers the Deliver messages.
+type Handler struct {
+	config   Config
+	channels Channels
+}
+
+// NewHandler returns the handler of Deliver, which it routes to
+// Config.Async.
+func NewHandler(c Config, cs Channels) *Handler {
+	return &Handler{config: c, channels: cs}
+}
+
+// Handlers registers the handler, and the route.
+func (h *Handler) Handlers(b *messenger.Bus) {
+	messenger.Handle(b, func(ctx context.Context, d Deliver) error {
+		c, ok := h.channels[d.Channel]
+		if !ok {
+			return fmt.Errorf("notifier: no channel %q", d.Channel)
+		}
+		return c.Notify(ctx, d.Notification, d.Recipient)
+	})
+	messenger.Route[Deliver](b, if h.config.Async != "" { h.config.Async } else { "async" })
+}
+
+// EmailChannel emails notifications to their recipients, through a Sync
+// mailer.
+type EmailChannel struct {
+	Mailer *mailer.Mailer
+}
+
+func (c *EmailChannel) Notify(ctx context.Context, n Notification, r Recipient) error {
+	return c.Mailer.Send(ctx, &mime.Email{
+		To:      []mime.Address{{Name: r.Name, Email: r.Email}},
+		Subject: n.Subject,
+		Text:    cmp.Or(n.Content, n.Subject),
+	})
+}
+
+// ChatChannel posts notifications to a chat's incoming webhook, as Slack's
+// {"text": …}.
+type ChatChannel struct {
+	Client *httpclient.Client
+	URL    string
+}
+
+func (c *ChatChannel) Notify(ctx context.Context, n Notification, r Recipient) error {
+	text := if n.Subject != "" && n.Content != "" { "*" + n.Subject + "*\n" + n.Content } else { n.Subject + n.Content }
+	_, err := httpclient.Send[struct{}](ctx, c.Client, http.MethodPost, c.URL, map[string]string{"text": text})
+	return err
+}

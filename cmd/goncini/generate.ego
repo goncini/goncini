@@ -53,10 +53,15 @@ func generate(root, appDir string, checkOnly bool) error {
 		stub := generatedTitle + "package " + filepath.Base(appDir) + "\n\nimport \"" + layerPath + "\"\n\nvar Autoconfigured = layer.Set()\n"
 		check os.WriteFile(path, []byte(stub), 0o644) ""
 	}
-	egoGenerate(root) // the app's layers can't be wired until Autoconfigured is
+	egoGenerate(root, "./...") // the app's layers can't be wired until Autoconfigured is
 	code := check autoconfigure(root, appDir, nil) ""
 	check os.WriteFile(path, code, 0o644) ""
-	if out, err := egoGenerate(root); err != nil {
+	// The app's package first: its layers are what the others need to
+	// type-check, and their errors, such as a cycle, are the ones to show.
+	if out, err := egoGenerate(root, "./"+filepath.ToSlash(appDir)); err != nil {
+		return fmt.Errorf("ego generate: %v\n%s", err, out)
+	}
+	if out, err := egoGenerate(root, "./..."); err != nil {
 		return fmt.Errorf("ego generate: %v\n%s", err, out)
 	}
 	// Now that the layers are wired, describe the services they build: the
@@ -67,9 +72,9 @@ func generate(root, appDir string, checkOnly bool) error {
 	return nil
 }
 
-// egoGenerate runs ego generate on the module at root.
-func egoGenerate(root string) ([]byte, error) {
-	cmd := exec.Command("go", "tool", "ego", "generate", "./...")
+// egoGenerate runs ego generate on packages of the module at root.
+func egoGenerate(root, packages string) ([]byte, error) {
+	cmd := exec.Command("go", "tool", "ego", "generate", packages)
 	cmd.Dir = root
 	return cmd.CombinedOutput()
 }

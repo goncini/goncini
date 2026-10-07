@@ -7,17 +7,22 @@ package moderation
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 
+	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/notifier"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
 
 	"github.com/goncini/goncini/examples/realworld/articles"
+	"github.com/goncini/goncini/examples/realworld/users"
 )
 
 // Config is the moderators' API keys.
 //
-//line moderation.ego:17
+//line moderation.ego:21
 type Config struct {
 	// Keys are the moderators' names, by their API keys.
 	Keys map[string]string
@@ -38,7 +43,7 @@ func NewFirewall(c Config) (*security.Firewall[*Moderator], error) {
 	if err != nil {
 		return nil, err
 	}
-//line moderation.ego:34
+//line moderation.ego:38
 	return &security.Firewall[*Moderator]{
 		Tokens: keys,
 		Load: func(ctx context.Context, name string) (*Moderator, bool, error) {
@@ -63,4 +68,40 @@ func NewModeration(a *articles.Articles, access *security.Access) *Moderation {
 func (m *Moderation) Routes(r *routing.Router) {
 	mod := r.With(m.access.Require("ROLE_MODERATOR"))
 	mod.Delete("/articles/{slug}", httpkernel.Endpoint(m.articles.Delete)).Name("moderation_article_delete")
+}
+
+// Notices tells authors that a moderator removed their article, by email,
+// and the moderators' chat, if the app has one.
+type Notices struct {
+	notifier *notifier.Notifier
+	users    *users.Store
+}
+
+func NewNotices(n *notifier.Notifier, store *users.Store) *Notices {
+	return &Notices{notifier: n, users: store}
+}
+
+func (n *Notices) Subscribe(d *event.Dispatcher) {
+	event.On(d, n.removed)
+}
+
+// removed notifies the author of an article that a moderator deleted.
+func (n *Notices) removed(ctx context.Context, e *articles.Deleted) error {
+	mod, ok := security.User[*Moderator](ctx)
+	if !ok {
+		return nil // its author deleted it
+	}
+	author, found, err := n.users.ByID(ctx, strconv.FormatInt(e.AuthorID, 10))
+	if err != nil {
+		return err
+	}
+//line moderation.ego:86
+	if !found {
+		return nil
+	}
+	return n.notifier.Send(ctx, notifier.Notification{
+		Subject:    fmt.Sprintf("Your article “%s” was removed", e.Title),
+		Content:    fmt.Sprintf("%s, a moderator, removed %s’s article “%s”, which breaks the rules.", mod.Name, author.Username, e.Title),
+		Importance: notifier.High,
+	}, notifier.Recipient{Name: author.Username, Email: author.Email})
 }
