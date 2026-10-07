@@ -49,27 +49,29 @@ type ArticleBody struct {
 
 // ArticlesBody is a page of articles, with how many there are in all.
 type ArticlesBody struct {
-	Articles      []Article `json:"articles"`
+	Articles      []Summary `json:"articles"`
 	ArticlesCount int       `json:"articlesCount"`
 }
 
 // Page is where a page of articles starts, and its size.
 type Page struct {
-	Limit  int `query:"limit" default:"20" validate:"min=1,max=100"`
-	Offset int `query:"offset" validate:"min=0"`
+	Limit  int `query:"limit" default:"20" validate:"min=1,max=100"` // how many articles, at most
+	Offset int `query:"offset" validate:"min=0"`                     // how many articles to skip
 }
 
 type ListInput struct {
 	Page
-	Tag       string `query:"tag"`
-	Author    string `query:"author"`
-	Favorited string `query:"favorited"`
+	Tag       string `query:"tag"`       // only the articles with this tag
+	Author    string `query:"author"`    // only the articles of this author, a username
+	Favorited string `query:"favorited"` // only the favorites of this user, a username
 }
 
+// List returns the articles that the filters select, newest first, without
+// their bodies.
 func (a *Articles) List(ctx context.Context, in ListInput) (_ ArticlesBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.List")
 	defer trace.End(span, &err)
-//line controller.ego:62
+//line controller.ego:64
 	f := Filter{Tag: in.Tag, Author: in.Author, Favorited: in.Favorited}
 	list, count, err := a.store.List(ctx, users.Viewer(ctx), f, in.Limit, in.Offset)
 	if err != nil {
@@ -78,14 +80,16 @@ func (a *Articles) List(ctx context.Context, in ListInput) (_ ArticlesBody, err 
 		}
 		return ArticlesBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:64
+//line controller.ego:66
 	return ArticlesBody{list, count}, nil
 }
 
+// Feed returns the articles of the authors that the authenticated user
+// follows, newest first, without their bodies.
 func (a *Articles) Feed(ctx context.Context, in Page) (_ ArticlesBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Feed")
 	defer trace.End(span, &err)
-//line controller.ego:68
+//line controller.ego:72
 	viewer := users.Viewer(ctx)
 	list, count, err := a.store.List(ctx, viewer, Filter{FeedOf: viewer}, in.Limit, in.Offset)
 	if err != nil {
@@ -94,7 +98,7 @@ func (a *Articles) Feed(ctx context.Context, in Page) (_ ArticlesBody, err error
 		}
 		return ArticlesBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:70
+//line controller.ego:74
 	return ArticlesBody{list, count}, nil
 }
 
@@ -102,15 +106,16 @@ type SlugInput struct {
 	Slug string `path:"slug"`
 }
 
+// Show returns an article.
 func (a *Articles) Show(ctx context.Context, in SlugInput) (_ ArticleBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Show")
 	defer trace.End(span, &err)
-//line controller.ego:78
+//line controller.ego:83
 	art, err := a.find(ctx, in.Slug)
 	if err != nil {
 		return ArticleBody{}, err
 	}
-//line controller.ego:79
+//line controller.ego:84
 	return ArticleBody{art}, nil
 }
 
@@ -118,7 +123,7 @@ func (a *Articles) Show(ctx context.Context, in SlugInput) (_ ArticleBody, err e
 func (a *Articles) find(ctx context.Context, slug string) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.find")
 	defer trace.End(span, &err)
-//line controller.ego:84
+//line controller.ego:89
 	art, ok, err := a.store.BySlug(ctx, users.Viewer(ctx), slug)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -126,7 +131,7 @@ func (a *Articles) find(ctx context.Context, slug string) (_ Article, err error)
 		}
 		return Article{}, Unavailable{Cause: err}
 	}
-//line controller.ego:85
+//line controller.ego:90
 	if !ok {
 		return Article{}, NoArticle{Slug: slug}
 	}
@@ -137,12 +142,12 @@ func (a *Articles) find(ctx context.Context, slug string) (_ Article, err error)
 func (a *Articles) findOwn(ctx context.Context, slug string) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.findOwn")
 	defer trace.End(span, &err)
-//line controller.ego:93
+//line controller.ego:98
 	art, err := a.find(ctx, slug)
 	if err != nil {
 		return Article{}, err
 	}
-//line controller.ego:94
+//line controller.ego:99
 	if art.AuthorID != users.Viewer(ctx) {
 		return Article{}, NotAuthor{Slug: slug}
 	}
@@ -160,12 +165,13 @@ type CreateInput struct {
 	}
 }
 
+// Create publishes an article, with a slug made of its title.
 func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Created[ArticleBody], err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Create")
 	defer trace.End(span, &err)
-//line controller.ego:112
+//line controller.ego:118
 	b := in.Body.Article
-	art := Article{Title: b.Title, Description: b.Description, Body: &b.Body, AuthorID: users.Viewer(ctx)}
+	art := Article{Summary{Title: b.Title, Description: b.Description, AuthorID: users.Viewer(ctx)}, b.Body}
 	v := b.TagList
 	if v == nil {
 		v = []string{}
@@ -177,12 +183,12 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 		}
 		return httpkernel.Created[ArticleBody]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:115
+//line controller.ego:121
 	created, err := a.find(ctx, slug)
 	if err != nil {
 		return httpkernel.Created[ArticleBody]{}, err
 	}
-//line controller.ego:116
+//line controller.ego:122
 	return httpkernel.Created[ArticleBody]{Body: ArticleBody{created}}, nil
 }
 
@@ -216,15 +222,17 @@ func (in *UpdateInput) Validate() error {
 	return nil
 }
 
+// Update changes the values that the body has of an article that the
+// authenticated user wrote. Its slug stays the same.
 func (a *Articles) Update(ctx context.Context, in UpdateInput) (_ ArticleBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Update")
 	defer trace.End(span, &err)
-//line controller.ego:150
+//line controller.ego:158
 	art, err := a.findOwn(ctx, in.Slug)
 	if err != nil {
 		return ArticleBody{}, err
 	}
-//line controller.ego:151
+//line controller.ego:159
 	b := in.Body.Article
 	if b.Title.Set {
 		art.Title = b.Title.Value
@@ -233,7 +241,7 @@ func (a *Articles) Update(ctx context.Context, in UpdateInput) (_ ArticleBody, e
 		art.Description = b.Description.Value
 	}
 	if b.Body.Set {
-		art.Body = &b.Body.Value
+		art.Body = b.Body.Value
 	}
 	var tags []string // nil leaves the tags as they are
 	if b.TagList.Set {
@@ -242,48 +250,52 @@ func (a *Articles) Update(ctx context.Context, in UpdateInput) (_ ArticleBody, e
 			tags = []string{}
 		}
 	}
-//line controller.ego:165
+//line controller.ego:173
 	if _, err := a.store.Save(ctx, art, tags); err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
 			return ArticleBody{}, err
 		}
 		return ArticleBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:166
+//line controller.ego:174
 	updated, err := a.find(ctx, art.Slug)
 	if err != nil {
 		return ArticleBody{}, err
 	}
-//line controller.ego:167
+//line controller.ego:175
 	return ArticleBody{updated}, nil
 }
 
+// Delete deletes an article that the authenticated user wrote.
 func (a *Articles) Delete(ctx context.Context, in SlugInput) (_ httpkernel.NoContent, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Delete")
 	defer trace.End(span, &err)
-//line controller.ego:171
+//line controller.ego:180
 	art, err := a.findOwn(ctx, in.Slug)
 	if err != nil {
 		return httpkernel.NoContent{}, err
 	}
-//line controller.ego:172
+//line controller.ego:181
 	if err := a.store.Delete(ctx, art.ID); err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
 			return httpkernel.NoContent{}, err
 		}
 		return httpkernel.NoContent{}, Unavailable{Cause: err}
 	}
-//line controller.ego:173
+//line controller.ego:182
 	return httpkernel.NoContent{}, nil
 }
 
+// Favorite adds an article to the authenticated user's favorites.
 func (a *Articles) Favorite(ctx context.Context, in SlugInput) (_ ArticleBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Favorite")
 	defer trace.End(span, &err)
 	return a.favorite(ctx, in.Slug, true)
 }
 
-//line controller.ego:180
+// Unfavorite removes an article from the authenticated user's favorites.
+//
+//line controller.ego:191
 func (a *Articles) Unfavorite(ctx context.Context, in SlugInput) (_ ArticleBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Unfavorite")
 	defer trace.End(span, &err)
@@ -292,28 +304,28 @@ func (a *Articles) Unfavorite(ctx context.Context, in SlugInput) (_ ArticleBody,
 
 // favorite makes the viewer favorite the article with the slug, or not.
 //
-//line controller.ego:185
+//line controller.ego:196
 func (a *Articles) favorite(ctx context.Context, slug string, favorite bool) (_ ArticleBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.favorite")
 	defer trace.End(span, &err)
-//line controller.ego:186
+//line controller.ego:197
 	art, err := a.find(ctx, slug)
 	if err != nil {
 		return ArticleBody{}, err
 	}
-//line controller.ego:187
+//line controller.ego:198
 	if err := a.store.Favorite(ctx, users.Viewer(ctx), art.ID, favorite); err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
 			return ArticleBody{}, err
 		}
 		return ArticleBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:188
+//line controller.ego:199
 	updated, err := a.find(ctx, slug)
 	if err != nil {
 		return ArticleBody{}, err
 	}
-//line controller.ego:189
+//line controller.ego:200
 	return ArticleBody{updated}, nil
 }
 
@@ -322,10 +334,11 @@ type TagsBody struct {
 	Tags []string `json:"tags"`
 }
 
+// Tags returns every tag that an article has.
 func (a *Articles) Tags(ctx context.Context, in struct{}) (_ TagsBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Tags")
 	defer trace.End(span, &err)
-//line controller.ego:198
+//line controller.ego:210
 	tags, err := a.store.Tags(ctx)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -333,6 +346,6 @@ func (a *Articles) Tags(ctx context.Context, in struct{}) (_ TagsBody, err error
 		}
 		return TagsBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:199
+//line controller.ego:211
 	return TagsBody{tags}, nil
 }

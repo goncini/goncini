@@ -22,12 +22,17 @@ import (
 //
 //line articles.ego:18
 type Article struct {
+	Summary
+	Body string `json:"body"`
+}
+
+// Summary is an article without its body, as lists show it.
+type Summary struct {
 	ID             int64         `json:"-"`
 	AuthorID       int64         `json:"-"`
 	Slug           string        `json:"slug"`
 	Title          string        `json:"title"`
 	Description    string        `json:"description"`
-	Body           *string       `json:"body,omitempty"` // left out of lists
 	TagList        []string      `json:"tagList"`
 	CreatedAt      time.Time     `json:"createdAt"`
 	UpdatedAt      time.Time     `json:"updatedAt"`
@@ -134,7 +139,7 @@ func (e Unavailable) As(target any) bool {
 
 // Problem says what each ArticleError looks like over HTTP.
 //
-//line articles.ego:56
+//line articles.ego:61
 func Problem(err error) httpkernel.Problem {
 	var v httpkernel.Problem
 	if err == nil {
@@ -157,7 +162,7 @@ func Problem(err error) httpkernel.Problem {
 
 // Problems is what a kernel registers to answer ArticleErrors.
 //
-//line articles.ego:68
+//line articles.ego:73
 var Problems = httpkernel.Map[ArticleError](Problem)
 
 // slugify turns a title into a slug: "Hello, World!" becomes "hello-world".

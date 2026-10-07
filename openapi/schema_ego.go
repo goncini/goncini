@@ -230,6 +230,10 @@ func (s *schemas) fields(o *Schema, t reflect.Type, m mode, doc TypeDoc, prefix 
 		}
 		if m == writing {
 			required = !slices.Contains(options, "omitempty") && !slices.Contains(options, "omitzero")
+		} else if !required {
+			// A struct with required members is required itself: without
+			// it, they are missing.
+			required = len(s.inner(p, ft, m).Required) > 0
 		}
 		if d := doc.Fields[prefix+f.Name]; d != "" {
 			p = described(p, d)
@@ -239,6 +243,24 @@ func (s *schemas) fields(o *Schema, t reflect.Type, m mode, doc TypeDoc, prefix 
 			o.Required = append(o.Required, name)
 		}
 	}
+}
+
+// inner returns the object schema of a struct field of type t, whose
+// schema is p: p itself, or the component p refers to. It is empty for a
+// field of another type, which may be absent.
+func (s *schemas) inner(p *Schema, t reflect.Type, m mode) *Schema {
+	if t.Kind() != reflect.Struct || p.Type.Is("null") {
+		return &Schema{}
+	}
+	if p.Ref != "" {
+		v, ok := s.components[schemaKey{t, m}]
+		if !ok {
+			v = &Schema{}
+		}
+		return v
+	}
+//line schema.ego:222
+	return p
 }
 
 // quoted is the schema of a number or boolean written as a JSON string,
@@ -316,7 +338,7 @@ func (s *schemas) finish() map[string]*Schema {
 			}
 		}
 	}
-//line schema.ego:279
+//line schema.ego:296
 	out := map[string]*Schema{}
 	for _, k := range s.order {
 		name := named[k.t]
@@ -467,7 +489,7 @@ func limit(p *Schema, t reflect.Type, param string, upper, inclusive bool) {
 				count = count + 1
 			}
 		}
-//line schema.ego:425
+//line schema.ego:442
 		if t.Kind() == reflect.String {
 			if upper {
 				p.MaxLength = &count

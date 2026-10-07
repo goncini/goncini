@@ -24,15 +24,16 @@ type CommentsBody struct {
 	Comments []Comment `json:"comments"`
 }
 
+// Comments returns the comments of an article, oldest first.
 func (a *Articles) Comments(ctx context.Context, in SlugInput) (_ CommentsBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Comments")
 	defer trace.End(span, &err)
-//line comments.ego:20
+//line comments.ego:21
 	art, err := a.find(ctx, in.Slug)
 	if err != nil {
 		return CommentsBody{}, err
 	}
-//line comments.ego:21
+//line comments.ego:22
 	comments, err := a.store.Comments(ctx, users.Viewer(ctx), art.ID)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -40,7 +41,7 @@ func (a *Articles) Comments(ctx context.Context, in SlugInput) (_ CommentsBody, 
 		}
 		return CommentsBody{}, Unavailable{Cause: err}
 	}
-//line comments.ego:22
+//line comments.ego:23
 	return CommentsBody{comments}, nil
 }
 
@@ -53,15 +54,16 @@ type AddCommentInput struct {
 	}
 }
 
+// AddComment comments on an article.
 func (a *Articles) AddComment(ctx context.Context, in AddCommentInput) (_ httpkernel.Created[CommentBody], err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.AddComment")
 	defer trace.End(span, &err)
-//line comments.ego:35
+//line comments.ego:37
 	art, err := a.find(ctx, in.Slug)
 	if err != nil {
 		return httpkernel.Created[CommentBody]{}, err
 	}
-//line comments.ego:36
+//line comments.ego:38
 	viewer := users.Viewer(ctx)
 	id, err := a.store.AddComment(ctx, art.ID, viewer, in.Body.Comment.Body)
 	if err != nil {
@@ -70,7 +72,7 @@ func (a *Articles) AddComment(ctx context.Context, in AddCommentInput) (_ httpke
 		}
 		return httpkernel.Created[CommentBody]{}, Unavailable{Cause: err}
 	}
-//line comments.ego:38
+//line comments.ego:40
 	c, _, err := a.store.Comment(ctx, viewer, art.ID, id)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -78,7 +80,7 @@ func (a *Articles) AddComment(ctx context.Context, in AddCommentInput) (_ httpke
 		}
 		return httpkernel.Created[CommentBody]{}, Unavailable{Cause: err}
 	}
-//line comments.ego:39
+//line comments.ego:41
 	return httpkernel.Created[CommentBody]{Body: CommentBody{c}}, nil
 }
 
@@ -87,15 +89,16 @@ type DeleteCommentInput struct {
 	ID int64 `path:"id"`
 }
 
+// DeleteComment deletes a comment that the authenticated user wrote.
 func (a *Articles) DeleteComment(ctx context.Context, in DeleteCommentInput) (_ httpkernel.NoContent, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.DeleteComment")
 	defer trace.End(span, &err)
-//line comments.ego:48
+//line comments.ego:51
 	art, err := a.find(ctx, in.Slug)
 	if err != nil {
 		return httpkernel.NoContent{}, err
 	}
-//line comments.ego:49
+//line comments.ego:52
 	c, ok, err := a.store.Comment(ctx, 0, art.ID, in.ID)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -103,7 +106,7 @@ func (a *Articles) DeleteComment(ctx context.Context, in DeleteCommentInput) (_ 
 		}
 		return httpkernel.NoContent{}, Unavailable{Cause: err}
 	}
-//line comments.ego:50
+//line comments.ego:53
 	if !ok {
 		return httpkernel.NoContent{}, NoComment{ID: in.ID}
 	}
@@ -116,6 +119,6 @@ func (a *Articles) DeleteComment(ctx context.Context, in DeleteCommentInput) (_ 
 		}
 		return httpkernel.NoContent{}, Unavailable{Cause: err}
 	}
-//line comments.ego:57
+//line comments.ego:60
 	return httpkernel.NoContent{}, nil
 }

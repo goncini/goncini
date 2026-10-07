@@ -60,6 +60,7 @@ type RegisterInput struct {
 	}
 }
 
+// Register registers a user, and returns them with a token.
 effect (u *Users) Register(in RegisterInput) (httpkernel.Created[UserBody], UserError) {
 	b := in.Body.User
 	hash := check u.hasher.Hash(b.Password) as Unavailable
@@ -81,6 +82,7 @@ type LoginInput struct {
 	}
 }
 
+// Login returns the user with an email and a password, with a new token.
 effect (u *Users) Login(in LoginInput) (UserBody, UserError) {
 	user, ok := check u.store.ByEmail(in.Body.User.Email) as Unavailable
 	if !ok {
@@ -94,6 +96,7 @@ effect (u *Users) Login(in LoginInput) (UserBody, UserError) {
 	return body, nil
 }
 
+// Current returns the authenticated user, with a new token.
 effect (u *Users) Current(in struct{}) (UserBody, UserError) {
 	body := check u.body(Current(ctx)) as Unavailable
 	return body, nil
@@ -130,6 +133,7 @@ func (in *UpdateInput) Validate() error {
 	return nil
 }
 
+// Update changes the authenticated user's values that the body has.
 effect (u *Users) Update(in UpdateInput) (UserBody, UserError) {
 	b := in.Body.User
 	user := *Current(ctx)
@@ -170,15 +174,18 @@ type ProfileInput struct {
 	Username string `path:"username"`
 }
 
+// Profile returns a user's profile.
 effect (u *Users) Profile(in ProfileInput) (ProfileBody, UserError) {
 	return u.profile(in.Username, nil)
 }
 
+// Follow makes the authenticated user follow another.
 effect (u *Users) Follow(in ProfileInput) (ProfileBody, UserError) {
 	follow := true
 	return u.profile(in.Username, &follow)
 }
 
+// Unfollow makes the authenticated user stop following another.
 effect (u *Users) Unfollow(in ProfileInput) (ProfileBody, UserError) {
 	follow := false
 	return u.profile(in.Username, &follow)

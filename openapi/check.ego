@@ -176,8 +176,8 @@ func (c *checker) value(s *Schema, v any, at string) {
 		c.fail(at, "%s isn't one of %v", describe(v), s.Enum)
 	}
 	match v {
-		string(str) => c.text(s, str, at)
-		float64(n) => c.number(s, n, at)
+		string(str)  => c.text(s, str, at)
+		float64(n)   => c.number(s, n, at)
 		[]any(items) => {
 			if s.MinItems != nil && len(items) < *s.MinItems || s.MaxItems != nil && len(items) > *s.MaxItems {
 				c.fail(at, "has %d items, out of bounds", len(items))
@@ -197,7 +197,8 @@ func (c *checker) value(s *Schema, v any, at string) {
 				c.value(p, m, at+"/"+strings.ReplaceAll(strings.ReplaceAll(name, "~", "~0"), "/", "~1"))
 			}
 		}
-		_ => {}
+		_ => {
+		}
 	}
 }
 
@@ -228,13 +229,13 @@ func (c *checker) number(s *Schema, n float64, at string) {
 // kindOf is the JSON Schema type of v: integer for a whole number.
 func kindOf(v any) string {
 	return match v {
-		nil => "null"
-		bool(_) => "boolean"
-		float64(n) => if n == math.Trunc(n) { "integer" } else { "number" }
-		string(_) => "string"
-		[]any(_) => "array"
+		nil               => "null"
+		bool(_)           => "boolean"
+		float64(n)        => if n == math.Trunc(n) { "integer" } else { "number" }
+		string(_)         => "string"
+		[]any(_)          => "array"
 		map[string]any(_) => "object"
-		_ => "unknown"
+		_                 => "unknown"
 	}
 }
 

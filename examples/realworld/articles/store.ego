@@ -66,15 +66,12 @@ FROM articles a JOIN users u ON u.id = a.author_id`
 
 // List returns the articles that f selects, newest first, without their
 // bodies, from offset and at most limit of them, with how many there are.
-effect (s *Store) List(viewer int64, f Filter, limit, offset int) ([]Article, int, error) {
+effect (s *Store) List(viewer int64, f Filter, limit, offset int) ([]Summary, int, error) {
 	where, args := f.where()
 	conn := s.sql.Conn(ctx)
 	count := check db.Value[int](ctx, conn, "SELECT count(*) FROM articles a JOIN users u ON u.id = a.author_id"+where, args...)
 	query := selectArticles + where + " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
-	list := check db.All(ctx, conn, scanArticle, query, append(append([]any{viewer, viewer}, args...), limit, offset)...)
-	for i := range list {
-		list[i].Body = nil
-	}
+	list := check db.All(ctx, conn, scanSummary, query, append(append([]any{viewer, viewer}, args...), limit, offset)...)
 	return list, count, nil
 }
 
@@ -87,15 +84,21 @@ effect (s *Store) BySlug(viewer int64, slug string) (Article, bool, error) {
 // scanArticle reads an article that selectArticles selects.
 func scanArticle(row db.Scanner) (Article, error) {
 	var art Article
-	var body, tags string
+	var tags string
 	var created, updated int64
-	check row.Scan(&art.ID, &art.AuthorID, &art.Slug, &art.Title, &art.Description, &body, &created, &updated,
+	check row.Scan(&art.ID, &art.AuthorID, &art.Slug, &art.Title, &art.Description, &art.Body, &created, &updated,
 		&art.Author.Username, &art.Author.Bio, &art.Author.Image,
 		&art.FavoritesCount, &art.Favorited, &art.Author.Following, &tags) ""
 	check json.Unmarshal([]byte(tags), &art.TagList) ""
-	art.Body = &body
 	art.CreatedAt, art.UpdatedAt = time.UnixMicro(created).UTC(), time.UnixMicro(updated).UTC()
 	return art, nil
+}
+
+// scanSummary reads an article that selectArticles selects, without its
+// body.
+func scanSummary(row db.Scanner) (Summary, error) {
+	art, err := scanArticle(row)
+	return art.Summary, err
 }
 
 // Save inserts art with a slug of its title, unique, if its ID is 0, or
@@ -107,11 +110,11 @@ effect (s *Store) Save(art Article, tags []string) (string, error) {
 		conn := s.sql.Conn(ctx)
 		if art.ID != 0 {
 			check conn.ExecContext(ctx, "UPDATE articles SET title = ?, description = ?, body = ?, updated_at = ? WHERE id = ?",
-				art.Title, art.Description, *art.Body, now, art.ID)
+				art.Title, art.Description, art.Body, now, art.ID)
 		} else {
 			art.Slug = check s.freeSlug(ctx, slugify(art.Title)) ""
 			res := check conn.ExecContext(ctx, "INSERT INTO articles (slug, title, description, body, author_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-				art.Slug, art.Title, art.Description, *art.Body, art.AuthorID, now, now)
+				art.Slug, art.Title, art.Description, art.Body, art.AuthorID, now, now)
 			art.ID = check res.LastInsertId()
 		}
 		if tags == nil {

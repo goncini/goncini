@@ -14,6 +14,7 @@ go run . list                # the app's commands; go run . serves it
 go run . db:migrate          # applies the migrations
 go run . debug:router        # lists the routes
 go run . debug:container     # lists the services, with their providers and what they need
+go run . openapi:dump        # prints the API's OpenAPI document
 ```
 
 Edit `.ego` files only, never the generated `_ego.go`, `layers_ego.go` or
@@ -152,6 +153,28 @@ func (a *Articles) Routes(r *routing.Router) {
 Paths match exactly. `{id<\d+>}` requires a value to match a regular
 expression, or the route doesn't match. `goncini generate` registers every
 provided service that has a `Routes` method, in the order of `Services`.
+
+## Documentation
+
+The app serves its OpenAPI 3.1 document at `/openapi.json`, generated from
+the code: the endpoints' input and output types, their `validate` tags,
+the error cases each endpoint can return, and doc comments. Nothing is
+annotated. Write a doc comment on each endpoint, whose first sentence is
+its summary, and on the input fields that a client needs explained:
+
+```go
+// Show returns an article.
+effect (a *Articles) Show(in SlugInput) (ArticleBody, ArticleError) { … }
+
+type ListInput struct {
+	Tag string `query:"tag"` // only the articles with this tag
+}
+```
+
+The output type says what the response holds, member by member: a member
+that some responses leave out needs a type of its own, such as a list's
+`Summary` without the `Article`'s body. `openapi.Config`'s `DocsPath` serves
+a page to read and try the API.
 
 ## Users
 

@@ -233,7 +233,7 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 	inDoc := g.a.Types[d.Input]
 	var paramViolation *httpkernel.Violation
 	for _, p := range d.Params {
-		param := &Parameter{Name: p.Name, In: p.In, Required: p.Required, Description: inDoc.Fields[p.Field.Name], Schema: g.paramSchema(p)}
+		param := &Parameter{Name: p.Name, In: p.In, Required: p.Required, Description: g.fieldDoc(d.Input, p.Field.Name), Schema: g.paramSchema(p)}
 		if req, ok := r.Requirements[p.Name]; ok && p.In == "path" && param.Schema.Type.Is("string") {
 			param.Schema.Pattern = "^(?:" + req + ")$"
 		}
@@ -303,6 +303,22 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 	op.Responses[strconv.Itoa(d.Status)] = res
 }
 
+// fieldDoc returns the doc comment of t's field with the name, or of an
+// embedded struct's.
+func (g *generator) fieldDoc(t reflect.Type, name string) string {
+	if d := g.a.Types[t].Fields[name]; d != "" {
+		return d
+	}
+	for i := range t.NumField() {
+		if f := t.Field(i); f.Anonymous && f.Type.Kind() == reflect.Struct {
+			if d := g.fieldDoc(f.Type, name); d != "" {
+				return d
+			}
+		}
+	}
+	return ""
+}
+
 // splitFunc returns the receiver type's name and the method's name of a
 // handler's full name: Articles and Show for
 // example.com/api/articles.(*Articles).Show. A function that isn't a method
@@ -338,7 +354,7 @@ func (g *generator) paramSchema(p httpkernel.ParamDescription) *Schema {
 		} else {
 			target = s
 		}
-//line generate.ego:308
+//line generate.ego:324
 		target.Enum = enumValues(t, p.Enum)
 	}
 	if p.Default != nil {
@@ -411,7 +427,7 @@ func (g *generator) errors(op *Op) (err error) {
 	} else {
 		render = httpkernel.RenderProblem
 	}
-//line generate.ego:375
+//line generate.ego:391
 	req := httptest.NewRequest(op.Method, "/", nil)
 	for _, e := range op.Errors {
 		rec := &recorder{header: http.Header{}}
@@ -427,7 +443,7 @@ func (g *generator) errors(op *Op) (err error) {
 		if err != nil {
 			return err
 		}
-//line generate.ego:388
+//line generate.ego:404
 		status := strconv.Itoa(rec.status)
 		res := op.Responses[status]
 		if res == nil {

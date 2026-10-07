@@ -192,6 +192,14 @@ document generated from the code, with nothing to annotate.
   checks every response; `webtest.Contract` is the same as middleware, for
   an app served over HTTP. RealWorld's Hurl suite runs through it: all 154
   requests hold.
+- **M2's contract gates pass.** RealWorld's document covers RealWorld's
+  own `openapi.yml`: the same operations, parameters, request bodies and
+  successful responses, with compatible schemas. A client that
+  oapi-codegen generates from it drives every operation. Comparing them
+  found that RealWorld's single `Article` type left its body optional:
+  lists now return a `Summary`, without one.
+- In a request, a struct member whose own members are required is
+  required: without it, they would be missing.
 - `httpkernel.Describe` says what an endpoint takes and returns, and
   `routing.Info` has the route's middleware.
 

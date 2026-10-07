@@ -1,0 +1,183 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"flag"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"github.com/goncini/goncini/webtest"
+
+	"github.com/goncini/goncini/examples/realworld/app"
+	"github.com/goncini/goncini/examples/realworld/client"
+	"github.com/goncini/goncini/examples/realworld/config"
+)
+
+var update = flag.Bool("update", false, "rewrite testdata/openapi/conduit.json and the client")
+
+// TestDocumentIsDumped checks that testdata/openapi/conduit.json, which the
+// client is generated from, is the app's document, and that the client is
+// generated from it: go test -update rewrites both.
+func TestDocumentIsDumped(t *testing.T) {
+	a := webtest.Boot(t, config.Load, app.Build)
+	got := must json.Marshal(a.OpenAPI, json.Deterministic(true), jsontext.Multiline(true), jsontext.WithIndent("  "))
+	got = append(got, '\n')
+	file := "testdata/openapi/conduit.json"
+	if *update {
+		must os.WriteFile(file, got, 0o644)
+		out, err := exec.Command("go", "generate", "./client").CombinedOutput()
+		if err != nil {
+			t.Fatalf("go generate: %v\n%s", err, out)
+		}
+		return
+	}
+	want := must os.ReadFile(file)
+	if !bytes.Equal(got, want) {
+		t.Errorf("%s isn't the app's document: run go test -update", file)
+	}
+	gen := filepath.Join(t.TempDir(), "client.gen.go")
+	out, err := exec.Command("go", "tool", "oapi-codegen", "-generate", "types,client", "-package", "client", "-o", gen, file).CombinedOutput()
+	if err != nil {
+		t.Fatalf("oapi-codegen: %v\n%s", err, out)
+	}
+	fresh := must os.ReadFile(gen)
+	committed := must os.ReadFile("client/client.gen.go")
+	if !bytes.Equal(fresh, committed) {
+		t.Errorf("client/client.gen.go isn't generated from %s: run go test -update", file)
+	}
+}
+
+// TestClient drives every operation of the API through the client that
+// oapi-codegen generates from the app's OpenAPI document, over HTTP, with
+// each exchange checked against the document.
+func TestClient(t *testing.T) {
+	a := webtest.Boot(t, config.Load, app.Build)
+	webtest.Run(t, a, "db:migrate")
+	srv := httptest.NewServer(webtest.Contract(t, a.OpenAPI, a.Kernel))
+	defer srv.Close()
+	c := must client.NewClientWithResponses(srv.URL)
+	ctx := t.Context()
+	status := (what string, got, want int) => {
+		if got != want {
+			t.Fatalf("%s: status %d, want %d", what, got, want)
+		}
+	}
+
+	type user = struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		Username string `json:"username"`
+	}
+	register := must c.UserRegisterWithResponse(ctx, client.UserRegisterJSONRequestBody{User: user{"bob@example.com", "bob's password", "bob"}})
+	status("register", register.StatusCode(), 201)
+	bob := withToken(register.JSON201.User.Token)
+	register = must c.UserRegisterWithResponse(ctx, client.UserRegisterJSONRequestBody{User: user{"alice@example.com", "alice's password", "alice"}})
+	status("register", register.StatusCode(), 201)
+	login := must c.UserLoginWithResponse(ctx, client.UserLoginJSONRequestBody{User: struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}{"alice@example.com", "alice's password"}})
+	status("login", login.StatusCode(), 200)
+	alice := withToken(login.JSON200.User.Token)
+
+	current := must c.UserCurrentWithResponse(ctx, alice)
+	status("current user", current.StatusCode(), 200)
+	if current.JSON200.User.Username != "alice" {
+		t.Errorf("the current user is %q", current.JSON200.User.Username)
+	}
+	var update client.UserUpdateJSONRequestBody // its user is an anonymous struct
+	must json.Unmarshal([]byte(`{"user":{"bio":"Writes tests."}}`), &update)
+	updated := must c.UserUpdateWithResponse(ctx, update, alice)
+	status("update the user", updated.StatusCode(), 200)
+	if b := updated.JSON200.User.Bio; b == nil || *b != "Writes tests." {
+		t.Errorf("bio %v", b)
+	}
+
+	follow := must c.ProfileFollowWithResponse(ctx, "bob", alice)
+	status("follow", follow.StatusCode(), 200)
+	profile := must c.ProfileShowWithResponse(ctx, "bob", alice)
+	status("profile", profile.StatusCode(), 200)
+	if !profile.JSON200.Profile.Following {
+		t.Error("alice doesn't follow bob")
+	}
+
+	article := client.ArticleCreateJSONRequestBody{}
+	article.Article.Title, article.Article.Description, article.Article.Body = "Typed clients", "From OpenAPI", "They compile."
+	article.Article.TagList = &[]string{"go"}
+	created := must c.ArticleCreateWithResponse(ctx, article, bob)
+	status("create an article", created.StatusCode(), 201)
+	slug := created.JSON201.Article.Slug
+
+	list := must c.ArticleListWithResponse(ctx, &client.ArticleListParams{Tag: new("go"), Limit: new(10)})
+	status("list articles", list.StatusCode(), 200)
+	feed := must c.ArticleFeedWithResponse(ctx, &client.ArticleFeedParams{}, alice)
+	status("feed", feed.StatusCode(), 200)
+	if list.JSON200.ArticlesCount != 1 || feed.JSON200.ArticlesCount != 1 {
+		t.Errorf("%d articles tagged go, %d in alice's feed", list.JSON200.ArticlesCount, feed.JSON200.ArticlesCount)
+	}
+	var edit client.ArticleUpdateJSONRequestBody
+	must json.Unmarshal([]byte(`{"article":{"title":"Typed clients, generated"}}`), &edit)
+	edited := must c.ArticleUpdateWithResponse(ctx, slug, edit, bob)
+	status("update the article", edited.StatusCode(), 200)
+	show := must c.ArticleShowWithResponse(ctx, slug)
+	status("show the article", show.StatusCode(), 200)
+	if got := show.JSON200.Article; got.Title != "Typed clients, generated" || got.Body != "They compile." {
+		t.Errorf("article %+v", got)
+	}
+
+	favorite := must c.ArticleFavoriteWithResponse(ctx, slug, alice)
+	status("favorite", favorite.StatusCode(), 200)
+	if !favorite.JSON200.Article.Favorited || favorite.JSON200.Article.FavoritesCount != 1 {
+		t.Errorf("favorited %+v", favorite.JSON200.Article)
+	}
+	unfavorite := must c.ArticleUnfavoriteWithResponse(ctx, slug, alice)
+	status("unfavorite", unfavorite.StatusCode(), 200)
+
+	comment := client.CommentAddJSONRequestBody{}
+	comment.Comment.Body = "Nice."
+	added := must c.CommentAddWithResponse(ctx, slug, comment, alice)
+	status("comment", added.StatusCode(), 201)
+	comments := must c.CommentListWithResponse(ctx, slug)
+	status("list the comments", comments.StatusCode(), 200)
+	if len(comments.JSON200.Comments) != 1 {
+		t.Errorf("%d comments", len(comments.JSON200.Comments))
+	}
+	deletedComment := must c.CommentDeleteWithResponse(ctx, slug, added.JSON201.Comment.Id, alice)
+	status("delete the comment", deletedComment.StatusCode(), 204)
+
+	tags := must c.TagListWithResponse(ctx)
+	status("tags", tags.StatusCode(), 200)
+	if len(tags.JSON200.Tags) != 1 || tags.JSON200.Tags[0] != "go" {
+		t.Errorf("tags %q", tags.JSON200.Tags)
+	}
+
+	forbidden := must c.ArticleDeleteWithResponse(ctx, slug, alice)
+	status("delete bob's article as alice", forbidden.StatusCode(), 403)
+	if got := forbidden.JSON403.Errors["article"]; len(got) != 1 || got[0] != "forbidden" {
+		t.Errorf("errors %v", forbidden.JSON403.Errors)
+	}
+	deleted := must c.ArticleDeleteWithResponse(ctx, slug, bob)
+	status("delete the article", deleted.StatusCode(), 204)
+	missing := must c.ArticleShowWithResponse(ctx, slug)
+	status("show a deleted article", missing.StatusCode(), 404)
+
+	unfollow := must c.ProfileUnfollowWithResponse(ctx, "bob", alice)
+	status("unfollow", unfollow.StatusCode(), 200)
+	anonymous := must c.UserCurrentWithResponse(ctx)
+	status("current user without a token", anonymous.StatusCode(), 401)
+}
+
+// withToken authenticates a request with a token, as RealWorld does.
+func withToken(token string) client.RequestEditorFn {
+	return (ctx context.Context, req *http.Request) => {
+		req.Header.Set("Authorization", "Token "+token)
+		return nil
+	}
+}

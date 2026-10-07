@@ -1,0 +1,5 @@
+realworld.json is the RealWorld API's OpenAPI document, from
+https://github.com/gothinkster/realworld (specs/api/openapi.yml, commit
+ebbcdeb8d55b42a3a613c787560498b8ef10003f), converted from YAML to JSON,
+under the MIT license of testdata/hurl/README. openapi_test.go compares the
+app's document with it.

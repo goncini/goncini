@@ -16,6 +16,7 @@ type CommentsBody struct {
 	Comments []Comment `json:"comments"`
 }
 
+// Comments returns the comments of an article, oldest first.
 effect (a *Articles) Comments(in SlugInput) (CommentsBody, ArticleError) {
 	art := check a.find(in.Slug) ""
 	comments := check a.store.Comments(users.Viewer(ctx), art.ID) as Unavailable
@@ -31,6 +32,7 @@ type AddCommentInput struct {
 	}
 }
 
+// AddComment comments on an article.
 effect (a *Articles) AddComment(in AddCommentInput) (httpkernel.Created[CommentBody], ArticleError) {
 	art := check a.find(in.Slug) ""
 	viewer := users.Viewer(ctx)
@@ -44,6 +46,7 @@ type DeleteCommentInput struct {
 	ID int64 `path:"id"`
 }
 
+// DeleteComment deletes a comment that the authenticated user wrote.
 effect (a *Articles) DeleteComment(in DeleteCommentInput) (httpkernel.NoContent, ArticleError) {
 	art := check a.find(in.Slug) ""
 	c, ok := check a.store.Comment(0, art.ID, in.ID) as Unavailable

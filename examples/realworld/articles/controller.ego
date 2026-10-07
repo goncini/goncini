@@ -41,29 +41,33 @@ type ArticleBody struct {
 
 // ArticlesBody is a page of articles, with how many there are in all.
 type ArticlesBody struct {
-	Articles      []Article `json:"articles"`
+	Articles      []Summary `json:"articles"`
 	ArticlesCount int       `json:"articlesCount"`
 }
 
 // Page is where a page of articles starts, and its size.
 type Page struct {
-	Limit  int `query:"limit" default:"20" validate:"min=1,max=100"`
-	Offset int `query:"offset" validate:"min=0"`
+	Limit  int `query:"limit" default:"20" validate:"min=1,max=100"` // how many articles, at most
+	Offset int `query:"offset" validate:"min=0"`                     // how many articles to skip
 }
 
 type ListInput struct {
 	Page
-	Tag       string `query:"tag"`
-	Author    string `query:"author"`
-	Favorited string `query:"favorited"`
+	Tag       string `query:"tag"`       // only the articles with this tag
+	Author    string `query:"author"`    // only the articles of this author, a username
+	Favorited string `query:"favorited"` // only the favorites of this user, a username
 }
 
+// List returns the articles that the filters select, newest first, without
+// their bodies.
 effect (a *Articles) List(in ListInput) (ArticlesBody, ArticleError) {
 	f := Filter{Tag: in.Tag, Author: in.Author, Favorited: in.Favorited}
 	list, count := check a.store.List(users.Viewer(ctx), f, in.Limit, in.Offset) as Unavailable
 	return ArticlesBody{list, count}, nil
 }
 
+// Feed returns the articles of the authors that the authenticated user
+// follows, newest first, without their bodies.
 effect (a *Articles) Feed(in Page) (ArticlesBody, ArticleError) {
 	viewer := users.Viewer(ctx)
 	list, count := check a.store.List(viewer, Filter{FeedOf: viewer}, in.Limit, in.Offset) as Unavailable
@@ -74,6 +78,7 @@ type SlugInput struct {
 	Slug string `path:"slug"`
 }
 
+// Show returns an article.
 effect (a *Articles) Show(in SlugInput) (ArticleBody, ArticleError) {
 	art := check a.find(in.Slug) ""
 	return ArticleBody{art}, nil
@@ -108,9 +113,10 @@ type CreateInput struct {
 	}
 }
 
+// Create publishes an article, with a slug made of its title.
 effect (a *Articles) Create(in CreateInput) (httpkernel.Created[ArticleBody], ArticleError) {
 	b := in.Body.Article
-	art := Article{Title: b.Title, Description: b.Description, Body: &b.Body, AuthorID: users.Viewer(ctx)}
+	art := Article{Summary{Title: b.Title, Description: b.Description, AuthorID: users.Viewer(ctx)}, b.Body}
 	slug := check a.store.Save(art, b.TagList ?? []string{}) as Unavailable
 	created := check a.find(slug) ""
 	return httpkernel.Created[ArticleBody]{Body: ArticleBody{created}}, nil
@@ -146,6 +152,8 @@ func (in *UpdateInput) Validate() error {
 	return nil
 }
 
+// Update changes the values that the body has of an article that the
+// authenticated user wrote. Its slug stays the same.
 effect (a *Articles) Update(in UpdateInput) (ArticleBody, ArticleError) {
 	art := check a.findOwn(in.Slug) ""
 	b := in.Body.Article
@@ -156,7 +164,7 @@ effect (a *Articles) Update(in UpdateInput) (ArticleBody, ArticleError) {
 		art.Description = b.Description.Value
 	}
 	if b.Body.Set {
-		art.Body = &b.Body.Value
+		art.Body = b.Body.Value
 	}
 	var tags []string // nil leaves the tags as they are
 	if b.TagList.Set {
@@ -167,16 +175,19 @@ effect (a *Articles) Update(in UpdateInput) (ArticleBody, ArticleError) {
 	return ArticleBody{updated}, nil
 }
 
+// Delete deletes an article that the authenticated user wrote.
 effect (a *Articles) Delete(in SlugInput) (httpkernel.NoContent, ArticleError) {
 	art := check a.findOwn(in.Slug) ""
 	check a.store.Delete(art.ID) as Unavailable
 	return httpkernel.NoContent{}, nil
 }
 
+// Favorite adds an article to the authenticated user's favorites.
 effect (a *Articles) Favorite(in SlugInput) (ArticleBody, ArticleError) {
 	return a.favorite(in.Slug, true)
 }
 
+// Unfavorite removes an article from the authenticated user's favorites.
 effect (a *Articles) Unfavorite(in SlugInput) (ArticleBody, ArticleError) {
 	return a.favorite(in.Slug, false)
 }
@@ -194,6 +205,7 @@ type TagsBody struct {
 	Tags []string `json:"tags"`
 }
 
+// Tags returns every tag that an article has.
 effect (a *Articles) Tags(in struct{}) (TagsBody, ArticleError) {
 	tags := check a.store.Tags() as Unavailable
 	return TagsBody{tags}, nil

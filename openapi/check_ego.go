@@ -231,7 +231,7 @@ func (c *checker) value(s *Schema, v any, at string) {
 
 // text checks a string's length, pattern and date-time format.
 //
-//line check.ego:205
+//line check.ego:206
 func (c *checker) text(s *Schema, str, at string) {
 	n := utf8.RuneCountInString(str)
 	if s.MinLength != nil && n < *s.MinLength || s.MaxLength != nil && n > *s.MaxLength {
@@ -282,7 +282,7 @@ func kindOf(v any) string {
 
 // describe shows v in a message.
 //
-//line check.ego:242
+//line check.ego:243
 func describe(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil || len(b) > 40 {

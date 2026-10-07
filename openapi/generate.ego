@@ -218,7 +218,7 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 	inDoc := g.a.Types[d.Input]
 	var paramViolation *httpkernel.Violation
 	for _, p := range d.Params {
-		param := &Parameter{Name: p.Name, In: p.In, Required: p.Required, Description: inDoc.Fields[p.Field.Name], Schema: g.paramSchema(p)}
+		param := &Parameter{Name: p.Name, In: p.In, Required: p.Required, Description: g.fieldDoc(d.Input, p.Field.Name), Schema: g.paramSchema(p)}
 		if req, ok := r.Requirements[p.Name]; ok && p.In == "path" && param.Schema.Type.Is("string") {
 			param.Schema.Pattern = "^(?:" + req + ")$"
 		}
@@ -273,6 +273,22 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 		res.Content = map[string]*MediaType{"application/json": {Schema: g.schemas.of(d.Result, writing)}}
 	}
 	op.Responses[strconv.Itoa(d.Status)] = res
+}
+
+// fieldDoc returns the doc comment of t's field with the name, or of an
+// embedded struct's.
+func (g *generator) fieldDoc(t reflect.Type, name string) string {
+	if d := g.a.Types[t].Fields[name]; d != "" {
+		return d
+	}
+	for i := range t.NumField() {
+		if f := t.Field(i); f.Anonymous && f.Type.Kind() == reflect.Struct {
+			if d := g.fieldDoc(f.Type, name); d != "" {
+				return d
+			}
+		}
+	}
+	return ""
 }
 
 // splitFunc returns the receiver type's name and the method's name of a

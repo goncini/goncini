@@ -1,0 +1,3399 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "RealWorld Conduit API",
+    "version": "2.0.0"
+  },
+  "paths": {
+    "/api/articles": {
+      "get": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Returns the articles that the filters select, newest first, without their bodies.",
+        "operationId": "article_list",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "how many articles, at most",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "how many articles to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "description": "only the articles with this tag",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "author",
+            "in": "query",
+            "description": "only the articles of this author, a username",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "favorited",
+            "in": "query",
+            "description": "only the favorites of this user, a username",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticlesBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Problem": {
+                    "summary": "400 Bad Request: invalid request parameters",
+                    "value": {
+                      "errors": {
+                        "limit": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Problem": {
+                    "summary": "422 Unprocessable Entity: the request has invalid values",
+                    "value": {
+                      "errors": {
+                        "limit": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "Token": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Publishes an article, with a slug made of its title.",
+        "operationId": "article_create",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "article": {
+                    "type": "object",
+                    "properties": {
+                      "body": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "tagList": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "title": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "description",
+                      "body"
+                    ]
+                  }
+                },
+                "required": [
+                  "article"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyMalformed": {
+                    "summary": "malformed JSON at byte 1",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "malformed JSON at byte 1: invalid character"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoArticle": {
+                    "summary": "no article ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request Entity Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyTooLarge": {
+                    "summary": "the request body is larger than 1048576 bytes",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "the request body is larger than 1048576 bytes"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyMediaType": {
+                    "summary": "unsupported Content-Type \"text/plain\": send application/json",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "unsupported Content-Type \"text/plain\": send application/json"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyInvalid": {
+                    "summary": "invalid JSON value at \"/article/title\"",
+                    "value": {
+                      "errors": {
+                        "title": [
+                          "invalid value"
+                        ]
+                      }
+                    }
+                  },
+                  "Problem": {
+                    "summary": "422 Unprocessable Entity: the request has invalid values",
+                    "value": {
+                      "errors": {
+                        "title": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      }
+    },
+    "/api/articles/feed": {
+      "get": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Returns the articles of the authors that the authenticated user follows, newest first, without their bodies.",
+        "operationId": "article_feed",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "how many articles, at most",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "how many articles to skip",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticlesBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Problem": {
+                    "summary": "400 Bad Request: invalid request parameters",
+                    "value": {
+                      "errors": {
+                        "limit": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Problem": {
+                    "summary": "422 Unprocessable Entity: the request has invalid values",
+                    "value": {
+                      "errors": {
+                        "limit": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      }
+    },
+    "/api/articles/{slug}": {
+      "get": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Returns an article.",
+        "operationId": "article_show",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoArticle": {
+                    "summary": "no article ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "Token": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Changes the values that the body has of an article that the authenticated user wrote.",
+        "description": "Its slug stays the same.",
+        "operationId": "article_update",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "article": {
+                    "type": "object",
+                    "properties": {
+                      "body": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "description": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "tagList": {
+                        "type": [
+                          "array",
+                          "null"
+                        ],
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "title": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyMalformed": {
+                    "summary": "malformed JSON at byte 1",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "malformed JSON at byte 1: invalid character"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NotAuthor": {
+                    "summary": "not the author of ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "forbidden"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoArticle": {
+                    "summary": "no article ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request Entity Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyTooLarge": {
+                    "summary": "the request body is larger than 1048576 bytes",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "the request body is larger than 1048576 bytes"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyMediaType": {
+                    "summary": "unsupported Content-Type \"text/plain\": send application/json",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "unsupported Content-Type \"text/plain\": send application/json"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyInvalid": {
+                    "summary": "invalid JSON value at \"/article/title/Set\"",
+                    "value": {
+                      "errors": {
+                        "Set": [
+                          "invalid value"
+                        ]
+                      }
+                    }
+                  },
+                  "Problem": {
+                    "summary": "422 Unprocessable Entity: the request has invalid values",
+                    "value": {
+                      "errors": {
+                        "Set": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Deletes an article that the authenticated user wrote.",
+        "operationId": "article_delete",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NotAuthor": {
+                    "summary": "not the author of ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "forbidden"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoArticle": {
+                    "summary": "no article ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      }
+    },
+    "/api/articles/{slug}/comments": {
+      "get": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Returns the comments of an article, oldest first.",
+        "operationId": "comment_list",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentsBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoArticle": {
+                    "summary": "no article ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "Token": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Comments on an article.",
+        "operationId": "comment_add",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "comment": {
+                    "type": "object",
+                    "properties": {
+                      "body": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "body"
+                    ]
+                  }
+                },
+                "required": [
+                  "comment"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyMalformed": {
+                    "summary": "malformed JSON at byte 1",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "malformed JSON at byte 1: invalid character"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoArticle": {
+                    "summary": "no article ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request Entity Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyTooLarge": {
+                    "summary": "the request body is larger than 1048576 bytes",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "the request body is larger than 1048576 bytes"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyMediaType": {
+                    "summary": "unsupported Content-Type \"text/plain\": send application/json",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "unsupported Content-Type \"text/plain\": send application/json"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyInvalid": {
+                    "summary": "invalid JSON value at \"/comment/body\"",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "invalid value"
+                        ]
+                      }
+                    }
+                  },
+                  "Problem": {
+                    "summary": "422 Unprocessable Entity: the request has invalid values",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      }
+    },
+    "/api/articles/{slug}/comments/{id}": {
+      "delete": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Deletes a comment that the authenticated user wrote.",
+        "operationId": "comment_delete",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Problem": {
+                    "summary": "400 Bad Request: invalid request parameters",
+                    "value": {
+                      "errors": {
+                        "id": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NotCommentAuthor": {
+                    "summary": "not the author of comment 0",
+                    "value": {
+                      "errors": {
+                        "comment": [
+                          "forbidden"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoArticle": {
+                    "summary": "no article ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  },
+                  "NoComment": {
+                    "summary": "no comment 0",
+                    "value": {
+                      "errors": {
+                        "comment": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      }
+    },
+    "/api/articles/{slug}/favorite": {
+      "post": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Adds an article to the authenticated user's favorites.",
+        "operationId": "article_favorite",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoArticle": {
+                    "summary": "no article ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Removes an article from the authenticated user's favorites.",
+        "operationId": "article_unfavorite",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArticleBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoArticle": {
+                    "summary": "no article ",
+                    "value": {
+                      "errors": {
+                        "article": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      }
+    },
+    "/api/profiles/{username}": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Returns a user's profile.",
+        "operationId": "profile_show",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoProfile": {
+                    "summary": "no user ",
+                    "value": {
+                      "errors": {
+                        "profile": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the users are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "Token": []
+          }
+        ]
+      }
+    },
+    "/api/profiles/{username}/follow": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Makes the authenticated user follow another.",
+        "operationId": "profile_follow",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoProfile": {
+                    "summary": "no user ",
+                    "value": {
+                      "errors": {
+                        "profile": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the users are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Makes the authenticated user stop following another.",
+        "operationId": "profile_unfollow",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "NoProfile": {
+                    "summary": "no user ",
+                    "value": {
+                      "errors": {
+                        "profile": [
+                          "not found"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the users are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      }
+    },
+    "/api/tags": {
+      "get": {
+        "tags": [
+          "Articles"
+        ],
+        "summary": "Returns every tag that an article has.",
+        "operationId": "tag_list",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagsBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the articles are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "Token": []
+          }
+        ]
+      }
+    },
+    "/api/user": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Returns the authenticated user, with a new token.",
+        "operationId": "user_current",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the users are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Changes the authenticated user's values that the body has.",
+        "operationId": "user_update",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "user": {
+                    "type": "object",
+                    "properties": {
+                      "bio": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "email": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "image": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "password": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "username": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyMalformed": {
+                    "summary": "malformed JSON at byte 1",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "malformed JSON at byte 1: invalid character"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Taken": {
+                    "summary": " has already been taken",
+                    "value": {
+                      "errors": {
+                        "": [
+                          "has already been taken"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request Entity Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyTooLarge": {
+                    "summary": "the request body is larger than 1048576 bytes",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "the request body is larger than 1048576 bytes"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyMediaType": {
+                    "summary": "unsupported Content-Type \"text/plain\": send application/json",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "unsupported Content-Type \"text/plain\": send application/json"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyInvalid": {
+                    "summary": "invalid JSON value at \"/user/email/Set\"",
+                    "value": {
+                      "errors": {
+                        "Set": [
+                          "invalid value"
+                        ]
+                      }
+                    }
+                  },
+                  "Problem": {
+                    "summary": "422 Unprocessable Entity: the request has invalid values",
+                    "value": {
+                      "errors": {
+                        "Set": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the users are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      }
+    },
+    "/api/users": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Registers a user, and returns them with a token.",
+        "operationId": "user_register",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "user": {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string"
+                      },
+                      "password": {
+                        "type": "string"
+                      },
+                      "username": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "username",
+                      "email",
+                      "password"
+                    ]
+                  }
+                },
+                "required": [
+                  "user"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyMalformed": {
+                    "summary": "malformed JSON at byte 1",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "malformed JSON at byte 1: invalid character"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Taken": {
+                    "summary": " has already been taken",
+                    "value": {
+                      "errors": {
+                        "": [
+                          "has already been taken"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request Entity Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyTooLarge": {
+                    "summary": "the request body is larger than 1048576 bytes",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "the request body is larger than 1048576 bytes"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyMediaType": {
+                    "summary": "unsupported Content-Type \"text/plain\": send application/json",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "unsupported Content-Type \"text/plain\": send application/json"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyInvalid": {
+                    "summary": "invalid JSON value at \"/user/username\"",
+                    "value": {
+                      "errors": {
+                        "username": [
+                          "invalid value"
+                        ]
+                      }
+                    }
+                  },
+                  "Problem": {
+                    "summary": "422 Unprocessable Entity: the request has invalid values",
+                    "value": {
+                      "errors": {
+                        "username": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the users are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "Token": []
+          }
+        ]
+      }
+    },
+    "/api/users/login": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Returns the user with an email and a password, with a new token.",
+        "operationId": "user_login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "user": {
+                    "type": "object",
+                    "properties": {
+                      "email": {
+                        "type": "string"
+                      },
+                      "password": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "password"
+                    ]
+                  }
+                },
+                "required": [
+                  "user"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyMalformed": {
+                    "summary": "malformed JSON at byte 1",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "malformed JSON at byte 1: invalid character"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BadCredentials": {
+                    "summary": "invalid credentials",
+                    "value": {
+                      "errors": {
+                        "credentials": [
+                          "invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "InvalidToken": {
+                    "summary": "invalid token: it has expired",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request Entity Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyTooLarge": {
+                    "summary": "the request body is larger than 1048576 bytes",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "the request body is larger than 1048576 bytes"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyMediaType": {
+                    "summary": "unsupported Content-Type \"text/plain\": send application/json",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "unsupported Content-Type \"text/plain\": send application/json"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "BodyInvalid": {
+                    "summary": "invalid JSON value at \"/user/email\"",
+                    "value": {
+                      "errors": {
+                        "email": [
+                          "invalid value"
+                        ]
+                      }
+                    }
+                  },
+                  "Problem": {
+                    "summary": "422 Unprocessable Entity: the request has invalid values",
+                    "value": {
+                      "errors": {
+                        "email": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the users are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "Token": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Article": {
+        "type": "object",
+        "description": "Article is an article, as a viewer sees it.",
+        "properties": {
+          "author": {
+            "$ref": "#/components/schemas/Profile"
+          },
+          "body": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "favorited": {
+            "type": "boolean"
+          },
+          "favoritesCount": {
+            "type": "integer"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "tagList": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "description",
+          "tagList",
+          "createdAt",
+          "updatedAt",
+          "favorited",
+          "favoritesCount",
+          "author",
+          "body"
+        ]
+      },
+      "ArticleBody": {
+        "type": "object",
+        "description": "ArticleBody is an article, as the API sends it.",
+        "properties": {
+          "article": {
+            "$ref": "#/components/schemas/Article"
+          }
+        },
+        "required": [
+          "article"
+        ]
+      },
+      "ArticlesBody": {
+        "type": "object",
+        "description": "ArticlesBody is a page of articles, with how many there are in all.",
+        "properties": {
+          "articles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Summary"
+            }
+          },
+          "articlesCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "articles",
+          "articlesCount"
+        ]
+      },
+      "Comment": {
+        "type": "object",
+        "description": "Comment is a comment on an article, as a viewer sees it.",
+        "properties": {
+          "author": {
+            "$ref": "#/components/schemas/Profile"
+          },
+          "body": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "createdAt",
+          "updatedAt",
+          "body",
+          "author"
+        ]
+      },
+      "CommentBody": {
+        "type": "object",
+        "description": "CommentBody is a comment, as the API sends it.",
+        "properties": {
+          "comment": {
+            "$ref": "#/components/schemas/Comment"
+          }
+        },
+        "required": [
+          "comment"
+        ]
+      },
+      "CommentsBody": {
+        "type": "object",
+        "description": "CommentsBody is the comments of an article.",
+        "properties": {
+          "comments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Comment"
+            }
+          }
+        },
+        "required": [
+          "comments"
+        ]
+      },
+      "Errors": {
+        "type": "object",
+        "properties": {
+          "errors": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "required": [
+          "errors"
+        ]
+      },
+      "Profile": {
+        "type": "object",
+        "description": "Profile is a user as others see them.",
+        "properties": {
+          "bio": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "following": {
+            "type": "boolean"
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "bio",
+          "image",
+          "following"
+        ]
+      },
+      "ProfileBody": {
+        "type": "object",
+        "description": "ProfileBody is a profile, as the API sends it.",
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/Profile"
+          }
+        },
+        "required": [
+          "profile"
+        ]
+      },
+      "Summary": {
+        "type": "object",
+        "description": "Summary is an article without its body, as lists show it.",
+        "properties": {
+          "author": {
+            "$ref": "#/components/schemas/Profile"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "description": {
+            "type": "string"
+          },
+          "favorited": {
+            "type": "boolean"
+          },
+          "favoritesCount": {
+            "type": "integer"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "tagList": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "description",
+          "tagList",
+          "createdAt",
+          "updatedAt",
+          "favorited",
+          "favoritesCount",
+          "author"
+        ]
+      },
+      "TagsBody": {
+        "type": "object",
+        "description": "TagsBody is every tag.",
+        "properties": {
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "tags"
+        ]
+      },
+      "UserBody": {
+        "type": "object",
+        "description": "UserBody is the user that a user sees, with a token.",
+        "properties": {
+          "user": {
+            "type": "object",
+            "properties": {
+              "bio": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "email": {
+                "type": "string"
+              },
+              "image": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "token": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "email",
+              "token",
+              "username",
+              "bio",
+              "image"
+            ]
+          }
+        },
+        "required": [
+          "user"
+        ]
+      }
+    },
+    "securitySchemes": {
+      "Token": {
+        "type": "apiKey",
+        "description": "The Authorization header, with the Token scheme: Authorization: Token eyJhbGciOiJIUzI1NiJ9…",
+        "name": "Authorization",
+        "in": "header"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Users"
+    },
+    {
+      "name": "Articles"
+    }
+  ]
+}
