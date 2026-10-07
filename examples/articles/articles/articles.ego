@@ -11,6 +11,7 @@ import (
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/uid"
+	"github.com/goncini/goncini/workflow"
 )
 
 // Article is what the API serves.
@@ -21,12 +22,18 @@ type Article struct {
 	Body      string    `json:"body"`
 	Tags      []string  `json:"tags"`
 	CreatedAt time.Time `json:"createdAt"`
+	// State is where the article is in its review: draft, in_review or
+	// published.
+	State string `json:"state"`
 }
 
 // ArticleError is everything the articles endpoints fail with.
 error ArticleError {
 	NotFound{ Slug string } "no article {Slug}"
 	Duplicate{ Slug string } "an article {Slug} already exists"
+	// Refused means that the review workflow refused the transition: the
+	// article's state doesn't allow it, or the user may not.
+	Refused{ Cause error } "the transition is refused"
 	// Unavailable means that the store failed.
 	Unavailable{ Cause error } "the articles are unavailable"
 }
@@ -38,6 +45,7 @@ func Problem(err ArticleError) httpkernel.Problem {
 		nil            => httpkernel.Problem{}
 		NotFound(e)    => httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
 		Duplicate(e)   => httpkernel.Problem{Status: http.StatusConflict, Detail: e.Error()}
+		Refused(e)     => httpkernel.ProblemFor(e.Cause)
 		Unavailable(_) => httpkernel.Problem{Status: http.StatusServiceUnavailable}
 	}
 }
@@ -47,13 +55,14 @@ var Problems = httpkernel.Map[ArticleError](Problem)
 
 // Articles serves the articles of its store.
 type Articles struct {
-	store *Store
-	now   func() time.Time
-	show  *routing.Route // the route of an article, for its URL: set by Routes
+	store  *Store
+	now    func() time.Time
+	review *workflow.Workflow
+	show   *routing.Route // the route of an article, for its URL: set by Routes
 }
 
-func NewArticles(store *Store, now func() time.Time) *Articles {
-	return &Articles{store: store, now: now}
+func NewArticles(store *Store, now func() time.Time, workflows workflow.Registry) *Articles {
+	return &Articles{store: store, now: now, review: workflows.Get("review")}
 }
 
 // slugify turns a title into a slug: "Hello, World!" becomes "hello-world".

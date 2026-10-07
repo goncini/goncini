@@ -14,9 +14,11 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/goosedb"
 	"github.com/goncini/goncini/log/zaplog"
+	"github.com/goncini/goncini/security"
 	"github.com/goncini/goncini/translation"
 
 	"github.com/goncini/goncini/examples/articles/articles"
+	"github.com/goncini/goncini/examples/articles/editors"
 	"github.com/goncini/goncini/examples/articles/migrations"
 	"github.com/goncini/goncini/examples/articles/translations"
 
@@ -25,8 +27,12 @@ import (
 
 // Services is the app's own services.
 //
-//line services.ego:23
-var Services = layer.Set(zaplog.NewLogger, db.Open, db.NewSQL, migrator, articles.NewStore, articles.NewArticles, articles.NewSlugCommand, translation.New, translations.All, clock)
+//line services.ego:25
+var Services = layer.Set(zaplog.NewLogger, db.Open, db.NewSQL, migrator, articles.NewStore, articles.NewArticles, articles.NewSlugCommand, translation.New, translations.All,
+	articles.NewWorkflows, access, editors.NewFirewall, clock)
+
+// access decides what users may do: roles only, here.
+func access() *security.Access { return &security.Access{} }
 
 // migrator runs the migrations with goose.
 func migrator(pool *sql.DB) (db.Migrator, error) {

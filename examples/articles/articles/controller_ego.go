@@ -26,6 +26,7 @@ func (a *Articles) Routes(r *routing.Router) {
 	r.Get("/articles/by-id/{id}", httpkernel.Endpoint(a.ShowByID)).Name("article_show_by_id").Require("id", routing.UUID)
 	a.show = r.Get("/articles/{slug}", httpkernel.Endpoint(a.Show)).Name("article_show")
 	r.Post("/articles", httpkernel.Endpoint(a.Create)).Name("article_create")
+	r.Post("/articles/{slug}/transitions/{transition}", httpkernel.Endpoint(a.Transition)).Name("article_transition")
 }
 
 type ListInput struct {
@@ -46,7 +47,7 @@ func (Order) Fields() map[string]string {
 func (a *Articles) List(ctx context.Context, in ListInput) (_ listing.Page[Article], err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.List")
 	defer trace.End(span, &err)
-//line controller.ego:39
+//line controller.ego:40
 	list, count, err := a.store.List(ctx, in.Tag, in.Sort.SQL(), in.Limit, in.Offset)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -54,7 +55,7 @@ func (a *Articles) List(ctx context.Context, in ListInput) (_ listing.Page[Artic
 		}
 		return listing.Page[Article]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:40
+//line controller.ego:41
 	return listing.Page[Article]{Items: list, Total: count, Window: in.Window}, nil
 }
 
@@ -66,7 +67,7 @@ type IDInput struct {
 func (a *Articles) ShowByID(ctx context.Context, in IDInput) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.ShowByID")
 	defer trace.End(span, &err)
-//line controller.ego:49
+//line controller.ego:50
 	art, ok, err := a.store.ByID(ctx, in.ID)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -74,7 +75,7 @@ func (a *Articles) ShowByID(ctx context.Context, in IDInput) (_ Article, err err
 		}
 		return Article{}, Unavailable{Cause: err}
 	}
-//line controller.ego:50
+//line controller.ego:51
 	if !ok {
 		return Article{}, NotFound{Slug: in.ID.String()}
 	}
@@ -88,7 +89,7 @@ type ShowInput struct {
 func (a *Articles) Show(ctx context.Context, in ShowInput) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Show")
 	defer trace.End(span, &err)
-//line controller.ego:61
+//line controller.ego:62
 	art, ok, err := a.store.Get(ctx, in.Slug)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -96,7 +97,7 @@ func (a *Articles) Show(ctx context.Context, in ShowInput) (_ Article, err error
 		}
 		return Article{}, Unavailable{Cause: err}
 	}
-//line controller.ego:62
+//line controller.ego:63
 	if !ok {
 		return Article{}, NotFound{Slug: in.Slug}
 	}
@@ -132,9 +133,9 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 	ctx, span := trace.Start(ctx, "articles.Articles.Create")
 	defer trace.End(span, &err)
 	// The store keeps times to the microsecond: so does the response.
-//line controller.ego:95
+//line controller.ego:96
 	created := a.now().Truncate(time.Microsecond)
-	art := Article{ID: uid.NewV7(), Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: created}
+	art := Article{ID: uid.NewV7(), Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: created, State: a.review.Initial}
 	added, err := a.store.Add(ctx, art)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -142,7 +143,7 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 		}
 		return httpkernel.Created[Article]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:98
+//line controller.ego:99
 	if !added {
 		return httpkernel.Created[Article]{}, Duplicate{Slug: art.Slug}
 	}
@@ -151,6 +152,6 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 	if err != nil {
 		panic(err)
 	}
-//line controller.ego:103
+//line controller.ego:104
 	return httpkernel.Created[Article]{Location: loc, Body: art}, nil
 }

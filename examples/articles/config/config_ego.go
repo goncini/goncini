@@ -7,22 +7,26 @@ package config
 import (
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/db"
+
+	"github.com/goncini/goncini/examples/articles/editors"
 )
 
 // Config is the articles API's config, one section per part of the app.
 //
-//line config.ego:11
+//line config.ego:13
 type Config struct {
-	HTTP goncini.HTTP
-	Log  goncini.Log
-	DB   db.Config
+	HTTP    goncini.HTTP
+	Log     goncini.Log
+	DB      db.Config
+	Editors editors.Config
 }
 
 // Load returns the config of env: what every environment shares, then what
 // env changes.
 func Load(env *goncini.Env) Config {
 	c := Config{
-		DB: db.Config{Driver: "sqlite", URL: env.Secret("DATABASE_URL")},
+		DB:      db.Config{Driver: "sqlite", URL: env.Secret("DATABASE_URL")},
+		Editors: editors.Config{Keys: map[string]string{env.Secret("EDITOR_KEY"): "editor"}},
 	}
 	switch env.Name {
 	case "dev":

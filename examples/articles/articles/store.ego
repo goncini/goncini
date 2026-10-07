@@ -19,7 +19,7 @@ func NewStore(s *db.SQL) *Store {
 }
 
 // columns are what scan reads.
-const columns = "SELECT id, slug, title, body, tags, created_at FROM articles"
+const columns = "SELECT id, slug, title, body, tags, created_at, state FROM articles"
 
 // List returns the articles with the tag if it isn't empty, sorted by
 // order, an ORDER BY list, from offset and at most limit of them, and how
@@ -56,12 +56,21 @@ effect (s *Store) Add(art Article) (bool, error) {
 			return nil
 		}
 		tags := check json.Marshal(art.Tags) ""
-		check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO articles (id, slug, title, body, tags, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-			art.ID, art.Slug, art.Title, art.Body, string(tags), art.CreatedAt.UnixMicro())
+		check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO articles (id, slug, title, body, tags, created_at, state) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			art.ID, art.Slug, art.Title, art.Body, string(tags), art.CreatedAt.UnixMicro(), art.State)
 		added = true
 		return nil
 	}) ""
 	return added, nil
+}
+
+// SetState moves the article with the slug from the state from to the
+// state to, and reports whether it was in from: one statement, which no
+// other request can come between.
+effect (s *Store) SetState(slug, from, to string) (bool, error) {
+	res := check s.sql.Conn(ctx).ExecContext(ctx, "UPDATE articles SET state = ? WHERE slug = ? AND state = ?", to, slug, from)
+	n := check res.RowsAffected()
+	return n == 1, nil
 }
 
 // scan reads an article from a row.
@@ -69,7 +78,7 @@ func scan(row db.Scanner) (Article, error) {
 	var art Article
 	var tags string
 	var created int64
-	check row.Scan(&art.ID, &art.Slug, &art.Title, &art.Body, &tags, &created) ""
+	check row.Scan(&art.ID, &art.Slug, &art.Title, &art.Body, &tags, &created, &art.State) ""
 	check json.Unmarshal([]byte(tags), &art.Tags) ""
 	art.CreatedAt = time.UnixMicro(created).UTC()
 	return art, nil

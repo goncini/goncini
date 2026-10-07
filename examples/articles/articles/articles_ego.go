@@ -15,11 +15,12 @@ import (
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/uid"
+	"github.com/goncini/goncini/workflow"
 )
 
 // Article is what the API serves.
 //
-//line articles.ego:17
+//line articles.ego:18
 type Article struct {
 	ID        uid.UUID  `json:"id"`
 	Slug      string    `json:"slug"`
@@ -27,6 +28,9 @@ type Article struct {
 	Body      string    `json:"body"`
 	Tags      []string  `json:"tags"`
 	CreatedAt time.Time `json:"createdAt"`
+	// State is where the article is in its review: draft, in_review or
+	// published.
+	State string `json:"state"`
 }
 
 // ArticleError is everything the articles endpoints fail with.
@@ -65,6 +69,25 @@ func (e Duplicate) As(target any) bool {
 	return false
 }
 
+// Refused means that the review workflow refused the transition: the
+// article's state doesn't allow it, or the user may not.
+type Refused struct{ Cause error }
+
+func (Refused) isArticleError() {}
+
+func (e Refused) Error() string { return "the transition is refused" }
+
+func (e Refused) Unwrap() error { return e.Cause }
+
+// As lets pointers to Refused match as Refused.
+func (e Refused) As(target any) bool {
+	if t, ok := target.(*Refused); ok {
+		*t = e
+		return true
+	}
+	return false
+}
+
 // Unavailable means that the store failed.
 type Unavailable struct{ Cause error }
 
@@ -86,7 +109,7 @@ func (e Unavailable) As(target any) bool {
 // Problem says what each ArticleError looks like over HTTP. A new case
 // doesn't compile until it has an arm here.
 //
-//line articles.ego:36
+//line articles.ego:43
 func Problem(err error) httpkernel.Problem {
 	var v httpkernel.Problem
 	if err == nil {
@@ -95,6 +118,8 @@ func Problem(err error) httpkernel.Problem {
 		v = httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
 	} else if e, ok := errors.AsType[Duplicate](err); ok {
 		v = httpkernel.Problem{Status: http.StatusConflict, Detail: e.Error()}
+	} else if e, ok := errors.AsType[Refused](err); ok {
+		v = httpkernel.ProblemFor(e.Cause)
 	} else if _, ok := errors.AsType[Unavailable](err); ok {
 		v = httpkernel.Problem{Status: http.StatusServiceUnavailable}
 	} else {
@@ -105,18 +130,19 @@ func Problem(err error) httpkernel.Problem {
 
 // Problems is what a kernel registers to answer ArticleErrors.
 //
-//line articles.ego:46
+//line articles.ego:54
 var Problems = httpkernel.Map[ArticleError](Problem)
 
 // Articles serves the articles of its store.
 type Articles struct {
-	store *Store
-	now   func() time.Time
-	show  *routing.Route // the route of an article, for its URL: set by Routes
+	store  *Store
+	now    func() time.Time
+	review *workflow.Workflow
+	show   *routing.Route // the route of an article, for its URL: set by Routes
 }
 
-func NewArticles(store *Store, now func() time.Time) *Articles {
-	return &Articles{store: store, now: now}
+func NewArticles(store *Store, now func() time.Time, workflows workflow.Registry) *Articles {
+	return &Articles{store: store, now: now, review: workflows.Get("review")}
 }
 
 // slugify turns a title into a slug: "Hello, World!" becomes "hello-world".

@@ -26,7 +26,7 @@ func NewStore(s *db.SQL) *Store {
 }
 
 // columns are what scan reads.
-const columns = "SELECT id, slug, title, body, tags, created_at FROM articles"
+const columns = "SELECT id, slug, title, body, tags, created_at, state FROM articles"
 
 // List returns the articles with the tag if it isn't empty, sorted by
 // order, an ORDER BY list, from offset and at most limit of them, and how
@@ -93,8 +93,8 @@ func (s *Store) Add(ctx context.Context, art Article) (_ bool, err error) {
 			return err
 		}
 //line store.ego:59
-		if _, err := s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO articles (id, slug, title, body, tags, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-			art.ID, art.Slug, art.Title, art.Body, string(tags), art.CreatedAt.UnixMicro()); err != nil {
+		if _, err := s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO articles (id, slug, title, body, tags, created_at, state) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			art.ID, art.Slug, art.Title, art.Body, string(tags), art.CreatedAt.UnixMicro(), art.State); err != nil {
 			return fmt.Errorf("Conn.ExecContext: %w", err)
 		}
 //line store.ego:61
@@ -107,19 +107,39 @@ func (s *Store) Add(ctx context.Context, art Article) (_ bool, err error) {
 	return added, nil
 }
 
+// SetState moves the article with the slug from the state from to the
+// state to, and reports whether it was in from: one statement, which no
+// other request can come between.
+func (s *Store) SetState(ctx context.Context, slug, from, to string) (_ bool, err error) {
+	ctx, span := trace.Start(ctx, "articles.Store.SetState")
+	defer trace.End(span, &err)
+//line store.ego:71
+	res, err := s.sql.Conn(ctx).ExecContext(ctx, "UPDATE articles SET state = ? WHERE slug = ? AND state = ?", to, slug, from)
+	if err != nil {
+		return false, fmt.Errorf("Conn.ExecContext: %w", err)
+	}
+//line store.ego:72
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("res.RowsAffected: %w", err)
+	}
+//line store.ego:73
+	return n == 1, nil
+}
+
 // scan reads an article from a row.
 func scan(row db.Scanner) (Article, error) {
 	var art Article
 	var tags string
 	var created int64
-	if err := row.Scan(&art.ID, &art.Slug, &art.Title, &art.Body, &tags, &created); err != nil {
+	if err := row.Scan(&art.ID, &art.Slug, &art.Title, &art.Body, &tags, &created, &art.State); err != nil {
 		return Article{}, err
 	}
-//line store.ego:73
+//line store.ego:82
 	if err := json.Unmarshal([]byte(tags), &art.Tags); err != nil {
 		return Article{}, err
 	}
-//line store.ego:74
+//line store.ego:83
 	art.CreatedAt = time.UnixMicro(created).UTC()
 	return art, nil
 }

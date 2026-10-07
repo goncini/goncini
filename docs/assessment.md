@@ -260,6 +260,15 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 5. **Errors speak the client's language.** In the articles example, `Accept-Language: fr` gives French problem titles and violation messages from a catalog, falling back to English, and `translation:lint` lists the messages a catalog lacks.
 6. **Workflows guard their transitions.** The articles example gets a review workflow, draft to reviewed to published: a transition that the article's state doesn't allow is a 409, a guard is a security voter, each transition dispatches events, and `workflow:dump` draws the graph in Mermaid.
 
+> **Status (2026-10-07):** built: [`cache`](../cache) and [`cache/rediscache`](../cache/rediscache), [`httpclient`](../httpclient), [`mime`](../mime) and [`mailer`](../mailer), [`notifier`](../notifier), [`translation`](../translation) and [`workflow`](../workflow). The six gates pass: RealWorld's `TestCaching` with the Hurl suite through the cache and `rediscache`'s suite on Redis; `httpclient`'s tests; `TestWelcomeEmail`; `TestRemovalNotices`; the articles example's `TestFrench` and `TestReview`.
+
+**Decisions taken on the user's behalf:**
+
+- Translation catalogs are Go maps whose keys are the app's messages, as gettext's are, with `{placeholders}` matching messages that carry values: no keys to invent, and goncini's and validators' messages translate unchanged.
+- Mail and notifications have no templates, as the user excluded templating: bodies are the app's strings, or the standard library's `html/template`.
+- Chat channels post Slack's `{"text": …}`, which Slack, Mattermost, Rocket.Chat and Discord's Slack endpoints take; SMS waits for an app that needs it.
+- Workflows are state machines, a subject in one place at a time; Symfony's workflows of several places at once wait for an app that needs them.
+
 **Order of work:** `cache` (memory, tags, stampede protection), `cache/rediscache`; `httpclient`; `mime` and `mailer` (SMTP and in-memory transports, sending through Messenger); `notifier`; `translation`; `workflow`; then the gates.
 
 ## 5. Risks

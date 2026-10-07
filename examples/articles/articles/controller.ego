@@ -18,6 +18,7 @@ func (a *Articles) Routes(r *routing.Router) {
 	r.Get("/articles/by-id/{id}", httpkernel.Endpoint(a.ShowByID)).Name("article_show_by_id").Require("id", routing.UUID)
 	a.show = r.Get("/articles/{slug}", httpkernel.Endpoint(a.Show)).Name("article_show")
 	r.Post("/articles", httpkernel.Endpoint(a.Create)).Name("article_create")
+	r.Post("/articles/{slug}/transitions/{transition}", httpkernel.Endpoint(a.Transition)).Name("article_transition")
 }
 
 type ListInput struct {
@@ -93,7 +94,7 @@ func (in *CreateInput) Validate() error {
 effect (a *Articles) Create(in CreateInput) (httpkernel.Created[Article], ArticleError) {
 	// The store keeps times to the microsecond: so does the response.
 	created := a.now().Truncate(time.Microsecond)
-	art := Article{ID: uid.NewV7(), Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: created}
+	art := Article{ID: uid.NewV7(), Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: created, State: a.review.Initial}
 	added := check a.store.Add(art) as Unavailable
 	if !added {
 		fail Duplicate{Slug: art.Slug}

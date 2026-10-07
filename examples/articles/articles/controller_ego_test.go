@@ -111,6 +111,7 @@ func TestRoutes(t *testing.T) {
 		line("article_show_by_id", "GET", byID, "articles.(*Articles).ShowByID") +
 		line("article_show", "GET", "/articles/{slug}", "articles.(*Articles).Show") +
 		line("article_create", "POST", "/articles", "articles.(*Articles).Create") +
+		line("article_transition", "POST", "/articles/{slug}/transitions/{transition}", "articles.(*Articles).Transition") +
 		line("openapi", "GET", "/openapi.json", "openapi.Handler")
 	if b.String() != want {
 		t.Errorf("routes:\n%s\nwant:\n%s", b.String(), want)

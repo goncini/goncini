@@ -1,0 +1,47 @@
+package articles
+
+import (
+	"github.com/goncini/goncini/event"
+	"github.com/goncini/goncini/security"
+	"github.com/goncini/goncini/workflow"
+)
+
+// Review is how articles get published: an author submits a draft, which
+// an editor publishes, or rejects back to draft, as a published one can be.
+var Review = workflow.Definition{
+	Name:    "review",
+	Places:  []string{"draft", "in_review", "published"},
+	Initial: "draft",
+	Transitions: []workflow.Transition{
+		{Name: "submit", From: []string{"draft"}, To: "in_review"},
+		{Name: "publish", From: []string{"in_review"}, To: "published", Guard: "ROLE_EDITOR"},
+		{Name: "reject", From: []string{"in_review", "published"}, To: "draft", Guard: "ROLE_EDITOR"},
+	},
+}
+
+// NewWorkflows returns the app's workflows: the review of articles.
+func NewWorkflows(access *security.Access, events *event.Dispatcher) (workflow.Registry, error) {
+	review := check workflow.New(Review, access, events) ""
+	return workflow.Registry{"review": review}, nil
+}
+
+type TransitionInput struct {
+	Slug       string `path:"slug"`
+	Transition string `path:"transition"` // submit, publish or reject
+}
+
+// Transition moves an article through the review workflow.
+effect (a *Articles) Transition(in TransitionInput) (Article, ArticleError) {
+	art, ok := check a.store.Get(in.Slug) as Unavailable
+	if !ok {
+		fail NotFound{Slug: in.Slug}
+	}
+	state := check a.review.Apply(ctx, &art, art.State, in.Transition) as Refused
+	moved := check a.store.SetState(art.Slug, art.State, state) as Unavailable
+	if !moved {
+		// Another request moved it meanwhile.
+		fail Refused{Cause: workflow.NotAllowed{Workflow: a.review.Name, Transition: in.Transition, State: art.State}}
+	}
+	art.State = state
+	return art, nil
+}

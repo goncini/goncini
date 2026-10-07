@@ -322,6 +322,19 @@ runs in one instance of an app: the one that takes the tick's lock.
 next runs. Lock stores now prune expired locks, which keys used once, as
 ticks are, would leave.
 
+### workflow (M4)
+
+Symfony's Workflow, as state machines: a `Definition` has places, an
+initial one and transitions, checked when `New` builds it. `Apply` moves a
+subject from its state by a transition, refusing one its state doesn't
+allow (a 409) or whose guard, a security attribute that the `Access`'s
+voters and roles decide, isn't granted (401 or 403); it dispatches
+`Transitioning`, whose listeners may refuse, and `Transitioned`. `Can` and
+`Enabled` say what's possible, and `workflow:dump` draws a workflow as a
+Mermaid state diagram. The articles example reviews its articles: authors
+submit drafts, and editors, with API keys, publish or reject them: M4's
+sixth gate.
+
 ### translation (M4)
 
 Symfony's Translation, for an API's messages: a `Catalog` maps messages,

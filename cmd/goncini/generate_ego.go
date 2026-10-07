@@ -505,9 +505,9 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 		return params, list
 	}
 	// The services whose packages give them commands: the migrator's, the
-	// bus's, the scheduler's and the translator's.
+	// bus's, the scheduler's, the translator's and the workflows'.
 	var lists []string
-	for _, svc := range []struct{ typ, param string }{{"db.Migrator", "m"}, {"*messenger.Bus", "bus"}, {"*scheduler.Scheduler", "s"}, {"*translation.Translator", "tr"}} {
+	for _, svc := range []struct{ typ, param string }{{"db.Migrator", "m"}, {"*messenger.Bus", "bus"}, {"*scheduler.Scheduler", "s"}, {"*translation.Translator", "tr"}, {"workflow.Registry", "workflows"}} {
 		t := a.lookup(strings.TrimPrefix(svc.typ, "*"))
 		if t == nil {
 			continue

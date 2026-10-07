@@ -11,16 +11,18 @@ import (
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/log/zaplog"
 
+	"github.com/goncini/goncini/examples/articles/editors"
+
 	"github.com/goncini/goncini/examples/articles/config"
 )
 
 // Build builds the app for cfg. It logs with zap, whose handler replaces
-// goncini's.
+// goncini's, and its editors' firewall is the kernel's middleware.
 func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
-	panic(layer.Build(goncini.Framework, Services, Autoconfigured, zaplog.NewHandler))
+	panic(layer.Build(goncini.Framework, Services, Autoconfigured, zaplog.NewHandler, editors.NewMiddleware))
 }
 
 // BuildTest builds the app with a test's clock.
 func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func() time.Time) (*goncini.App, error) {
-	panic(layer.Build(goncini.Framework, Services, Autoconfigured, zaplog.NewHandler))
+	panic(layer.Build(goncini.Framework, Services, Autoconfigured, zaplog.NewHandler, editors.NewMiddleware))
 }

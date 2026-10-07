@@ -301,6 +301,20 @@ Cache only what is the same for everyone who gets it, such as what
 anonymous readers see, and invalidate its tags wherever what it depends on
 changes.
 
+## Mail, notifications, languages and workflows
+
+- `mailer.Mailer.Send(ctx, &mime.Email{…})` sends an email, through the
+  queue with `mailer.Async`; tests read what `mailertest.NewServer(t)`
+  receives, with `MAILER_DSN` set to its `DSN()`.
+- `notifier.Notifier.Send(ctx, notification, recipients…)` tells people
+  on the channels of the notification's importance: email, chat webhooks.
+- Problems are translated by a `translation.Translator` from catalogs of
+  the app's messages, such as `"must be at least {n}": "doit valoir au
+  moins {n}"`.
+- A state machine is a `workflow.Definition`; `Apply` moves a subject,
+  checking the transition's guard, a security attribute, and returns the
+  new state to save.
+
 ## Wiring
 
 `app/inject.go` builds the app with effect-go's `layer`: providers are

@@ -13,15 +13,18 @@ import (
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/examples/articles/articles"
 	"github.com/goncini/goncini/examples/articles/config"
+	"github.com/goncini/goncini/examples/articles/editors"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/security"
 	"github.com/goncini/goncini/translation"
+	"github.com/goncini/goncini/workflow"
 )
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoSubscribers, autoBackground, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoDefaultOpenapiConfig, autoDefaultTranslationConfig)
+var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoBackground, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigEditors, autoDefaultOpenapiConfig, autoDefaultTranslationConfig)
 
 // autoRoutes are the services that have routes, in the order they are provided.
 func autoRoutes(p1 *articles.Articles) []routing.Routes {
@@ -34,13 +37,18 @@ func autoProblems() []httpkernel.ErrorMapper {
 }
 
 // autoCommands are the services that are console commands, and the commands of the migrator.
-func autoCommands(p1 *articles.SlugCommand, m db.Migrator, tr *translation.Translator) []console.Command {
-	return append(append(db.Commands(m), translation.Commands(tr)...), []console.Command{p1}...)
+func autoCommands(p1 *articles.SlugCommand, m db.Migrator, tr *translation.Translator, workflows workflow.Registry) []console.Command {
+	return append(append(append(db.Commands(m), translation.Commands(tr)...), workflow.Commands(workflows)...), []console.Command{p1}...)
 }
 
 // autoChecks ping the services that can be pinged, such as the database, before serving.
 func autoChecks(p1 *sql.DB) []goncini.Check {
 	return []goncini.Check{p1.PingContext}
+}
+
+// autoVoters are the services that are security voters.
+func autoVoters() []security.Voter {
+	return []security.Voter{}
 }
 
 // autoSubscribers are the services that subscribe to events.
@@ -62,18 +70,22 @@ func autoServices() []goncini.Service {
 		{Type: "*db.SQL", Provider: "db.NewSQL", Needs: []string{"*sql.DB"}},
 		{Type: "*articles.Store", Provider: "articles.NewStore", Needs: []string{"*db.SQL"}},
 		{Type: "func() time.Time", Provider: "clock", Needs: []string{}},
-		{Type: "*articles.Articles", Provider: "articles.NewArticles", Needs: []string{"*articles.Store", "func() time.Time"}},
-		{Type: "[]routing.Routes", Provider: "autoRoutes", Needs: []string{"*articles.Articles"}},
-		{Type: "*routing.Router", Provider: "goncini.NewRouter", Needs: []string{"[]routing.Routes"}},
-		{Type: "[]httpkernel.Middleware", Provider: "goncini.NewMiddleware", Needs: []string{}},
-		{Type: "[]httpkernel.ErrorMapper", Provider: "autoProblems", Needs: []string{}},
-		{Type: "httpkernel.Renderer", Provider: "goncini.NewRenderer", Needs: []string{}},
-		{Type: "httpkernel.Validator", Provider: "goncini.NewValidator", Needs: []string{}},
+		{Type: "*security.Access", Provider: "access", Needs: []string{}},
 		{Type: "translation.Config", Provider: "autoDefaultTranslationConfig", Needs: []string{}},
 		{Type: "translation.Catalogs", Provider: "translations.All", Needs: []string{}},
 		{Type: "*translation.Translator", Provider: "translation.New", Needs: []string{"translation.Config", "translation.Catalogs"}},
 		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{"*translation.Translator"}},
 		{Type: "*event.Dispatcher", Provider: "goncini.NewDispatcher", Needs: []string{"[]event.Subscriber"}},
+		{Type: "workflow.Registry", Provider: "articles.NewWorkflows", Needs: []string{"*security.Access", "*event.Dispatcher"}},
+		{Type: "*articles.Articles", Provider: "articles.NewArticles", Needs: []string{"*articles.Store", "func() time.Time", "workflow.Registry"}},
+		{Type: "[]routing.Routes", Provider: "autoRoutes", Needs: []string{"*articles.Articles"}},
+		{Type: "*routing.Router", Provider: "goncini.NewRouter", Needs: []string{"[]routing.Routes"}},
+		{Type: "editors.Config", Provider: "autoConfigEditors", Needs: []string{"config.Config"}},
+		{Type: "*security.Firewall[*editors.Editor]", Provider: "editors.NewFirewall", Needs: []string{"editors.Config"}},
+		{Type: "[]httpkernel.Middleware", Provider: "editors.NewMiddleware", Needs: []string{"*security.Firewall[*editors.Editor]"}},
+		{Type: "[]httpkernel.ErrorMapper", Provider: "autoProblems", Needs: []string{}},
+		{Type: "httpkernel.Renderer", Provider: "goncini.NewRenderer", Needs: []string{}},
+		{Type: "httpkernel.Validator", Provider: "goncini.NewValidator", Needs: []string{}},
 		{Type: "goncini.Log", Provider: "autoConfigLog", Needs: []string{"config.Config"}},
 		{Type: "*zap.Logger", Provider: "zaplog.NewLogger", Needs: []string{"goncini.Log"}},
 		{Type: "slog.Handler", Provider: "zaplog.NewHandler", Needs: []string{"*zap.Logger"}},
@@ -82,7 +94,7 @@ func autoServices() []goncini.Service {
 		{Type: "*httpkernel.Server", Provider: "goncini.NewServer", Needs: []string{"goncini.HTTP", "*httpkernel.Kernel", "*slog.Logger"}},
 		{Type: "*articles.SlugCommand", Provider: "articles.NewSlugCommand", Needs: []string{"*articles.Articles"}},
 		{Type: "db.Migrator", Provider: "migrator", Needs: []string{"*sql.DB"}},
-		{Type: "[]console.Command", Provider: "autoCommands", Needs: []string{"*articles.SlugCommand", "db.Migrator", "*translation.Translator"}},
+		{Type: "[]console.Command", Provider: "autoCommands", Needs: []string{"*articles.SlugCommand", "db.Migrator", "*translation.Translator", "workflow.Registry"}},
 		{Type: "[]goncini.Check", Provider: "autoChecks", Needs: []string{"*sql.DB"}},
 		{Type: "[]goncini.Service", Provider: "autoServices", Needs: []string{}},
 		{Type: "openapi.Config", Provider: "autoDefaultOpenapiConfig", Needs: []string{}},
@@ -98,15 +110,17 @@ func autoServices() []goncini.Service {
 func autoOpenAPI() openapi.Annotations {
 	return openapi.Annotations{
 		Operations: map[string]openapi.OperationDoc{
-			"github.com/goncini/goncini/examples/articles/articles.(*Articles).Create":   {Errors: []error{articles.Duplicate{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/articles/articles.(*Articles).List":     {Summary: "Returns a page of the articles, the newest first unless the sort says otherwise, with the tag if one is given.", Errors: []error{articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/articles/articles.(*Articles).Show":     {Errors: []error{articles.NotFound{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/articles/articles.(*Articles).ShowByID": {Summary: "Returns the article with the ID.", Errors: []error{articles.NotFound{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/articles/articles.(*Articles).Create":     {Errors: []error{articles.Duplicate{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/articles/articles.(*Articles).List":       {Summary: "Returns a page of the articles, the newest first unless the sort says otherwise, with the tag if one is given.", Errors: []error{articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/articles/articles.(*Articles).Show":       {Errors: []error{articles.NotFound{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/articles/articles.(*Articles).ShowByID":   {Summary: "Returns the article with the ID.", Errors: []error{articles.NotFound{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/articles/articles.(*Articles).Transition": {Summary: "Moves an article through the review workflow.", Errors: []error{articles.NotFound{}, articles.Refused{}, articles.Unavailable{}, security.AccessDenied{}, security.Unauthenticated{}, workflow.NotAllowed{}, workflow.UnknownTransition{}}},
 		},
 		Types: map[reflect.Type]openapi.TypeDoc{
-			reflect.TypeFor[articles.Article]():   {Description: "Article is what the API serves."},
-			reflect.TypeFor[articles.ListInput](): {Fields: map[string]string{"Tag": "only the articles with this tag"}},
-			reflect.TypeFor[articles.Order]():     {Description: "Order is what lists of articles can be sorted by."},
+			reflect.TypeFor[articles.Article]():         {Description: "Article is what the API serves.", Fields: map[string]string{"State": "State is where the article is in its review: draft, in_review or\npublished."}},
+			reflect.TypeFor[articles.ListInput]():       {Fields: map[string]string{"Tag": "only the articles with this tag"}},
+			reflect.TypeFor[articles.Order]():           {Description: "Order is what lists of articles can be sorted by."},
+			reflect.TypeFor[articles.TransitionInput](): {Fields: map[string]string{"Transition": "submit, publish or reject"}},
 		},
 	}
 }
@@ -119,6 +133,9 @@ func autoConfigLog(c config.Config) goncini.Log { return c.Log }
 
 // autoConfigDB is the DB section of the config.
 func autoConfigDB(c config.Config) db.Config { return c.DB }
+
+// autoConfigEditors is the Editors section of the config.
+func autoConfigEditors(c config.Config) editors.Config { return c.Editors }
 
 // autoDefaultOpenapiConfig is the default of openapi.Config, which the config doesn't have.
 func autoDefaultOpenapiConfig() openapi.Config { return openapi.Config{} }

@@ -12,7 +12,7 @@ import (
 )
 
 // secrets are the environment variables that every environment needs.
-var secrets = map[string]string{"DATABASE_URL": ":memory:"}
+var secrets = map[string]string{"DATABASE_URL": ":memory:", "EDITOR_KEY": "an editor's key of at least thirty-two bytes"}
 
 // TestEnvironments builds the app in each environment, which checks that
 // their configs need no secret but secrets, and are values goncini accepts.

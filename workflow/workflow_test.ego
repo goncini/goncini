@@ -1,0 +1,117 @@
+package workflow_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini/event"
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/security"
+	"github.com/goncini/goncini/workflow"
+)
+
+type article struct{ locked bool }
+
+type editorKey struct{}
+
+// review is a review workflow whose publish needs an editor: a context
+// with editorKey, as a voter decides.
+func review(t *testing.T, d *event.Dispatcher) *workflow.Workflow {
+	access := &security.Access{Voters: []security.Voter{
+		security.On(func(ctx context.Context, attribute string, a *article) security.Vote {
+			if attribute != "edit" {
+				return security.Abstain
+			}
+			return if ctx.Value(editorKey{}) != nil { security.Grant } else { security.Deny }
+		}),
+	}}
+	w := must workflow.New(workflow.Definition{
+		Name:    "review",
+		Places:  []string{"draft", "in_review", "published"},
+		Initial: "draft",
+		Transitions: []workflow.Transition{
+			{Name: "submit", From: []string{"draft"}, To: "in_review"},
+			{Name: "publish", From: []string{"in_review"}, To: "published", Guard: "edit"},
+			{Name: "reject", From: []string{"in_review", "published"}, To: "draft", Guard: "edit"},
+		},
+	}, access, d)
+	return w
+}
+
+func TestApply(t *testing.T) {
+	var log []string
+	d := event.New()
+	event.On(d, func(ctx context.Context, e *workflow.Transitioning) error {
+		if e.Subject.(*article).locked {
+			return errors.New("the article is locked")
+		}
+		return nil
+	})
+	event.On(d, func(ctx context.Context, e *workflow.Transitioned) error {
+		log = append(log, e.From+" "+e.Transition.Name)
+		return nil
+	})
+	w := review(t, d)
+	ctx := context.Background()
+	editor := context.WithValue(ctx, editorKey{}, true)
+	a := &article{}
+
+	state := must w.Apply(ctx, a, w.Initial, "submit")
+	if _, err := w.Apply(ctx, a, state, "publish"); err == nil {
+		t.Error("published without an editor")
+	}
+	if w.Can(ctx, a, state, "publish") || !w.Can(editor, a, state, "publish") {
+		t.Error("Can is wrong")
+	}
+	if got := len(w.Enabled(editor, a, state)); got != 2 {
+		t.Errorf("%d transitions enabled", got)
+	}
+	state = must w.Apply(editor, a, state, "publish")
+	if state != "published" {
+		t.Errorf("state %s", state)
+	}
+	_, err := w.Apply(editor, a, state, "submit")
+	if e, ok := errors.AsType[workflow.NotAllowed](err); !ok || httpkernel.ProblemFor(e).Status != 409 {
+		t.Errorf("submitting a published article: %v", err)
+	}
+	if _, err := w.Apply(editor, a, state, "burn"); httpkernel.ProblemFor(err).Status != 404 {
+		t.Errorf("an unknown transition: %v", err)
+	}
+	a.locked = true
+	if _, err := w.Apply(editor, a, state, "reject"); err == nil || !strings.Contains(err.Error(), "locked") {
+		t.Errorf("a listener's refusal: %v", err)
+	}
+	if strings.Join(log, ", ") != "draft submit, in_review publish" {
+		t.Errorf("transitioned %v", log)
+	}
+}
+
+func TestDefinitionErrors(t *testing.T) {
+	_, err := workflow.New(workflow.Definition{
+		Name: "bad", Places: []string{"a"}, Initial: "z",
+		Transitions: []workflow.Transition{{Name: "go", From: []string{"a"}, To: "b"}, {Name: "go", From: []string{"a"}, To: "a"}},
+	}, nil, nil)
+	for _, want := range []string{`unknown place "z"`, `unknown place "b"`, `two transitions are named "go"`} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%v, want %q", err, want)
+		}
+	}
+}
+
+func TestDump(t *testing.T) {
+	w := review(t, nil)
+	var out strings.Builder
+	cmd := workflow.Commands(workflow.Registry{"review": w})[0]
+	must cmd.Run(context.Background(), &out, []string{"review"})
+	want := "stateDiagram-v2\n" +
+		"    [*] --> draft\n" +
+		"    draft --> in_review: submit\n" +
+		"    in_review --> published: publish [edit]\n" +
+		"    in_review --> draft: reject [edit]\n" +
+		"    published --> draft: reject [edit]\n"
+	if out.String() != want {
+		t.Errorf("dump:\n%s", out.String())
+	}
+}

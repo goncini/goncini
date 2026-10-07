@@ -14,13 +14,14 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/examples/articles/articles"
 	"github.com/goncini/goncini/examples/articles/config"
+	"github.com/goncini/goncini/examples/articles/editors"
 	"github.com/goncini/goncini/examples/articles/translations"
 	"github.com/goncini/goncini/log/zaplog"
 	"github.com/goncini/goncini/translation"
 )
 
 // Build builds the app for cfg. It logs with zap, whose handler replaces
-// goncini's.
+// goncini's, and its editors' firewall is the kernel's middleware.
 func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
 	http := autoConfigHTTP(cfg)
 	config2 := autoConfigDB(cfg)
@@ -32,18 +33,28 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	sql2 := db.NewSQL(db2)
 	store := articles.NewStore(sql2)
 	v := clock()
-	articles2 := articles.NewArticles(store, v)
-	v2 := autoRoutes(articles2)
-	router := goncini.NewRouter(v2)
-	v3 := goncini.NewMiddleware()
-	v4 := autoProblems()
-	renderer := goncini.NewRenderer()
-	validator := goncini.NewValidator()
+	access2 := access()
 	config3 := autoDefaultTranslationConfig()
 	catalogs := translations.All()
 	translator := translation.New(config3, catalogs)
-	v5 := autoSubscribers(translator)
-	dispatcher := goncini.NewDispatcher(v5)
+	v2 := autoSubscribers(translator)
+	dispatcher := goncini.NewDispatcher(v2)
+	registry, err := articles.NewWorkflows(access2, dispatcher)
+	if err != nil {
+		return nil, fmt.Errorf("articles.NewWorkflows: %w", err)
+	}
+	articles2 := articles.NewArticles(store, v, registry)
+	v3 := autoRoutes(articles2)
+	router := goncini.NewRouter(v3)
+	config4 := autoConfigEditors(cfg)
+	firewall, err := editors.NewFirewall(config4)
+	if err != nil {
+		return nil, fmt.Errorf("editors.NewFirewall: %w", err)
+	}
+	v4 := editors.NewMiddleware(firewall)
+	v5 := autoProblems()
+	renderer := goncini.NewRenderer()
+	validator := goncini.NewValidator()
 	log := autoConfigLog(cfg)
 	logger, cleanup2, err := zaplog.NewLogger(log)
 	if err != nil {
@@ -52,7 +63,7 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	s.Defer(func(context.Context) error { return cleanup2() })
 	handler := zaplog.NewHandler(logger)
 	logger2 := goncini.NewLogger(handler)
-	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, dispatcher, logger2)
+	kernel, err := goncini.NewKernel(http, router, v4, v5, renderer, validator, dispatcher, logger2)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
@@ -62,12 +73,12 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v6 := autoCommands(slugCommand, migrator2, translator)
+	v6 := autoCommands(slugCommand, migrator2, translator, registry)
 	v7 := autoChecks(db2)
 	v8 := autoServices()
-	config4 := autoDefaultOpenapiConfig()
+	config5 := autoDefaultOpenapiConfig()
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config4, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config5, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
@@ -87,18 +98,28 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	s.Defer(func(context.Context) error { return cleanup() })
 	sql2 := db.NewSQL(db2)
 	store := articles.NewStore(sql2)
-	articles2 := articles.NewArticles(store, now)
-	v := autoRoutes(articles2)
-	router := goncini.NewRouter(v)
-	v2 := goncini.NewMiddleware()
-	v3 := autoProblems()
-	renderer := goncini.NewRenderer()
-	validator := goncini.NewValidator()
+	access2 := access()
 	config3 := autoDefaultTranslationConfig()
 	catalogs := translations.All()
 	translator := translation.New(config3, catalogs)
-	v4 := autoSubscribers(translator)
-	dispatcher := goncini.NewDispatcher(v4)
+	v := autoSubscribers(translator)
+	dispatcher := goncini.NewDispatcher(v)
+	registry, err := articles.NewWorkflows(access2, dispatcher)
+	if err != nil {
+		return nil, fmt.Errorf("articles.NewWorkflows: %w", err)
+	}
+	articles2 := articles.NewArticles(store, now, registry)
+	v2 := autoRoutes(articles2)
+	router := goncini.NewRouter(v2)
+	config4 := autoConfigEditors(cfg)
+	firewall, err := editors.NewFirewall(config4)
+	if err != nil {
+		return nil, fmt.Errorf("editors.NewFirewall: %w", err)
+	}
+	v3 := editors.NewMiddleware(firewall)
+	v4 := autoProblems()
+	renderer := goncini.NewRenderer()
+	validator := goncini.NewValidator()
 	log := autoConfigLog(cfg)
 	logger, cleanup2, err := zaplog.NewLogger(log)
 	if err != nil {
@@ -107,7 +128,7 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	s.Defer(func(context.Context) error { return cleanup2() })
 	handler := zaplog.NewHandler(logger)
 	logger2 := goncini.NewLogger(handler)
-	kernel, err := goncini.NewKernel(http, router, v2, v3, renderer, validator, dispatcher, logger2)
+	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, dispatcher, logger2)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
@@ -117,12 +138,12 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v5 := autoCommands(slugCommand, migrator2, translator)
+	v5 := autoCommands(slugCommand, migrator2, translator, registry)
 	v6 := autoChecks(db2)
 	v7 := autoServices()
-	config4 := autoDefaultOpenapiConfig()
+	config5 := autoDefaultOpenapiConfig()
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config4, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config5, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
