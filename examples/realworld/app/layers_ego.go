@@ -21,8 +21,8 @@ import (
 // Build builds the API for cfg. RealWorld has an error format and
 // validation messages of its own, and authenticates every request.
 func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
-	http := httpConfig(cfg)
-	config2 := dbConfig(cfg)
+	http := autoConfigHTTP(cfg)
+	config2 := autoConfigDB(cfg)
 	db2, cleanup, err := db.Open(config2)
 	if err != nil {
 		return nil, fmt.Errorf("db.Open: %w", err)
@@ -31,7 +31,7 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	sql2 := db.NewSQL(db2)
 	store := users.NewStore(sql2)
 	hasher2 := hasher()
-	config3 := securityConfig(cfg)
+	config3 := autoConfigSecurity(cfg)
 	tokens, err := security.NewTokens(config3)
 	if err != nil {
 		return nil, fmt.Errorf("security.NewTokens: %w", err)
@@ -44,10 +44,10 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	router := goncini.NewRouter(v2)
 	firewall2 := firewall(config3, tokens, store)
 	v3 := middleware(firewall2)
-	v4 := problems()
+	v4 := autoProblems()
 	renderer := conduit.NewRenderer()
 	validator := conduit.NewValidator()
-	log := logConfig(cfg)
+	log := autoConfigLog(cfg)
 	logger := goncini.NewLogger(log)
 	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, logger)
 	if err != nil {
@@ -58,8 +58,8 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v5 := commands(migrator2)
-	v6 := checks(db2)
+	v5 := autoCommands(migrator2)
+	v6 := autoChecks(db2)
 	app := goncini.NewApp(kernel, server, router, v5, v6, logger)
 	return app, nil
 }

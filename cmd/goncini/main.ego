@@ -1,0 +1,32 @@
+// Command goncini is goncini's tool. goncini generate writes an app's
+// Autoconfigured providers, which hand goncini the app's services of each
+// kind it uses, found by their types, as Symfony's autoconfiguration does:
+//
+//	go tool goncini generate          # from the app's module root
+//	go tool goncini generate -check   # fails if the file isn't up to date
+//
+// An app requires it with a tool directive:
+//
+//	tool github.com/goncini/goncini/cmd/goncini
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+)
+
+func main() {
+	if len(os.Args) < 2 || os.Args[1] != "generate" {
+		fmt.Fprintln(os.Stderr, "usage: goncini generate [-check] [-app dir]")
+		os.Exit(2)
+	}
+	fs := flag.NewFlagSet("generate", flag.ExitOnError)
+	checkOnly := fs.Bool("check", false, "fail if the generated file isn't up to date, instead of writing it")
+	app := fs.String("app", "app", "the directory of the app's wiring package, from the module's root")
+	fs.Parse(os.Args[2:])
+	if err := generate(".", *app, *checkOnly); err != nil {
+		fmt.Fprintln(os.Stderr, "goncini generate:", err)
+		os.Exit(1)
+	}
+}

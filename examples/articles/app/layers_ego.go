@@ -18,8 +18,8 @@ import (
 
 // Build builds the app for cfg.
 func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
-	http := httpConfig(cfg)
-	config2 := dbConfig(cfg)
+	http := autoConfigHTTP(cfg)
+	config2 := autoConfigDB(cfg)
 	db2, cleanup, err := db.Open(config2)
 	if err != nil {
 		return nil, fmt.Errorf("db.Open: %w", err)
@@ -29,13 +29,13 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	store := articles.NewStore(sql2)
 	v := clock()
 	articles2 := articles.NewArticles(store, v)
-	v2 := routes(articles2)
+	v2 := autoRoutes(articles2)
 	router := goncini.NewRouter(v2)
 	v3 := goncini.NewMiddleware()
-	v4 := problems()
+	v4 := autoProblems()
 	renderer := goncini.NewRenderer()
 	validator := goncini.NewValidator()
-	log := logConfig(cfg)
+	log := autoConfigLog(cfg)
 	logger := goncini.NewLogger(log)
 	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, logger)
 	if err != nil {
@@ -47,16 +47,16 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v5 := commands(slugCommand, migrator2)
-	v6 := checks(db2)
+	v5 := autoCommands(slugCommand, migrator2)
+	v6 := autoChecks(db2)
 	app := goncini.NewApp(kernel, server, router, v5, v6, logger)
 	return app, nil
 }
 
 // BuildTest builds the app with a test's clock.
 func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func() time.Time) (*goncini.App, error) {
-	http := httpConfig(cfg)
-	config2 := dbConfig(cfg)
+	http := autoConfigHTTP(cfg)
+	config2 := autoConfigDB(cfg)
 	db2, cleanup, err := db.Open(config2)
 	if err != nil {
 		return nil, fmt.Errorf("db.Open: %w", err)
@@ -65,13 +65,13 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	sql2 := db.NewSQL(db2)
 	store := articles.NewStore(sql2)
 	articles2 := articles.NewArticles(store, now)
-	v := routes(articles2)
+	v := autoRoutes(articles2)
 	router := goncini.NewRouter(v)
 	v2 := goncini.NewMiddleware()
-	v3 := problems()
+	v3 := autoProblems()
 	renderer := goncini.NewRenderer()
 	validator := goncini.NewValidator()
-	log := logConfig(cfg)
+	log := autoConfigLog(cfg)
 	logger := goncini.NewLogger(log)
 	kernel, err := goncini.NewKernel(http, router, v2, v3, renderer, validator, logger)
 	if err != nil {
@@ -83,8 +83,8 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v4 := commands(slugCommand, migrator2)
-	v5 := checks(db2)
+	v4 := autoCommands(slugCommand, migrator2)
+	v5 := autoChecks(db2)
 	app := goncini.NewApp(kernel, server, router, v4, v5, logger)
 	return app, nil
 }

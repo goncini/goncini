@@ -200,6 +200,24 @@ M1's gates:
   attempt; its feedback went into AGENTS.md. The task and the tests are
   in `examples/realworld/testdata/agent`, to run again.
 
+### goncini generate
+
+`go tool goncini generate` runs `ego generate`, and writes the app's
+`app/autoconfigured_gen.go`: the `Autoconfigured` providers, which hand
+goncini the app's services of each kind it uses, found by their types, as
+Symfony's autoconfiguration does:
+
+- the services with a `Routes` method, in the order of `Services`;
+- every exported `httpkernel.ErrorMapper` variable of the app's packages;
+- the services that are `console.Command`s, and the migrator's commands;
+- the services with `Ping` or `PingContext`, as `Check`s before serving;
+- a provider per field of the config, such as `goncini.HTTP`.
+
+A kind that the app provides itself is left to it: RealWorld provides its
+routes, under `/api`. An app is generated from nothing in one run, and
+`-check` fails when the file isn't up to date, which CI checks.
+`debug:container` is still to come.
+
 ### Found while building
 
 - **Reviews:** independent reviews found 15 defects in `httpkernel` and 9 in

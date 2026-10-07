@@ -8,15 +8,17 @@ complete one.
 ## Commands
 
 ```bash
-go tool ego generate ./...   # after editing a .ego file: writes x_ego.go next to x.ego
+go tool goncini generate     # after editing: runs ego generate, and writes app/autoconfigured_gen.go
 go test ./...
 go run . list                # the app's commands; go run . serves it
 go run . db:migrate          # applies the migrations
 go run . debug:router        # lists the routes
 ```
 
-Edit `.ego` files only, never the generated `_ego.go` or `layers_ego.go`,
-and run `go tool ego generate ./...` before building or testing.
+Edit `.ego` files only, never the generated `_ego.go`, `layers_ego.go` or
+`autoconfigured_gen.go`, and run `go tool goncini generate` before building
+or testing. It runs `go tool ego generate ./...`, which writes `x_ego.go`
+next to each `x.ego`, and finds the app's services by their types.
 
 ## Layout
 
@@ -24,7 +26,7 @@ and run `go tool ego generate ./...` before building or testing.
 main.ego              goncini.Main(config.Load, app.Build)
 .env, .env.test       APP_ENV and secrets for local work and tests
 config/               type Config, Load(env), and one file per environment
-app/                  the wiring: inject.go, services.ego, autoconfigured.ego
+app/                  the wiring: inject.go, services.ego, and the generated autoconfigured_gen.go
 migrations/           goose SQL files, embedded
 <feature>/            one package per feature, such as articles/:
   <feature>.ego         types, the error set and its problems
@@ -91,8 +93,9 @@ func Problem(err ArticleError) httpkernel.Problem {
 var Problems = httpkernel.Map[ArticleError](Problem)
 ```
 
-Each case has a doc comment when its name doesn't say it all. `Problems`
-is registered in `app/autoconfigured.ego`'s `problems`. Store failures
+Each case has a doc comment when its name doesn't say it all. `goncini
+generate` registers every exported `httpkernel.ErrorMapper` variable of the
+app's packages, such as `Problems`. Store failures
 become the `Unavailable` case: `check s.store.Get(slug) as Unavailable`.
 A case that a callback returns, such as a transaction's, passes through
 `as Unavailable` unchanged.
@@ -146,8 +149,8 @@ func (a *Articles) Routes(r *routing.Router) {
 ```
 
 Paths match exactly. `{id<\d+>}` requires a value to match a regular
-expression, or the route doesn't match. A controller is registered in
-`app/autoconfigured.ego`'s `routes`.
+expression, or the route doesn't match. `goncini generate` registers every
+provided service that has a `Routes` method, in the order of `Services`.
 
 ## Users
 
@@ -197,8 +200,12 @@ plain constructors, matched by their result types.
 
 - `app/services.ego`'s `Services` lists the app's constructors, such as
   `articles.NewStore`: add a new service there.
-- `app/autoconfigured.ego` hands goncini the routes, error mappers,
-  commands and config sections.
+- `goncini generate` writes `app/autoconfigured_gen.go`, which hands
+  goncini, by their types: the services with routes, the error mappers,
+  the services that are `console.Command`s and the migrator's commands,
+  the services that can be pinged (checked before serving), and a provider
+  per field of the config. A kind that the app provides itself, such as
+  `[]routing.Routes` to put them under a prefix, is left to it.
 - A service that needs the time takes a `now func() time.Time`, which the
   app's `clock` provider gives: `time.Now`. Tests change time with
   `testing/synctest`, which fakes `time.Now` and `time.Sleep`.

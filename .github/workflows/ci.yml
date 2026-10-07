@@ -33,6 +33,9 @@ jobs:
       - name: generated code is up to date
         if: matrix.module != 'examples/realworld-plain' # plain Go
         run: go tool ego generate -check ./...
+      - name: autoconfiguration is up to date
+        if: matrix.module == 'examples/articles' || matrix.module == 'examples/realworld'
+        run: go tool goncini generate -check
       - name: .ego and Go files are formatted
         if: matrix.module == '.'
         run: |

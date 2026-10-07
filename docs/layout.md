@@ -22,7 +22,7 @@ conduit/
 ├── app/                    # package app: the wiring, Symfony's Kernel.php and services.yaml
 │   ├── inject.go           # //go:build egolayers: Build, from layer.Build
 │   ├── services.ego        # var Services = layer.Set(...): the app's own providers
-│   └── autoconfigured.ego  # routes, commands and config sections, until goncini generate writes it
+│   └── autoconfigured_gen.go # routes, error mappers, commands, checks and config sections: goncini generate writes it
 ├── articles/               # one package per feature
 │   ├── articles.ego        # types, the ArticleError set and its problems
 │   ├── controller.ego      # Routes, and the endpoints

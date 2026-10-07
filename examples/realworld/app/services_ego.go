@@ -14,6 +14,7 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/goosedb"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
 
 	"github.com/goncini/goncini/examples/realworld/articles"
@@ -25,14 +26,20 @@ import (
 
 // Services is the app's own services.
 //
-//line services.ego:23
+//line services.ego:24
 var Services = layer.Set(
 	db.Open, db.NewSQL, migrator,
 	security.NewTokens, hasher, firewall,
 	users.NewStore, users.NewUsers,
 	articles.NewStore, articles.NewArticles,
-	clock,
+	routes, clock,
 )
+
+// routes puts the API under /api. goncini generate collects the routes of
+// an app that doesn't provide them itself.
+func routes(u *users.Users, a *articles.Articles) []routing.Routes {
+	return []routing.Routes{routing.Prefix("/api", u, a)}
+}
 
 // migrator runs the migrations with goose.
 func migrator(pool *sql.DB) (db.Migrator, error) {

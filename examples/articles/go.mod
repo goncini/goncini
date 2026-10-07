@@ -2,7 +2,10 @@ module github.com/goncini/goncini/examples/articles
 
 go 1.27
 
-tool github.com/effect-go/effect-go/cmd/ego
+tool (
+	github.com/effect-go/effect-go/cmd/ego
+	github.com/goncini/goncini/cmd/goncini
+)
 
 require (
 	github.com/effect-go/effect-go v0.3.0
