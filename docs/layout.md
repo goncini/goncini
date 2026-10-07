@@ -169,6 +169,7 @@ func prod(c *Config) {
 }
 ```
 
+- **Config is only code.** There are no YAML, TOML or JSON config files, and goncini has no loader for them.
 - **It's checked by the compiler.** A misspelled key or a wrong type fails the build, a renamed field is renamed in the config too, and the editor completes it. There's no parser and no decoding errors. Symfony compiles its YAML into the container anyway; here the config starts out as code.
 - **An environment is a function** that changes what it needs on top of the shared values, the way `when@prod` does in Symfony. `APP_ENV` picks the function, and it defaults to `dev`. An `APP_ENV` that `Load` doesn't know fails at boot, so a typo such as `prdo` can't silently run with the shared values alone.
 - **Environment variables are for secrets only, plus `APP_ENV`.** `env.Secret` is the only way to read one, so `config/` lists every variable the app reads. A missing secret fails at boot, and every missing secret is reported in one error, not one per restart.
