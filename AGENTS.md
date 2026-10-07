@@ -15,6 +15,8 @@ go run . db:migrate          # applies the migrations
 go run . debug:router        # lists the routes
 go run . debug:container     # lists the services, with their providers and what they need
 go run . openapi:dump        # prints the API's OpenAPI document
+go run . messenger:consume   # handles the queued messages, until stopped
+go run . scheduler:run       # runs the scheduled tasks, until stopped
 ```
 
 Edit `.ego` files only, never the generated `_ego.go`, `layers_ego.go` or
@@ -239,6 +241,49 @@ such as `UPDATE … WHERE id = ? AND created_at >= ?`, whose
 schema change is a new goose file in `migrations/`, such as
 `00002_add_comment_edits.sql`, with `-- +goose Up` and `-- +goose Down`
 sections; never edit an applied one.
+
+## Events, messages and schedules
+
+A feature announces what happened with an event, any type, and the
+features that care listen, without importing each other's code:
+
+```go
+check event.Dispatch(ctx, a.events, &Published{Slug: slug}) as Unavailable
+
+// A service with a Subscribe method is a subscriber: goncini generate
+// registers it.
+func (s *Subscriber) Subscribe(d *event.Dispatcher) {
+	event.On(d, func(ctx context.Context, e *articles.Published) error { … })
+}
+```
+
+Work that can happen after the response is a message, which a worker
+(`go run . messenger:consume`) handles, with retries; a message can be
+handled twice, so its handler must not do its work twice:
+
+```go
+type NotifyFollowers struct{ Slug string `json:"slug"` }
+
+// A service with a Handlers method registers handlers and routes.
+func (n *Notifications) Handlers(b *messenger.Bus) {
+	messenger.Handle(b, n.notify) // func(ctx, NotifyFollowers) error
+	messenger.Route[NotifyFollowers](b, "async")
+}
+
+check messenger.Dispatch(ctx, bus, NotifyFollowers{Slug: slug}) ""
+```
+
+Recurring work is a scheduled task, run by `go run . scheduler:run`, once
+per tick across the app's instances:
+
+```go
+func (n *Notifications) Schedule(s *scheduler.Scheduler) {
+	s.Add("notifications:prune", scheduler.Every(24*time.Hour), (ctx context.Context) => n.prune(ctx))
+}
+```
+
+A test runs the worker for the messages it expects:
+`webtest.Run(t, a, "messenger:consume", "-limit", "1")`.
 
 ## Wiring
 

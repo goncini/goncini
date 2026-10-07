@@ -5,6 +5,7 @@ package articles
 import (
 	"context"
 	"errors"
+	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
@@ -16,14 +17,22 @@ import (
 
 // Articles serves the articles, their favorites, comments and tags.
 //
-//line controller.ego:12
+//line controller.ego:13
 type Articles struct {
 	store  *Store
 	access *security.Access
+	events *event.Dispatcher
 }
 
-func NewArticles(store *Store, access *security.Access) *Articles {
-	return &Articles{store: store, access: access}
+func NewArticles(store *Store, access *security.Access, events *event.Dispatcher) *Articles {
+	return &Articles{store: store, access: access, events: events}
+}
+
+// Published is the event of an article published, for the features that
+// care, such as notifications.
+type Published struct {
+	Slug     string
+	AuthorID int64
 }
 
 // Routes registers the endpoints.
@@ -72,7 +81,7 @@ type ListInput struct {
 func (a *Articles) List(ctx context.Context, in ListInput) (_ ArticlesBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.List")
 	defer trace.End(span, &err)
-//line controller.ego:65
+//line controller.ego:74
 	f := Filter{Tag: in.Tag, Author: in.Author, Favorited: in.Favorited}
 	list, count, err := a.store.List(ctx, users.Viewer(ctx), f, in.Limit, in.Offset)
 	if err != nil {
@@ -81,7 +90,7 @@ func (a *Articles) List(ctx context.Context, in ListInput) (_ ArticlesBody, err 
 		}
 		return ArticlesBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:67
+//line controller.ego:76
 	return ArticlesBody{list, count}, nil
 }
 
@@ -90,7 +99,7 @@ func (a *Articles) List(ctx context.Context, in ListInput) (_ ArticlesBody, err 
 func (a *Articles) Feed(ctx context.Context, in Page) (_ ArticlesBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Feed")
 	defer trace.End(span, &err)
-//line controller.ego:73
+//line controller.ego:82
 	viewer := users.Viewer(ctx)
 	list, count, err := a.store.List(ctx, viewer, Filter{FeedOf: viewer}, in.Limit, in.Offset)
 	if err != nil {
@@ -99,7 +108,7 @@ func (a *Articles) Feed(ctx context.Context, in Page) (_ ArticlesBody, err error
 		}
 		return ArticlesBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:75
+//line controller.ego:84
 	return ArticlesBody{list, count}, nil
 }
 
@@ -111,12 +120,12 @@ type SlugInput struct {
 func (a *Articles) Show(ctx context.Context, in SlugInput) (_ ArticleBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Show")
 	defer trace.End(span, &err)
-//line controller.ego:84
+//line controller.ego:93
 	art, err := a.find(ctx, in.Slug)
 	if err != nil {
 		return ArticleBody{}, err
 	}
-//line controller.ego:85
+//line controller.ego:94
 	return ArticleBody{art}, nil
 }
 
@@ -124,7 +133,7 @@ func (a *Articles) Show(ctx context.Context, in SlugInput) (_ ArticleBody, err e
 func (a *Articles) find(ctx context.Context, slug string) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.find")
 	defer trace.End(span, &err)
-//line controller.ego:90
+//line controller.ego:99
 	art, ok, err := a.store.BySlug(ctx, users.Viewer(ctx), slug)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -132,7 +141,7 @@ func (a *Articles) find(ctx context.Context, slug string) (_ Article, err error)
 		}
 		return Article{}, Unavailable{Cause: err}
 	}
-//line controller.ego:91
+//line controller.ego:100
 	if !ok {
 		return Article{}, NoArticle{Slug: slug}
 	}
@@ -144,12 +153,12 @@ func (a *Articles) find(ctx context.Context, slug string) (_ Article, err error)
 func (a *Articles) findGranted(ctx context.Context, slug, attribute string) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.findGranted")
 	defer trace.End(span, &err)
-//line controller.ego:100
+//line controller.ego:109
 	art, err := a.find(ctx, slug)
 	if err != nil {
 		return Article{}, err
 	}
-//line controller.ego:101
+//line controller.ego:110
 	if !a.access.IsGranted(ctx, attribute, art) {
 		return Article{}, NotAuthor{Slug: slug}
 	}
@@ -171,7 +180,7 @@ type CreateInput struct {
 func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Created[ArticleBody], err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Create")
 	defer trace.End(span, &err)
-//line controller.ego:120
+//line controller.ego:129
 	b := in.Body.Article
 	art := Article{Summary{Title: b.Title, Description: b.Description, AuthorID: users.Viewer(ctx)}, b.Body}
 	v := b.TagList
@@ -185,12 +194,19 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 		}
 		return httpkernel.Created[ArticleBody]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:123
+//line controller.ego:132
 	created, err := a.find(ctx, slug)
 	if err != nil {
 		return httpkernel.Created[ArticleBody]{}, err
 	}
-//line controller.ego:124
+//line controller.ego:133
+	if err := event.Dispatch(ctx, a.events, &Published{Slug: slug, AuthorID: created.AuthorID}); err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return httpkernel.Created[ArticleBody]{}, err
+		}
+		return httpkernel.Created[ArticleBody]{}, Unavailable{Cause: err}
+	}
+//line controller.ego:134
 	return httpkernel.Created[ArticleBody]{Body: ArticleBody{created}}, nil
 }
 
@@ -229,12 +245,12 @@ func (in *UpdateInput) Validate() error {
 func (a *Articles) Update(ctx context.Context, in UpdateInput) (_ ArticleBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Update")
 	defer trace.End(span, &err)
-//line controller.ego:160
+//line controller.ego:170
 	art, err := a.findGranted(ctx, in.Slug, "edit")
 	if err != nil {
 		return ArticleBody{}, err
 	}
-//line controller.ego:161
+//line controller.ego:171
 	b := in.Body.Article
 	if b.Title.Set {
 		art.Title = b.Title.Value
@@ -252,19 +268,19 @@ func (a *Articles) Update(ctx context.Context, in UpdateInput) (_ ArticleBody, e
 			tags = []string{}
 		}
 	}
-//line controller.ego:175
+//line controller.ego:185
 	if _, err := a.store.Save(ctx, art, tags); err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
 			return ArticleBody{}, err
 		}
 		return ArticleBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:176
+//line controller.ego:186
 	updated, err := a.find(ctx, art.Slug)
 	if err != nil {
 		return ArticleBody{}, err
 	}
-//line controller.ego:177
+//line controller.ego:187
 	return ArticleBody{updated}, nil
 }
 
@@ -273,19 +289,19 @@ func (a *Articles) Update(ctx context.Context, in UpdateInput) (_ ArticleBody, e
 func (a *Articles) Delete(ctx context.Context, in SlugInput) (_ httpkernel.NoContent, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Delete")
 	defer trace.End(span, &err)
-//line controller.ego:183
+//line controller.ego:193
 	art, err := a.findGranted(ctx, in.Slug, "delete")
 	if err != nil {
 		return httpkernel.NoContent{}, err
 	}
-//line controller.ego:184
+//line controller.ego:194
 	if err := a.store.Delete(ctx, art.ID); err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
 			return httpkernel.NoContent{}, err
 		}
 		return httpkernel.NoContent{}, Unavailable{Cause: err}
 	}
-//line controller.ego:185
+//line controller.ego:195
 	return httpkernel.NoContent{}, nil
 }
 
@@ -298,7 +314,7 @@ func (a *Articles) Favorite(ctx context.Context, in SlugInput) (_ ArticleBody, e
 
 // Unfavorite removes an article from the authenticated user's favorites.
 //
-//line controller.ego:194
+//line controller.ego:204
 func (a *Articles) Unfavorite(ctx context.Context, in SlugInput) (_ ArticleBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Unfavorite")
 	defer trace.End(span, &err)
@@ -307,28 +323,28 @@ func (a *Articles) Unfavorite(ctx context.Context, in SlugInput) (_ ArticleBody,
 
 // favorite makes the viewer favorite the article with the slug, or not.
 //
-//line controller.ego:199
+//line controller.ego:209
 func (a *Articles) favorite(ctx context.Context, slug string, favorite bool) (_ ArticleBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.favorite")
 	defer trace.End(span, &err)
-//line controller.ego:200
+//line controller.ego:210
 	art, err := a.find(ctx, slug)
 	if err != nil {
 		return ArticleBody{}, err
 	}
-//line controller.ego:201
+//line controller.ego:211
 	if err := a.store.Favorite(ctx, users.Viewer(ctx), art.ID, favorite); err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
 			return ArticleBody{}, err
 		}
 		return ArticleBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:202
+//line controller.ego:212
 	updated, err := a.find(ctx, slug)
 	if err != nil {
 		return ArticleBody{}, err
 	}
-//line controller.ego:203
+//line controller.ego:213
 	return ArticleBody{updated}, nil
 }
 
@@ -341,7 +357,7 @@ type TagsBody struct {
 func (a *Articles) Tags(ctx context.Context, in struct{}) (_ TagsBody, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Tags")
 	defer trace.End(span, &err)
-//line controller.ego:213
+//line controller.ego:223
 	tags, err := a.store.Tags(ctx)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -349,6 +365,6 @@ func (a *Articles) Tags(ctx context.Context, in struct{}) (_ TagsBody, err error
 		}
 		return TagsBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:214
+//line controller.ego:224
 	return TagsBody{tags}, nil
 }

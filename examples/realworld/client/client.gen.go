@@ -70,6 +70,21 @@ type Errors struct {
 	Errors map[string][]string `json:"errors"`
 }
 
+// Notification Notification is a notification of an article, as its user sees it.
+type Notification struct {
+	// Article its slug
+	Article string `json:"article"`
+
+	// Author the username of its author
+	Author    string    `json:"author"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// NotificationsBody NotificationsBody is the notifications of a user.
+type NotificationsBody struct {
+	Notifications []Notification `json:"notifications"`
+}
+
 // Profile Profile is a user as others see them.
 type Profile struct {
 	Bio       *string `json:"bio"`
@@ -379,6 +394,11 @@ type ClientInterface interface {
 	// Corresponds with POST /api/articles/{slug}/favorite (the `ArticleFavorite` operationId).
 	ArticleFavorite(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// NotificationList Returns the authenticated user's notifications, the newest first.
+	//
+	// Corresponds with GET /api/notifications (the `NotificationList` operationId).
+	NotificationList(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ProfileShow Returns a user's profile.
 	//
 	// Corresponds with GET /api/profiles/{username} (the `ProfileShow` operationId).
@@ -684,6 +704,21 @@ func (c *Client) ArticleUnfavorite(ctx context.Context, slug string, reqEditors 
 // Corresponds with POST /api/articles/{slug}/favorite (the `ArticleFavorite` operationId).
 func (c *Client) ArticleFavorite(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewArticleFavoriteRequest(c.Server, slug)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// NotificationList Returns the authenticated user's notifications, the newest first.
+//
+// Corresponds with GET /api/notifications (the `NotificationList` operationId).
+func (c *Client) NotificationList(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewNotificationListRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -1424,6 +1459,33 @@ func NewArticleFavoriteRequest(server string, slug string) (*http.Request, error
 	return req, nil
 }
 
+// NewNotificationListRequest constructs an http.Request for the NotificationList method
+func NewNotificationListRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/notifications")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewProfileShowRequest constructs an http.Request for the ProfileShow method
 func NewProfileShowRequest(server string, username string) (*http.Request, error) {
 	var err error
@@ -1852,6 +1914,13 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/articles/{slug}/favorite (the `ArticleFavorite` operationId).
 	ArticleFavoriteWithResponse(ctx context.Context, slug string, reqEditors ...RequestEditorFn) (*ArticleFavoriteResponse, error)
+
+	// NotificationListWithResponse Returns the authenticated user's notifications, the newest first.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/notifications (the `NotificationList` operationId).
+	NotificationListWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*NotificationListResponse, error)
 
 	// ProfileShowWithResponse Returns a user's profile.
 	//
@@ -2877,6 +2946,68 @@ func (r ArticleFavoriteResponse) ContentType() string {
 	return ""
 }
 
+// NotificationListResponse401Headers the declared response headers of an HTTP 401 response for NotificationList
+type NotificationListResponse401Headers struct {
+	WwwAuthenticate *string
+}
+
+type NotificationListResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *NotificationsBody
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Errors
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Errors
+	// Headers401 the parsed response headers for an HTTP 401 response
+	Headers401 *NotificationListResponse401Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r NotificationListResponse) GetJSON200() *NotificationsBody {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r NotificationListResponse) GetJSON401() *Errors {
+	return r.JSON401
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r NotificationListResponse) GetJSON503() *Errors {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r NotificationListResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r NotificationListResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r NotificationListResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r NotificationListResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ProfileShowResponse401Headers the declared response headers of an HTTP 401 response for ProfileShow
 type ProfileShowResponse401Headers struct {
 	WwwAuthenticate *string
@@ -3703,6 +3834,19 @@ func (c *ClientWithResponses) ArticleFavoriteWithResponse(ctx context.Context, s
 		return nil, err
 	}
 	return ParseArticleFavoriteResponse(rsp)
+}
+
+// NotificationListWithResponse Returns the authenticated user's notifications, the newest first.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/notifications (the `NotificationList` operationId).
+func (c *ClientWithResponses) NotificationListWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*NotificationListResponse, error) {
+	rsp, err := c.NotificationList(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseNotificationListResponse(rsp)
 }
 
 // ProfileShowWithResponse Returns a user's profile.
@@ -4682,6 +4826,59 @@ func ParseArticleFavoriteResponse(rsp *http.Response) (*ArticleFavoriteResponse,
 	switch {
 	case rsp.StatusCode == 401:
 		var headers ArticleFavoriteResponse401Headers
+		if values := rsp.Header.Values("Www-Authenticate"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Www-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.WwwAuthenticate = &value
+		}
+		response.Headers401 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseNotificationListResponse parses an HTTP response from a NotificationListWithResponse call
+func ParseNotificationListResponse(rsp *http.Response) (*NotificationListResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &NotificationListResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest NotificationsBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Errors
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Errors
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 401:
+		var headers NotificationListResponse401Headers
 		if values := rsp.Header.Values("Www-Authenticate"); len(values) > 0 {
 			var value string
 			if err := runtime.BindStyledParameterWithOptions("simple", "Www-Authenticate", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {

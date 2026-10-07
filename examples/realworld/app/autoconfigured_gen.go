@@ -15,24 +15,27 @@ import (
 	"github.com/goncini/goncini/examples/realworld/conduit"
 	"github.com/goncini/goncini/examples/realworld/config"
 	"github.com/goncini/goncini/examples/realworld/moderation"
+	"github.com/goncini/goncini/examples/realworld/notifications"
 	"github.com/goncini/goncini/examples/realworld/users"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/openapi"
+	"github.com/goncini/goncini/scheduler"
 	"github.com/goncini/goncini/security"
 )
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration)
+var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger)
 
 // autoProblems are the error mappers that the app's packages declare.
 func autoProblems() []httpkernel.ErrorMapper {
-	return []httpkernel.ErrorMapper{articles.Problems, conduit.AuthProblems, users.Problems}
+	return []httpkernel.ErrorMapper{articles.Problems, conduit.AuthProblems, notifications.Problems, users.Problems}
 }
 
 // autoCommands are the services that are console commands, and the commands of the migrator.
-func autoCommands(m db.Migrator) []console.Command {
-	return db.Commands(m)
+func autoCommands(m db.Migrator, bus *messenger.Bus, s *scheduler.Scheduler) []console.Command {
+	return append(append(db.Commands(m), messenger.Commands(bus)...), scheduler.Commands(s)...)
 }
 
 // autoChecks ping the services that can be pinged, such as the database, before serving.
@@ -46,8 +49,18 @@ func autoVoters(p1 articles.Authorship) []security.Voter {
 }
 
 // autoSubscribers are the services that subscribe to events.
-func autoSubscribers() []event.Subscriber {
-	return []event.Subscriber{}
+func autoSubscribers(p1 *notifications.Subscriber) []event.Subscriber {
+	return []event.Subscriber{p1}
+}
+
+// autoHandlers are the services that handle messages.
+func autoHandlers(p1 *notifications.Notifications) []messenger.Handlers {
+	return []messenger.Handlers{p1}
+}
+
+// autoTasks are the services that schedule tasks.
+func autoTasks(p1 *notifications.Notifications) []scheduler.Tasks {
+	return []scheduler.Tasks{p1}
 }
 
 // autoServices describes the app's services, for debug:container.
@@ -71,23 +84,32 @@ func autoServices() []goncini.Service {
 		{Type: "articles.Authorship", Provider: "articles.NewAuthorship", Needs: []string{}},
 		{Type: "[]security.Voter", Provider: "autoVoters", Needs: []string{"articles.Authorship"}},
 		{Type: "*security.Access", Provider: "security.NewAccess", Needs: []string{"security.Config", "[]security.Voter"}},
-		{Type: "*articles.Articles", Provider: "articles.NewArticles", Needs: []string{"*articles.Store", "*security.Access"}},
+		{Type: "messenger.Config", Provider: "autoConfigMessenger", Needs: []string{"config.Config"}},
+		{Type: "messenger.Transports", Provider: "transports", Needs: []string{"*sql.DB"}},
+		{Type: "*notifications.Notifications", Provider: "notifications.NewNotifications", Needs: []string{"*db.SQL", "func() time.Time"}},
+		{Type: "[]messenger.Handlers", Provider: "autoHandlers", Needs: []string{"*notifications.Notifications"}},
+		{Type: "goncini.Log", Provider: "autoConfigLog", Needs: []string{"config.Config"}},
+		{Type: "slog.Handler", Provider: "goncini.NewLogHandler", Needs: []string{"goncini.Log"}},
+		{Type: "*slog.Logger", Provider: "goncini.NewLogger", Needs: []string{"slog.Handler"}},
+		{Type: "*messenger.Bus", Provider: "messenger.NewBus", Needs: []string{"messenger.Config", "messenger.Transports", "[]messenger.Handlers", "*slog.Logger"}},
+		{Type: "*notifications.Subscriber", Provider: "notifications.NewSubscriber", Needs: []string{"*messenger.Bus"}},
+		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{"*notifications.Subscriber"}},
+		{Type: "*event.Dispatcher", Provider: "goncini.NewDispatcher", Needs: []string{"[]event.Subscriber"}},
+		{Type: "*articles.Articles", Provider: "articles.NewArticles", Needs: []string{"*articles.Store", "*security.Access", "*event.Dispatcher"}},
 		{Type: "*moderation.Moderation", Provider: "moderation.NewModeration", Needs: []string{"*articles.Articles", "*security.Access"}},
-		{Type: "[]routing.Routes", Provider: "routes", Needs: []string{"*security.Firewall[*users.User]", "*security.Firewall[*moderation.Moderator]", "*users.Users", "*articles.Articles", "*moderation.Moderation"}},
+		{Type: "[]routing.Routes", Provider: "routes", Needs: []string{"*security.Firewall[*users.User]", "*security.Firewall[*moderation.Moderator]", "*users.Users", "*articles.Articles", "*notifications.Notifications", "*moderation.Moderation"}},
 		{Type: "*routing.Router", Provider: "goncini.NewRouter", Needs: []string{"[]routing.Routes"}},
 		{Type: "[]httpkernel.Middleware", Provider: "goncini.NewMiddleware", Needs: []string{}},
 		{Type: "[]httpkernel.ErrorMapper", Provider: "autoProblems", Needs: []string{}},
 		{Type: "httpkernel.Renderer", Provider: "conduit.NewRenderer", Needs: []string{}},
 		{Type: "httpkernel.Validator", Provider: "conduit.NewValidator", Needs: []string{}},
-		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{}},
-		{Type: "*event.Dispatcher", Provider: "goncini.NewDispatcher", Needs: []string{"[]event.Subscriber"}},
-		{Type: "goncini.Log", Provider: "autoConfigLog", Needs: []string{"config.Config"}},
-		{Type: "slog.Handler", Provider: "goncini.NewLogHandler", Needs: []string{"goncini.Log"}},
-		{Type: "*slog.Logger", Provider: "goncini.NewLogger", Needs: []string{"slog.Handler"}},
 		{Type: "*httpkernel.Kernel", Provider: "goncini.NewKernel", Needs: []string{"goncini.HTTP", "*routing.Router", "[]httpkernel.Middleware", "[]httpkernel.ErrorMapper", "httpkernel.Renderer", "httpkernel.Validator", "*event.Dispatcher", "*slog.Logger"}},
 		{Type: "*httpkernel.Server", Provider: "goncini.NewServer", Needs: []string{"goncini.HTTP", "*httpkernel.Kernel", "*slog.Logger"}},
 		{Type: "db.Migrator", Provider: "migrator", Needs: []string{"*sql.DB"}},
-		{Type: "[]console.Command", Provider: "autoCommands", Needs: []string{"db.Migrator"}},
+		{Type: "lock.Store", Provider: "locks", Needs: []string{"*sql.DB"}},
+		{Type: "[]scheduler.Tasks", Provider: "autoTasks", Needs: []string{"*notifications.Notifications"}},
+		{Type: "*scheduler.Scheduler", Provider: "scheduler.New", Needs: []string{"lock.Store", "[]scheduler.Tasks", "*slog.Logger"}},
+		{Type: "[]console.Command", Provider: "autoCommands", Needs: []string{"db.Migrator", "*messenger.Bus", "*scheduler.Scheduler"}},
 		{Type: "[]goncini.Check", Provider: "autoChecks", Needs: []string{"*sql.DB"}},
 		{Type: "[]goncini.Service", Provider: "autoServices", Needs: []string{}},
 		{Type: "openapi.Config", Provider: "autoConfigOpenAPI", Needs: []string{"config.Config"}},
@@ -102,40 +124,43 @@ func autoServices() []goncini.Service {
 func autoOpenAPI() openapi.Annotations {
 	return openapi.Annotations{
 		Operations: map[string]openapi.OperationDoc{
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).AddComment":    {Summary: "Comments on an article.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Comments":      {Summary: "Returns the comments of an article, oldest first.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Create":        {Summary: "Publishes an article, with a slug made of its title.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Delete":        {Summary: "Deletes an article: one the authenticated user wrote, or any for a moderator.", Errors: []error{articles.NoArticle{}, articles.NotAuthor{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).DeleteComment": {Summary: "Deletes a comment: one the authenticated user wrote, or any for a moderator.", Errors: []error{articles.NoArticle{}, articles.NoComment{}, articles.NotCommentAuthor{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Favorite":      {Summary: "Adds an article to the authenticated user's favorites.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Feed":          {Summary: "Returns the articles of the authors that the authenticated user follows, newest first, without their bodies.", Errors: []error{articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).List":          {Summary: "Returns the articles that the filters select, newest first, without their bodies.", Errors: []error{articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Show":          {Summary: "Returns an article.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Tags":          {Summary: "Returns every tag that an article has.", Errors: []error{articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Unfavorite":    {Summary: "Removes an article from the authenticated user's favorites.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Update":        {Summary: "Changes the values that the body has of an article that the authenticated user wrote.", Description: "Its slug stays the same.", Errors: []error{articles.NoArticle{}, articles.NotAuthor{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/users.(*Users).Current":             {Summary: "Returns the authenticated user, with a new token.", Errors: []error{users.Unavailable{}, security.Unauthenticated{}}},
-			"github.com/goncini/goncini/examples/realworld/users.(*Users).Follow":              {Summary: "Makes the authenticated user follow another.", Errors: []error{users.NoProfile{}, users.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/users.(*Users).Login":               {Summary: "Returns the user with an email and a password, with a new token.", Description: "Each email has a few attempts a minute from each address, which a\nsuccessful one gives back.", Errors: []error{users.BadCredentials{}, users.TooManyLogins{}, users.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/users.(*Users).Profile":             {Summary: "Returns a user's profile.", Errors: []error{users.NoProfile{}, users.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/users.(*Users).Register":            {Summary: "Registers a user, and returns them with a token.", Errors: []error{users.Taken{}, users.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/users.(*Users).Unfollow":            {Summary: "Makes the authenticated user stop following another.", Errors: []error{users.NoProfile{}, users.Unavailable{}}},
-			"github.com/goncini/goncini/examples/realworld/users.(*Users).Update":              {Summary: "Changes the authenticated user's values that the body has.", Errors: []error{users.Taken{}, users.Unavailable{}, security.Unauthenticated{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).AddComment":     {Summary: "Comments on an article.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Comments":       {Summary: "Returns the comments of an article, oldest first.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Create":         {Summary: "Publishes an article, with a slug made of its title.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Delete":         {Summary: "Deletes an article: one the authenticated user wrote, or any for a moderator.", Errors: []error{articles.NoArticle{}, articles.NotAuthor{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).DeleteComment":  {Summary: "Deletes a comment: one the authenticated user wrote, or any for a moderator.", Errors: []error{articles.NoArticle{}, articles.NoComment{}, articles.NotCommentAuthor{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Favorite":       {Summary: "Adds an article to the authenticated user's favorites.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Feed":           {Summary: "Returns the articles of the authors that the authenticated user follows, newest first, without their bodies.", Errors: []error{articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).List":           {Summary: "Returns the articles that the filters select, newest first, without their bodies.", Errors: []error{articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Show":           {Summary: "Returns an article.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Tags":           {Summary: "Returns every tag that an article has.", Errors: []error{articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Unfavorite":     {Summary: "Removes an article from the authenticated user's favorites.", Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Update":         {Summary: "Changes the values that the body has of an article that the authenticated user wrote.", Description: "Its slug stays the same.", Errors: []error{articles.NoArticle{}, articles.NotAuthor{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/notifications.(*Notifications).List": {Summary: "Returns the authenticated user's notifications, the newest first.", Errors: []error{notifications.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Current":              {Summary: "Returns the authenticated user, with a new token.", Errors: []error{users.Unavailable{}, security.Unauthenticated{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Follow":               {Summary: "Makes the authenticated user follow another.", Errors: []error{users.NoProfile{}, users.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Login":                {Summary: "Returns the user with an email and a password, with a new token.", Description: "Each email has a few attempts a minute from each address, which a\nsuccessful one gives back.", Errors: []error{users.BadCredentials{}, users.TooManyLogins{}, users.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Profile":              {Summary: "Returns a user's profile.", Errors: []error{users.NoProfile{}, users.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Register":             {Summary: "Registers a user, and returns them with a token.", Errors: []error{users.Taken{}, users.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Unfollow":             {Summary: "Makes the authenticated user stop following another.", Errors: []error{users.NoProfile{}, users.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Update":               {Summary: "Changes the authenticated user's values that the body has.", Errors: []error{users.Taken{}, users.Unavailable{}, security.Unauthenticated{}}},
 		},
 		Types: map[reflect.Type]openapi.TypeDoc{
-			reflect.TypeFor[articles.Article]():      {Description: "Article is an article, as a viewer sees it."},
-			reflect.TypeFor[articles.ArticleBody]():  {Description: "ArticleBody is an article, as the API sends it."},
-			reflect.TypeFor[articles.ArticlesBody](): {Description: "ArticlesBody is a page of articles, with how many there are in all."},
-			reflect.TypeFor[articles.Comment]():      {Description: "Comment is a comment on an article, as a viewer sees it."},
-			reflect.TypeFor[articles.CommentBody]():  {Description: "CommentBody is a comment, as the API sends it."},
-			reflect.TypeFor[articles.CommentsBody](): {Description: "CommentsBody is the comments of an article."},
-			reflect.TypeFor[articles.ListInput]():    {Fields: map[string]string{"Tag": "only the articles with this tag", "Author": "only the articles of this author, a username", "Favorited": "only the favorites of this user, a username"}},
-			reflect.TypeFor[articles.Page]():         {Description: "Page is where a page of articles starts, and its size.", Fields: map[string]string{"Limit": "how many articles, at most", "Offset": "how many articles to skip"}},
-			reflect.TypeFor[articles.Summary]():      {Description: "Summary is an article without its body, as lists show it."},
-			reflect.TypeFor[articles.TagsBody]():     {Description: "TagsBody is every tag."},
-			reflect.TypeFor[users.Profile]():         {Description: "Profile is a user as others see them."},
-			reflect.TypeFor[users.ProfileBody]():     {Description: "ProfileBody is a profile, as the API sends it."},
-			reflect.TypeFor[users.UserBody]():        {Description: "UserBody is the user that a user sees, with a token."},
+			reflect.TypeFor[articles.Article]():                {Description: "Article is an article, as a viewer sees it."},
+			reflect.TypeFor[articles.ArticleBody]():            {Description: "ArticleBody is an article, as the API sends it."},
+			reflect.TypeFor[articles.ArticlesBody]():           {Description: "ArticlesBody is a page of articles, with how many there are in all."},
+			reflect.TypeFor[articles.Comment]():                {Description: "Comment is a comment on an article, as a viewer sees it."},
+			reflect.TypeFor[articles.CommentBody]():            {Description: "CommentBody is a comment, as the API sends it."},
+			reflect.TypeFor[articles.CommentsBody]():           {Description: "CommentsBody is the comments of an article."},
+			reflect.TypeFor[articles.ListInput]():              {Fields: map[string]string{"Tag": "only the articles with this tag", "Author": "only the articles of this author, a username", "Favorited": "only the favorites of this user, a username"}},
+			reflect.TypeFor[articles.Page]():                   {Description: "Page is where a page of articles starts, and its size.", Fields: map[string]string{"Limit": "how many articles, at most", "Offset": "how many articles to skip"}},
+			reflect.TypeFor[articles.Summary]():                {Description: "Summary is an article without its body, as lists show it."},
+			reflect.TypeFor[articles.TagsBody]():               {Description: "TagsBody is every tag."},
+			reflect.TypeFor[notifications.Notification]():      {Description: "Notification is a notification of an article, as its user sees it.", Fields: map[string]string{"Article": "its slug", "Author": "the username of its author"}},
+			reflect.TypeFor[notifications.NotificationsBody](): {Description: "NotificationsBody is the notifications of a user."},
+			reflect.TypeFor[users.Profile]():                   {Description: "Profile is a user as others see them."},
+			reflect.TypeFor[users.ProfileBody]():               {Description: "ProfileBody is a profile, as the API sends it."},
+			reflect.TypeFor[users.UserBody]():                  {Description: "UserBody is the user that a user sees, with a token."},
 		},
 	}
 }
@@ -157,3 +182,6 @@ func autoConfigOpenAPI(c config.Config) openapi.Config { return c.OpenAPI }
 
 // autoConfigModeration is the Moderation section of the config.
 func autoConfigModeration(c config.Config) moderation.Config { return c.Moderation }
+
+// autoConfigMessenger is the Messenger section of the config.
+func autoConfigMessenger(c config.Config) messenger.Config { return c.Messenger }

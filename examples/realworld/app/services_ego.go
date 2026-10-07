@@ -13,13 +13,17 @@ import (
 
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/goosedb"
+	"github.com/goncini/goncini/lock"
+	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/scheduler"
 	"github.com/goncini/goncini/security"
 
 	"github.com/goncini/goncini/examples/realworld/articles"
 	"github.com/goncini/goncini/examples/realworld/migrations"
 	"github.com/goncini/goncini/examples/realworld/moderation"
+	"github.com/goncini/goncini/examples/realworld/notifications"
 	"github.com/goncini/goncini/examples/realworld/users"
 
 	"github.com/effect-go/effect-go/layer"
@@ -27,22 +31,24 @@ import (
 
 // Services is the app's own services.
 //
-//line services.ego:25
+//line services.ego:29
 var Services = layer.Set(
 	db.Open, db.NewSQL, migrator,
 	security.NewTokens, hasher, firewall, security.NewAccess,
 	users.NewStore, users.NewUsers, logins,
 	articles.NewStore, articles.NewArticles, articles.NewAuthorship,
 	moderation.NewFirewall, moderation.NewModeration,
+	notifications.NewNotifications, notifications.NewSubscriber,
+	transports, messenger.NewBus, locks, scheduler.New,
 	routes, clock,
 )
 
 // routes puts the API under /api, behind the users' firewall, and the
 // moderators' part under /api/admin, behind theirs. goncini generate
 // collects the routes of an app that doesn't provide them itself.
-func routes(users *security.Firewall[*users.User], mods *security.Firewall[*moderation.Moderator], u *users.Users, a *articles.Articles, m *moderation.Moderation) []routing.Routes {
+func routes(users *security.Firewall[*users.User], mods *security.Firewall[*moderation.Moderator], u *users.Users, a *articles.Articles, n *notifications.Notifications, m *moderation.Moderation) []routing.Routes {
 	return []routing.Routes{
-		routing.Prefix("/api", routing.With(users.Middleware, u, a)),
+		routing.Prefix("/api", routing.With(users.Middleware, u, a, n)),
 		routing.Prefix("/api/admin", routing.With(mods.Middleware, m)),
 	}
 }
@@ -63,6 +69,28 @@ func firewall(c security.Config, tokens *security.Tokens, store *users.Store) *s
 // logins limits the logins of each email from each address: 5 a minute.
 func logins(now func() time.Time) *ratelimit.Limiter {
 	return &ratelimit.Limiter{Policy: ratelimit.SlidingWindow{Limit: 5, Interval: time.Minute}, Now: now}
+}
+
+// transports keeps the messages in the database: those to handle, and
+// those that failed for good.
+func transports(pool *sql.DB) (messenger.Transports, error) {
+	async, err := messenger.NewSQLTransport(pool, "async")
+	if err != nil {
+		return nil, err
+	}
+//line services.ego:72
+	failed, err := messenger.NewSQLTransport(pool, "failed")
+	if err != nil {
+		return nil, err
+	}
+//line services.ego:73
+	return messenger.Transports{"async": async, "failed": failed}, nil
+}
+
+// locks keeps the locks in the database, so that one instance of the app
+// runs each scheduled task.
+func locks(pool *sql.DB) (lock.Store, error) {
+	return lock.NewSQLStore(pool)
 }
 
 // clock is the app's clock: the system's.

@@ -1,0 +1,128 @@
+// Package notifications tells users of the articles that the authors they
+// follow publish. Publishing dispatches an event; the Subscriber sends a
+// message for each, which a worker handles outside the request, writing a
+// notification for each follower. A daily task prunes the old ones.
+package notifications
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/event"
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/scheduler"
+	"github.com/goncini/goncini/security"
+
+	"github.com/goncini/goncini/examples/realworld/articles"
+	"github.com/goncini/goncini/examples/realworld/users"
+)
+
+// NotifyFollowers is the message that writes the followers' notifications
+// of an article.
+type NotifyFollowers struct {
+	Slug     string `json:"slug"`
+	AuthorID int64  `json:"authorId"`
+}
+
+// NotificationError is everything the notifications endpoints fail with.
+error NotificationError {
+	// Unavailable means that the store failed.
+	Unavailable{ Cause error } "the notifications are unavailable"
+}
+
+func Problem(err NotificationError) httpkernel.Problem {
+	return match err {
+		nil            => httpkernel.Problem{}
+		Unavailable(_) => httpkernel.Problem{Status: http.StatusServiceUnavailable}
+	}
+}
+
+var Problems = httpkernel.Map[NotificationError](Problem)
+
+// Notification is a notification of an article, as its user sees it.
+type Notification struct {
+	Article   string    `json:"article"` // its slug
+	Author    string    `json:"author"`  // the username of its author
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// Notifications writes, serves and prunes the notifications.
+type Notifications struct {
+	sql *db.SQL
+	now func() time.Time
+}
+
+func NewNotifications(s *db.SQL, now func() time.Time) *Notifications {
+	return &Notifications{sql: s, now: now}
+}
+
+// Handlers handles NotifyFollowers, which goes to the async transport.
+func (n *Notifications) Handlers(b *messenger.Bus) {
+	messenger.Handle(b, n.notify)
+	messenger.Route[NotifyFollowers](b, "async")
+}
+
+// notify writes a notification of the article for each follower of its
+// author. Handled twice, as a message can be, it writes them once.
+func (n *Notifications) notify(ctx context.Context, m NotifyFollowers) error {
+	_, err := n.sql.Conn(ctx).ExecContext(ctx, `INSERT INTO notifications (user_id, article_slug, author_id, created_at)
+		SELECT f.follower_id, ?, ?, ? FROM follows f WHERE f.followed_id = ?
+		AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.user_id = f.follower_id AND n.article_slug = ?)`,
+		m.Slug, m.AuthorID, n.now().UnixMicro(), m.AuthorID, m.Slug)
+	return err
+}
+
+// Schedule prunes the notifications older than 30 days, every day.
+func (n *Notifications) Schedule(s *scheduler.Scheduler) {
+	s.Add("notifications:prune", scheduler.Every(24*time.Hour), (ctx context.Context) => n.prune(ctx))
+}
+
+func (n *Notifications) prune(ctx context.Context) error {
+	_, err := n.sql.Conn(ctx).ExecContext(ctx, "DELETE FROM notifications WHERE created_at < ?", n.now().AddDate(0, 0, -30).UnixMicro())
+	return err
+}
+
+// Routes registers the endpoint.
+func (n *Notifications) Routes(r *routing.Router) {
+	r.With(security.Required).Get("/notifications", httpkernel.Endpoint(n.List)).Name("notification_list")
+}
+
+// NotificationsBody is the notifications of a user.
+type NotificationsBody struct {
+	Notifications []Notification `json:"notifications"`
+}
+
+// List returns the authenticated user's notifications, the newest first.
+effect (n *Notifications) List(in struct{}) (NotificationsBody, NotificationError) {
+	list := check db.All(ctx, n.sql.Conn(ctx), scanNotification,
+		"SELECT n.article_slug, u.username, n.created_at FROM notifications n JOIN users u ON u.id = n.author_id WHERE n.user_id = ? ORDER BY n.created_at DESC, n.id DESC LIMIT 100",
+		users.Viewer(ctx)) as Unavailable
+	return NotificationsBody{list}, nil
+}
+
+func scanNotification(row db.Scanner) (Notification, error) {
+	var nt Notification
+	var created int64
+	err := row.Scan(&nt.Article, &nt.Author, &created)
+	nt.CreatedAt = time.UnixMicro(created).UTC()
+	return nt, err
+}
+
+// Subscriber sends NotifyFollowers when an article is published.
+type Subscriber struct {
+	bus *messenger.Bus
+}
+
+func NewSubscriber(bus *messenger.Bus) *Subscriber {
+	return &Subscriber{bus: bus}
+}
+
+func (s *Subscriber) Subscribe(d *event.Dispatcher) {
+	event.On(d, func(ctx context.Context, e *articles.Published) error {
+		return messenger.Dispatch(ctx, s.bus, NotifyFollowers{Slug: e.Slug, AuthorID: e.AuthorID})
+	})
+}

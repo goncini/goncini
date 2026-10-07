@@ -1,0 +1,39 @@
+package notifications_test
+
+import (
+	"testing"
+
+	"github.com/goncini/goncini/webtest"
+
+	"github.com/goncini/goncini/examples/realworld/app"
+	"github.com/goncini/goncini/examples/realworld/config"
+)
+
+// TestNotifications is M3's fifth gate: publishing an article dispatches an
+// event, whose subscriber sends a message, which a worker handles outside
+// the request, notifying the author's followers.
+func TestNotifications(t *testing.T) {
+	a := webtest.Boot(t, config.Load, app.Build)
+	webtest.Run(t, a, "db:migrate")
+	c := webtest.NewClient(t, a)
+	token := func(name string) *webtest.Client {
+		var u struct {
+			User struct {
+				Token string `json:"token"`
+			} `json:"user"`
+		}
+		c.Post("/api/users", `{"user":{"username":"`+name+`","email":"`+name+`@example.com","password":"a password"}}`).Status(201).JSON(&u)
+		return c.WithHeader("Authorization", "Token "+u.User.Token)
+	}
+	bob, ann, cat := token("bob"), token("ann"), token("cat")
+	ann.Post("/api/profiles/bob/follow", nil).Status(200)
+	bob.Post("/api/articles", `{"article":{"title":"News","description":"d","body":"b"}}`).Status(201)
+
+	ann.Get("/api/notifications").Status(200).Contains(`{"notifications":[]}`) // not yet: a worker writes it
+	webtest.Run(t, a, "messenger:failed:show")                                 // nothing failed
+	out := webtest.Run(t, a, "messenger:consume", "-limit", "1")
+	t.Log(out)
+	ann.Get("/api/notifications").Status(200).Contains(`"article":"news","author":"bob"`)
+	cat.Get("/api/notifications").Status(200).Contains(`{"notifications":[]}`) // cat follows no one
+	c.Get("/api/notifications").Status(401)
+}

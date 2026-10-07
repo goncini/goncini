@@ -15,7 +15,10 @@ import (
 	"github.com/goncini/goncini/examples/realworld/conduit"
 	"github.com/goncini/goncini/examples/realworld/config"
 	"github.com/goncini/goncini/examples/realworld/moderation"
+	"github.com/goncini/goncini/examples/realworld/notifications"
 	"github.com/goncini/goncini/examples/realworld/users"
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/scheduler"
 	"github.com/goncini/goncini/security"
 )
 
@@ -53,20 +56,29 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	authorship := articles.NewAuthorship()
 	v2 := autoVoters(authorship)
 	access := security.NewAccess(config2, v2)
-	articles2 := articles.NewArticles(store2, access)
-	moderation2 := moderation.NewModeration(articles2, access)
-	v3 := routes(firewall2, firewall3, users2, articles2, moderation2)
-	router := goncini.NewRouter(v3)
-	v4 := goncini.NewMiddleware()
-	v5 := autoProblems()
-	renderer := conduit.NewRenderer()
-	validator := conduit.NewValidator()
-	v6 := autoSubscribers()
-	dispatcher := goncini.NewDispatcher(v6)
+	config5 := autoConfigMessenger(cfg)
+	transports2, err := transports(db2)
+	if err != nil {
+		return nil, fmt.Errorf("transports: %w", err)
+	}
+	notifications2 := notifications.NewNotifications(sql2, v)
+	v3 := autoHandlers(notifications2)
 	log := autoConfigLog(cfg)
 	handler := goncini.NewLogHandler(log)
 	logger := goncini.NewLogger(handler)
-	kernel, err := goncini.NewKernel(http, router, v4, v5, renderer, validator, dispatcher, logger)
+	bus := messenger.NewBus(config5, transports2, v3, logger)
+	subscriber := notifications.NewSubscriber(bus)
+	v4 := autoSubscribers(subscriber)
+	dispatcher := goncini.NewDispatcher(v4)
+	articles2 := articles.NewArticles(store2, access, dispatcher)
+	moderation2 := moderation.NewModeration(articles2, access)
+	v5 := routes(firewall2, firewall3, users2, articles2, notifications2, moderation2)
+	router := goncini.NewRouter(v5)
+	v6 := goncini.NewMiddleware()
+	v7 := autoProblems()
+	renderer := conduit.NewRenderer()
+	validator := conduit.NewValidator()
+	kernel, err := goncini.NewKernel(http, router, v6, v7, renderer, validator, dispatcher, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
@@ -75,15 +87,21 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v7 := autoCommands(migrator2)
-	v8 := autoChecks(db2)
-	v9 := autoServices()
-	config5 := autoConfigOpenAPI(cfg)
+	store3, err := locks(db2)
+	if err != nil {
+		return nil, fmt.Errorf("locks: %w", err)
+	}
+	v8 := autoTasks(notifications2)
+	scheduler2 := scheduler.New(store3, v8, logger)
+	v9 := autoCommands(migrator2, bus, scheduler2)
+	v10 := autoChecks(db2)
+	v11 := autoServices()
+	config6 := autoConfigOpenAPI(cfg)
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config5, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config6, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
-	app := goncini.NewApp(kernel, server, router, v7, v8, v9, logger, document, dispatcher)
+	app := goncini.NewApp(kernel, server, router, v9, v10, v11, logger, document, dispatcher)
 	return app, nil
 }

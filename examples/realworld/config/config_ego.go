@@ -8,6 +8,7 @@ import (
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/cors"
 	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/openapi"
 
 	"github.com/goncini/goncini/examples/realworld/moderation"
@@ -16,7 +17,7 @@ import (
 
 // Config is the API's config, one section per part of the app.
 //
-//line config.ego:16
+//line config.ego:17
 type Config struct {
 	HTTP       goncini.HTTP
 	Log        goncini.Log
@@ -24,6 +25,7 @@ type Config struct {
 	Security   security.Config
 	OpenAPI    openapi.Config
 	Moderation moderation.Config
+	Messenger  messenger.Config
 }
 
 // Load returns the config of env: what every environment shares, then what

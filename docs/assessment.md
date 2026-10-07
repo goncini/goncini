@@ -237,6 +237,8 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 4. **One instance runs each task.** Two app instances sharing a database run a scheduled task each period, and the lock lets exactly one of them run it each time.
 5. **RealWorld uses them:** publishing an article dispatches an event, whose subscribers send a message that a worker handles, outside the request.
 
+> **Status (2026-10-07):** built: [`event`](../event) with kernel events, [`lock`](../lock), [`messenger`](../messenger) and [`scheduler`](../scheduler). The five gates pass: `TestKilledWorkerLosesNothing` and `TestSIGTERMDrains` run workers as processes; `TestRetriesAndFailures` and `TestFailedCommands`; `TestOneInstancePerTickInSQL`; and RealWorld's `TestNotifications`.
+
 **Decisions taken on the user's behalf:**
 
 - goncini's own SQL stores (locks, then Messenger's transport) work with SQLite and PostgreSQL, the databases its examples and adapters test; MySQL waits for an app that needs it. They create their tables when first used, as Messenger's Doctrine transport does by default, or leave it to the app's migrations.

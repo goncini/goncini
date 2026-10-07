@@ -1,6 +1,7 @@
 package articles
 
 import (
+	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
@@ -12,10 +13,18 @@ import (
 type Articles struct {
 	store  *Store
 	access *security.Access
+	events *event.Dispatcher
 }
 
-func NewArticles(store *Store, access *security.Access) *Articles {
-	return &Articles{store: store, access: access}
+func NewArticles(store *Store, access *security.Access, events *event.Dispatcher) *Articles {
+	return &Articles{store: store, access: access, events: events}
+}
+
+// Published is the event of an article published, for the features that
+// care, such as notifications.
+type Published struct {
+	Slug     string
+	AuthorID int64
 }
 
 // Routes registers the endpoints.
@@ -121,6 +130,7 @@ effect (a *Articles) Create(in CreateInput) (httpkernel.Created[ArticleBody], Ar
 	art := Article{Summary{Title: b.Title, Description: b.Description, AuthorID: users.Viewer(ctx)}, b.Body}
 	slug := check a.store.Save(art, b.TagList ?? []string{}) as Unavailable
 	created := check a.find(slug) ""
+	check event.Dispatch(ctx, a.events, &Published{Slug: slug, AuthorID: created.AuthorID}) as Unavailable
 	return httpkernel.Created[ArticleBody]{Body: ArticleBody{created}}, nil
 }
 

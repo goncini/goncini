@@ -2001,6 +2001,93 @@
         ]
       }
     },
+    "/api/notifications": {
+      "get": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Returns the authenticated user's notifications, the newest first.",
+        "operationId": "notification_list",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationsBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "headers": {
+              "Www-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "InvalidToken": {
+                    "summary": "invalid token: it isn't one of the API's",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is invalid"
+                        ]
+                      }
+                    }
+                  },
+                  "Unauthenticated": {
+                    "summary": "authentication is required",
+                    "value": {
+                      "errors": {
+                        "token": [
+                          "is missing"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Errors"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the notifications are unavailable",
+                    "value": {
+                      "errors": {
+                        "body": [
+                          "Service Unavailable"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Token": []
+          }
+        ]
+      }
+    },
     "/api/profiles/{username}": {
       "get": {
         "tags": [
@@ -3404,6 +3491,44 @@
           "errors"
         ]
       },
+      "Notification": {
+        "type": "object",
+        "description": "Notification is a notification of an article, as its user sees it.",
+        "properties": {
+          "article": {
+            "type": "string",
+            "description": "its slug"
+          },
+          "author": {
+            "type": "string",
+            "description": "the username of its author"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "article",
+          "author",
+          "createdAt"
+        ]
+      },
+      "NotificationsBody": {
+        "type": "object",
+        "description": "NotificationsBody is the notifications of a user.",
+        "properties": {
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Notification"
+            }
+          }
+        },
+        "required": [
+          "notifications"
+        ]
+      },
       "Profile": {
         "type": "object",
         "description": "Profile is a user as others see them.",
@@ -3572,6 +3697,9 @@
     },
     {
       "name": "Articles"
+    },
+    {
+      "name": "Notifications"
     }
   ]
 }

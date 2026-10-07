@@ -322,6 +322,15 @@ runs in one instance of an app: the one that takes the tick's lock.
 next runs. Lock stores now prune expired locks, which keys used once, as
 ticks are, would leave.
 
+### RealWorld's notifications (M3)
+
+Publishing an article dispatches `articles.Published`; the notifications'
+subscriber sends a `NotifyFollowers` message to a SQL queue, which a worker
+handles outside the request, writing a notification for each follower of
+the author, once even if handled twice. `GET /api/notifications` lists
+them, and a daily task, locked to one instance, prunes those older than 30
+days.
+
 ### The RealWorld app
 
 [`examples/realworld`](examples/realworld) is the RealWorld "Conduit" API,
