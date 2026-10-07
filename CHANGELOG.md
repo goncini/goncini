@@ -333,6 +333,10 @@ with their providers and what they need, which `debug:container` lists.
 
 ### Found while building
 
+- **M2:** the repository's `.gitignore` ignored `*.test`, Go's test
+  binaries, and so the examples' `.env.test` files: CI ran their tests with
+  the dev `.env`, on a database file. They are committed now.
+
 - **Reviews:** independent reviews found 15 defects in `httpkernel` and 9 in
   `routing`, each reproduced and fixed with a regression test. Among them:
   - problems that failed to encode were sent as an empty 200;
