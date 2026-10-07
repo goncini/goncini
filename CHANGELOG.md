@@ -322,6 +322,22 @@ runs in one instance of an app: the one that takes the tick's lock.
 next runs. Lock stores now prune expired locks, which keys used once, as
 ticks are, would leave.
 
+### cache (M4)
+
+Symfony's Cache, with tags: `cache.Get(ctx, c, key, compute)` returns the
+value kept for key, or computes, keeps and returns it, with the TTL and
+tags that the computation gives its `Item`. Tags are versions, so stores
+only get, set and delete bytes, and `Invalidate` forgets every value of a
+tag at once. Concurrent misses of a key in a process compute it once.
+`MemoryStore` evicts the least recently used values; `cache/rediscache`, a
+module of its own, keeps them in Redis, which an app's instances share,
+and is checked before serving. `cache.Memory` and `rediscache.Layer` are
+the sets to wire; `storetest` checks a store, as it checks both.
+
+RealWorld caches its tags and the article lists that anonymous readers
+get; the articles' changes, and their authors' through a `users.Updated`
+event, invalidate them, and the Hurl suite runs through the cache.
+
 ### Bridges as layers
 
 goncini's packages and adapters export what an app lists in its

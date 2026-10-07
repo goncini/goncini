@@ -67,3 +67,27 @@ jobs:
       - run: go test -race ./...
       - name: generated code is up to date
         run: go tool ego generate -check ./...
+
+  rediscache:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:8
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 5s --health-retries 20
+    env:
+      REDISCACHE_TEST_URL: redis://localhost:6379/0
+    defaults:
+      run:
+        working-directory: cache/rediscache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache-dependency-path: cache/rediscache/go.sum
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: generated code is up to date
+        run: go tool ego generate -check ./...

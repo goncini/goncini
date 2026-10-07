@@ -1,0 +1,17 @@
+package app
+
+import (
+	"database/sql"
+
+	"github.com/goncini/goncini"
+)
+
+// Test is the API, with what tests reach into.
+type Test struct {
+	*goncini.App
+	DB *sql.DB
+}
+
+func newTest(app *goncini.App, db *sql.DB) *Test {
+	return &Test{App: app, DB: db}
+}

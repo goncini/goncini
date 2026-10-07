@@ -1,0 +1,80 @@
+// Package rediscache keeps goncini's cache in Redis, which the instances of
+// an app share:
+//
+//	var Services = layer.Set(rediscache.Layer, …)
+//
+// with a rediscache.Config section in the app's config, whose URL is a
+// secret: redis://user:password@host:6379/0.
+package rediscache
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/effect-go/effect-go/layer"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/goncini/goncini/cache"
+)
+
+// Config says which Redis to use.
+type Config struct {
+	// URL is the Redis server's, as redis.ParseURL takes it.
+	URL string
+}
+
+// Layer is the providers of a cache in Redis: the client, closed with the
+// app, its store, and the cache.
+var Layer = layer.Set(NewClient, NewStore, cache.New)
+
+// NewClient returns the client of c.URL, which doesn't connect until it is
+// used: the store's PingContext checks it before serving.
+func NewClient(c Config) (*redis.Client, func() error, error) {
+	if c.URL == "" {
+		return nil, nil, errors.New("rediscache: Config.URL is empty")
+	}
+	opts := check redis.ParseURL(c.URL) ""
+	client := redis.NewClient(opts)
+	return client, client.Close, nil
+}
+
+// Store is a cache.Store in Redis.
+type Store struct {
+	Client redis.UniversalClient
+}
+
+// NewStore returns the store of client.
+func NewStore(client *redis.Client) *Store {
+	return &Store{Client: client}
+}
+
+func (s *Store) Get(ctx context.Context, keys ...string) (map[string][]byte, error) {
+	out := map[string][]byte{}
+	if len(keys) == 0 {
+		return out, nil
+	}
+	values := check s.Client.MGet(ctx, keys...).Result() ""
+	for i, v := range values {
+		if str, ok := v.(string); ok {
+			out[keys[i]] = []byte(str)
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	return s.Client.Set(ctx, key, value, ttl).Err()
+}
+
+func (s *Store) Delete(ctx context.Context, keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	return s.Client.Del(ctx, keys...).Err()
+}
+
+// PingContext checks that Redis answers: an app checks it before serving.
+func (s *Store) PingContext(ctx context.Context) error {
+	return s.Client.Ping(ctx).Err()
+}

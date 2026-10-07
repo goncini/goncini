@@ -1,0 +1,49 @@
+package rediscache_test
+
+import (
+	"context"
+	"os"
+	"testing"
+
+	"github.com/goncini/goncini/cache"
+	"github.com/goncini/goncini/cache/rediscache"
+	"github.com/goncini/goncini/cache/storetest"
+)
+
+// store returns a store on the Redis of REDISCACHE_TEST_URL, emptied, or
+// skips the test without one.
+func store(t *testing.T) *rediscache.Store {
+	url := os.Getenv("REDISCACHE_TEST_URL")
+	if url == "" {
+		t.Skip("REDISCACHE_TEST_URL names no Redis to test with")
+	}
+	client, closeClient := must rediscache.NewClient(rediscache.Config{URL: url})
+	t.Cleanup(() => { closeClient() })
+	s := rediscache.NewStore(client)
+	must s.Client.FlushDB(context.Background()).Err()
+	return s
+}
+
+func TestStore(t *testing.T) {
+	storetest.Run(t, (t *testing.T) => store(t))
+}
+
+func TestCache(t *testing.T) {
+	s := store(t)
+	must s.PingContext(context.Background())
+	c := cache.New(cache.Config{Prefix: "test:"}, s)
+	ctx := context.Background()
+	calls := 0
+	compute := func(ctx context.Context, item *cache.Item) ([]string, error) {
+		calls++
+		item.Tags = []string{"articles"}
+		return []string{"go"}, nil
+	}
+	must cache.Get(ctx, c, "tags", compute)
+	must cache.Get(ctx, c, "tags", compute)
+	must c.Invalidate(ctx, "articles")
+	got := must cache.Get(ctx, c, "tags", compute)
+	if calls != 2 || got[0] != "go" {
+		t.Errorf("calls %d, got %v", calls, got)
+	}
+}

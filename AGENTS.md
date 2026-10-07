@@ -285,6 +285,21 @@ func (n *Notifications) Schedule(s *scheduler.Scheduler) {
 A test runs the worker for the messages it expects:
 `webtest.Run(t, a, "messenger:consume", "-limit", "1")`.
 
+## Caching
+
+```go
+tags := check cache.Get(ctx, a.cache, "tags", func(ctx context.Context, item *cache.Item) ([]string, error) {
+	item.Tags = []string{"articles"} // what the value depends on
+	return a.store.Tags(ctx)
+}) as Unavailable
+
+check a.cache.Invalidate(ctx, "articles") as Unavailable // after changing articles
+```
+
+Cache only what is the same for everyone who gets it, such as what
+anonymous readers see, and invalidate its tags wherever what it depends on
+changes.
+
 ## Wiring
 
 `app/inject.go` builds the app with effect-go's `layer`: providers are

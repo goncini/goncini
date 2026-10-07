@@ -10,6 +10,7 @@ import (
 
 	"github.com/effect-go/effect-go/scope"
 	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/cache"
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/examples/realworld/articles"
 	"github.com/goncini/goncini/examples/realworld/conduit"
@@ -49,29 +50,33 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	hasher2 := hasher()
 	v := clock()
 	limiter := logins(v)
-	users2, err := users.NewUsers(store, hasher2, tokens, limiter)
+	config5 := autoDefaultCacheConfig()
+	memoryStore := cache.NewMemoryStore()
+	cache2 := cache.New(config5, memoryStore)
+	invalidator := articles.NewInvalidator(cache2)
+	config6 := autoConfigMessenger(cfg)
+	transports, err := messenger.NewSQLTransports(db2, config6)
+	if err != nil {
+		return nil, fmt.Errorf("NewSQLTransports: %w", err)
+	}
+	notifications2 := notifications.NewNotifications(sql2, v)
+	v2 := autoHandlers(notifications2)
+	log := autoConfigLog(cfg)
+	handler := goncini.NewLogHandler(log)
+	logger := goncini.NewLogger(handler)
+	bus := messenger.NewBus(config6, transports, v2, logger)
+	subscriber := notifications.NewSubscriber(bus)
+	v3 := autoSubscribers(invalidator, subscriber)
+	dispatcher := goncini.NewDispatcher(v3)
+	users2, err := users.NewUsers(store, hasher2, tokens, limiter, dispatcher)
 	if err != nil {
 		return nil, fmt.Errorf("users.NewUsers: %w", err)
 	}
 	store2 := articles.NewStore(sql2, v)
 	authorship := articles.NewAuthorship()
-	v2 := autoVoters(authorship)
-	access := security.NewAccess(config2, v2)
-	config5 := autoConfigMessenger(cfg)
-	transports, err := messenger.NewSQLTransports(db2, config5)
-	if err != nil {
-		return nil, fmt.Errorf("NewSQLTransports: %w", err)
-	}
-	notifications2 := notifications.NewNotifications(sql2, v)
-	v3 := autoHandlers(notifications2)
-	log := autoConfigLog(cfg)
-	handler := goncini.NewLogHandler(log)
-	logger := goncini.NewLogger(handler)
-	bus := messenger.NewBus(config5, transports, v3, logger)
-	subscriber := notifications.NewSubscriber(bus)
-	v4 := autoSubscribers(subscriber)
-	dispatcher := goncini.NewDispatcher(v4)
-	articles2 := articles.NewArticles(store2, access, dispatcher)
+	v4 := autoVoters(authorship)
+	access := security.NewAccess(config2, v4)
+	articles2 := articles.NewArticles(store2, access, dispatcher, cache2)
 	moderation2 := moderation.NewModeration(articles2, access)
 	v5 := routes(firewall2, firewall3, users2, articles2, notifications2, moderation2)
 	router := goncini.NewRouter(v5)
@@ -88,23 +93,114 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	config6 := autoDefaultSchedulerConfig()
+	config7 := autoDefaultSchedulerConfig()
 	sqlStore, err := lock.NewSQLStore(db2)
 	if err != nil {
 		return nil, fmt.Errorf("NewSQLStore: %w", err)
 	}
 	v8 := autoTasks(notifications2)
-	scheduler2 := scheduler.New(config6, sqlStore, v8, logger)
+	scheduler2 := scheduler.New(config7, sqlStore, v8, logger)
 	v9 := autoCommands(migrator2, bus, scheduler2)
 	v10 := autoChecks(db2)
 	v11 := autoServices()
-	config7 := autoConfigOpenAPI(cfg)
+	config8 := autoConfigOpenAPI(cfg)
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config7, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config8, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
 	v12 := autoBackground(bus, scheduler2)
 	app := goncini.NewApp(kernel, server, router, v9, v10, v11, logger, document, dispatcher, v12)
 	return app, nil
+}
+
+// BuildTest builds the API for a test, with its database, which a test
+// reaches into to change what the API doesn't see.
+func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config) (*Test, error) {
+	http := autoConfigHTTP(cfg)
+	config2 := autoConfigSecurity(cfg)
+	tokens, err := security.NewTokens(config2)
+	if err != nil {
+		return nil, fmt.Errorf("security.NewTokens: %w", err)
+	}
+	config3 := autoConfigDB(cfg)
+	db2, cleanup, err := db.Open(config3)
+	if err != nil {
+		return nil, fmt.Errorf("db.Open: %w", err)
+	}
+	s.Defer(func(context.Context) error { return cleanup() })
+	sql2 := db.NewSQL(db2)
+	store := users.NewStore(sql2)
+	firewall2 := firewall(config2, tokens, store)
+	config4 := autoConfigModeration(cfg)
+	firewall3, err := moderation.NewFirewall(config4)
+	if err != nil {
+		return nil, fmt.Errorf("moderation.NewFirewall: %w", err)
+	}
+	hasher2 := hasher()
+	v := clock()
+	limiter := logins(v)
+	config5 := autoDefaultCacheConfig()
+	memoryStore := cache.NewMemoryStore()
+	cache2 := cache.New(config5, memoryStore)
+	invalidator := articles.NewInvalidator(cache2)
+	config6 := autoConfigMessenger(cfg)
+	transports, err := messenger.NewSQLTransports(db2, config6)
+	if err != nil {
+		return nil, fmt.Errorf("NewSQLTransports: %w", err)
+	}
+	notifications2 := notifications.NewNotifications(sql2, v)
+	v2 := autoHandlers(notifications2)
+	log := autoConfigLog(cfg)
+	handler := goncini.NewLogHandler(log)
+	logger := goncini.NewLogger(handler)
+	bus := messenger.NewBus(config6, transports, v2, logger)
+	subscriber := notifications.NewSubscriber(bus)
+	v3 := autoSubscribers(invalidator, subscriber)
+	dispatcher := goncini.NewDispatcher(v3)
+	users2, err := users.NewUsers(store, hasher2, tokens, limiter, dispatcher)
+	if err != nil {
+		return nil, fmt.Errorf("users.NewUsers: %w", err)
+	}
+	store2 := articles.NewStore(sql2, v)
+	authorship := articles.NewAuthorship()
+	v4 := autoVoters(authorship)
+	access := security.NewAccess(config2, v4)
+	articles2 := articles.NewArticles(store2, access, dispatcher, cache2)
+	moderation2 := moderation.NewModeration(articles2, access)
+	v5 := routes(firewall2, firewall3, users2, articles2, notifications2, moderation2)
+	router := goncini.NewRouter(v5)
+	v6 := goncini.NewMiddleware()
+	v7 := autoProblems()
+	renderer := conduit.NewRenderer()
+	validator := conduit.NewValidator()
+	kernel, err := goncini.NewKernel(http, router, v6, v7, renderer, validator, dispatcher, logger)
+	if err != nil {
+		return nil, fmt.Errorf("NewKernel: %w", err)
+	}
+	server := goncini.NewServer(http, kernel, logger)
+	migrator2, err := migrator(db2)
+	if err != nil {
+		return nil, fmt.Errorf("migrator: %w", err)
+	}
+	config7 := autoDefaultSchedulerConfig()
+	sqlStore, err := lock.NewSQLStore(db2)
+	if err != nil {
+		return nil, fmt.Errorf("NewSQLStore: %w", err)
+	}
+	v8 := autoTasks(notifications2)
+	scheduler2 := scheduler.New(config7, sqlStore, v8, logger)
+	v9 := autoCommands(migrator2, bus, scheduler2)
+	v10 := autoChecks(db2)
+	v11 := autoServices()
+	config8 := autoConfigOpenAPI(cfg)
+	annotations := autoOpenAPI()
+	document, err := goncini.NewOpenAPI(config8, router, kernel, annotations)
+	if err != nil {
+		return nil, fmt.Errorf("NewOpenAPI: %w", err)
+	}
+	v12 := autoBackground(bus, scheduler2)
+	app := goncini.NewApp(kernel, server, router, v9, v10, v11, logger, document, dispatcher, v12)
+	test := newTest(app, db2)
+	return test, nil
 }

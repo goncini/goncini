@@ -1,6 +1,9 @@
 package articles
 
 import (
+	"context"
+
+	"github.com/goncini/goncini/cache"
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
@@ -14,10 +17,11 @@ type Articles struct {
 	store  *Store
 	access *security.Access
 	events *event.Dispatcher
+	cache  *cache.Cache // what anonymous readers get, tagged "articles"
 }
 
-func NewArticles(store *Store, access *security.Access, events *event.Dispatcher) *Articles {
-	return &Articles{store: store, access: access, events: events}
+func NewArticles(store *Store, access *security.Access, events *event.Dispatcher, c *cache.Cache) *Articles {
+	return &Articles{store: store, access: access, events: events, cache: c}
 }
 
 // Published is the event of an article published, for the features that
@@ -73,8 +77,19 @@ type ListInput struct {
 // their bodies.
 effect (a *Articles) List(in ListInput) (ArticlesBody, ArticleError) {
 	f := Filter{Tag: in.Tag, Author: in.Author, Favorited: in.Favorited}
-	list, count := check a.store.List(users.Viewer(ctx), f, in.Limit, in.Offset) as Unavailable
-	return ArticlesBody{list, count}, nil
+	list := func(ctx context.Context, item *cache.Item) (ArticlesBody, error) {
+		item.Tags = []string{"articles"}
+		list, count := check a.store.List(ctx, users.Viewer(ctx), f, in.Limit, in.Offset) ""
+		return ArticlesBody{list, count}, nil
+	}
+	if users.Viewer(ctx) != 0 {
+		// What a user sees depends on them: favorites, follows.
+		body := check list(ctx, &cache.Item{}) as Unavailable
+		return body, nil
+	}
+	key := f"articles:{f.Tag:q}:{f.Author:q}:{f.Favorited:q}:{in.Limit}:{in.Offset}"
+	body := check cache.Get(ctx, a.cache, key, list) as Unavailable
+	return body, nil
 }
 
 // Feed returns the articles of the authors that the authenticated user
@@ -130,6 +145,7 @@ effect (a *Articles) Create(in CreateInput) (httpkernel.Created[ArticleBody], Ar
 	b := in.Body.Article
 	art := Article{Summary{Title: b.Title, Description: b.Description, AuthorID: users.Viewer(ctx)}, b.Body}
 	slug := check a.store.Save(art, b.TagList ?? []string{}) as Unavailable
+	check a.cache.Invalidate(ctx, "articles") as Unavailable
 	created := check a.find(slug) ""
 	check event.Dispatch(ctx, a.events, &Published{ID: created.ID, Slug: slug, AuthorID: created.AuthorID}) as Unavailable
 	return httpkernel.Created[ArticleBody]{Body: ArticleBody{created}}, nil
@@ -184,6 +200,7 @@ effect (a *Articles) Update(in UpdateInput) (ArticleBody, ArticleError) {
 		tags = b.TagList.Value ?? []string{}
 	}
 	check a.store.Save(art, tags) as Unavailable
+	check a.cache.Invalidate(ctx, "articles") as Unavailable
 	updated := check a.find(art.Slug) ""
 	return ArticleBody{updated}, nil
 }
@@ -193,6 +210,7 @@ effect (a *Articles) Update(in UpdateInput) (ArticleBody, ArticleError) {
 effect (a *Articles) Delete(in SlugInput) (httpkernel.NoContent, ArticleError) {
 	art := check a.findGranted(in.Slug, "delete") ""
 	check a.store.Delete(art.ID) as Unavailable
+	check a.cache.Invalidate(ctx, "articles") as Unavailable
 	return httpkernel.NoContent{}, nil
 }
 
@@ -210,6 +228,7 @@ effect (a *Articles) Unfavorite(in SlugInput) (ArticleBody, ArticleError) {
 effect (a *Articles) favorite(slug string, favorite bool) (ArticleBody, ArticleError) {
 	art := check a.find(slug) ""
 	check a.store.Favorite(users.Viewer(ctx), art.ID, favorite) as Unavailable
+	check a.cache.Invalidate(ctx, "articles") as Unavailable // their counts
 	updated := check a.find(slug) ""
 	return ArticleBody{updated}, nil
 }
@@ -221,6 +240,25 @@ type TagsBody struct {
 
 // Tags returns every tag that an article has.
 effect (a *Articles) Tags(in struct{}) (TagsBody, ArticleError) {
-	tags := check a.store.Tags() as Unavailable
+	tags := check cache.Get(ctx, a.cache, "tags", func(ctx context.Context, item *cache.Item) ([]string, error) {
+		item.Tags = []string{"articles"}
+		return a.store.Tags(ctx)
+	}) as Unavailable
 	return TagsBody{tags}, nil
+}
+
+// Invalidator forgets what anonymous readers see of the articles when it
+// changes elsewhere: their authors' profiles.
+type Invalidator struct {
+	cache *cache.Cache
+}
+
+func NewInvalidator(c *cache.Cache) *Invalidator {
+	return &Invalidator{cache: c}
+}
+
+func (i *Invalidator) Subscribe(d *event.Dispatcher) {
+	event.On(d, func(ctx context.Context, e *users.Updated) error {
+		return i.cache.Invalidate(ctx, "articles")
+	})
 }

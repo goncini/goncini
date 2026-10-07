@@ -1,0 +1,125 @@
+package cache_test
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/goncini/goncini/cache"
+	"github.com/goncini/goncini/cache/storetest"
+)
+
+func TestMemoryStore(t *testing.T) {
+	storetest.Run(t, (t *testing.T) => cache.NewMemoryStore())
+}
+
+func TestEviction(t *testing.T) {
+	ctx := context.Background()
+	s := &cache.MemoryStore{MaxEntries: 2}
+	s.Set(ctx, "a", []byte("1"), 0)
+	s.Set(ctx, "b", []byte("2"), 0)
+	s.Get(ctx, "a") // a is used: b goes
+	s.Set(ctx, "c", []byte("3"), 0)
+	got := must s.Get(ctx, "a", "b", "c")
+	if len(got) != 2 || got["b"] != nil {
+		t.Errorf("kept %q", got)
+	}
+}
+
+type tags struct {
+	Names []string `json:"names"`
+}
+
+func TestGetAndInvalidate(t *testing.T) {
+	ctx := context.Background()
+	c := cache.New(cache.Config{Prefix: "app:"}, cache.NewMemoryStore())
+	computed := 0
+	compute := func(ctx context.Context, item *cache.Item) (tags, error) {
+		computed++
+		item.Tags = []string{"articles"}
+		return tags{Names: []string{"go", "ego"}}, nil
+	}
+	first := must cache.Get(ctx, c, "tags", compute)
+	second := must cache.Get(ctx, c, "tags", compute)
+	if computed != 1 || len(second.Names) != 2 || second.Names[1] != first.Names[1] {
+		t.Fatalf("computed %d times: %v", computed, second)
+	}
+	must c.Invalidate(ctx, "users") // another tag
+	must cache.Get(ctx, c, "tags", compute)
+	must c.Invalidate(ctx, "articles")
+	must cache.Get(ctx, c, "tags", compute)
+	if computed != 2 {
+		t.Errorf("computed %d times, want 2", computed)
+	}
+	must c.Delete(ctx, "tags")
+	must cache.Get(ctx, c, "tags", compute)
+	if computed != 3 {
+		t.Errorf("computed %d times after a delete, want 3", computed)
+	}
+}
+
+func TestErrorsAndNoCache(t *testing.T) {
+	ctx := context.Background()
+	c := cache.New(cache.Config{}, cache.NewMemoryStore())
+	boom := errors.New("boom")
+	if _, err := cache.Get(ctx, c, "k", func(ctx context.Context, item *cache.Item) (int, error) { return 0, boom }); !errors.Is(err, boom) {
+		t.Errorf("error %v", err)
+	}
+	calls := 0
+	compute := func(ctx context.Context, item *cache.Item) (int, error) { calls++; item.NoCache = true; return 1, nil }
+	must cache.Get(ctx, c, "k", compute)
+	must cache.Get(ctx, c, "k", compute)
+	disabled := cache.New(cache.Config{Disabled: true}, cache.NewMemoryStore())
+	must cache.Get(ctx, disabled, "k", compute)
+	if calls != 3 {
+		t.Errorf("calls %d", calls)
+	}
+}
+
+func TestTTL(t *testing.T) {
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	c := cache.New(cache.Config{TTL: time.Minute}, &cache.MemoryStore{Now: () => now})
+	calls := 0
+	compute := func(ctx context.Context, item *cache.Item) (int, error) { calls++; return calls, nil }
+	ctx := context.Background()
+	must cache.Get(ctx, c, "k", compute)
+	now = now.Add(59 * time.Second)
+	must cache.Get(ctx, c, "k", compute)
+	now = now.Add(time.Second)
+	got := must cache.Get(ctx, c, "k", compute)
+	if got != 2 {
+		t.Errorf("got %d", got)
+	}
+}
+
+// TestStampede checks that concurrent misses of a key compute it once.
+func TestStampede(t *testing.T) {
+	c := cache.New(cache.Config{}, cache.NewMemoryStore())
+	var computed atomic.Int32
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	results := make([]int, 20)
+	for i := range results {
+		wg.Go(() => {
+			results[i] = must cache.Get(context.Background(), c, "slow", func(ctx context.Context, item *cache.Item) (int, error) {
+				computed.Add(1)
+				<-release
+				return 42, nil
+			})
+		})
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if computed.Load() != 1 {
+		t.Errorf("computed %d times", computed.Load())
+	}
+	for _, r := range results {
+		if r != 42 {
+			t.Fatalf("results %v", results)
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/routing"
@@ -16,15 +17,22 @@ type Users struct {
 	hasher security.Hasher
 	tokens *security.Tokens
 	logins *ratelimit.Limiter // by email and client address
+	events *event.Dispatcher
 	// dummy is the hash that a login with an unknown email checks, so that
 	// it takes as long as with a known one: the time doesn't tell which
 	// emails have users.
 	dummy string
 }
 
-func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins *ratelimit.Limiter) (*Users, error) {
+func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins *ratelimit.Limiter, events *event.Dispatcher) (*Users, error) {
 	dummy := check hasher.Hash("no user has this password") ""
-	return &Users{store: store, hasher: hasher, tokens: tokens, logins: logins, dummy: dummy}, nil
+	return &Users{store: store, hasher: hasher, tokens: tokens, logins: logins, events: events, dummy: dummy}, nil
+}
+
+// Updated is the event of a user's profile changed, for the features that
+// show it.
+type Updated struct {
+	ID int64
 }
 
 // Routes registers the endpoints.
@@ -170,6 +178,7 @@ effect (u *Users) Update(in UpdateInput) (UserBody, UserError) {
 	if taken != "" {
 		fail Taken{Field: taken}
 	}
+	check event.Dispatch(ctx, u.events, &Updated{ID: user.ID}) as Unavailable
 	body := check u.body(&user) as Unavailable
 	return body, nil
 }

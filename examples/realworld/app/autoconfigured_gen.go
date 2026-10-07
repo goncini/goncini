@@ -8,6 +8,7 @@ import (
 
 	"github.com/effect-go/effect-go/layer"
 	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/cache"
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/event"
@@ -26,7 +27,7 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger, autoDefaultSchedulerConfig)
+var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger, autoDefaultSchedulerConfig, autoDefaultCacheConfig)
 
 // autoProblems are the error mappers that the app's packages declare.
 func autoProblems() []httpkernel.ErrorMapper {
@@ -49,8 +50,8 @@ func autoVoters(p1 articles.Authorship) []security.Voter {
 }
 
 // autoSubscribers are the services that subscribe to events.
-func autoSubscribers(p1 *notifications.Subscriber) []event.Subscriber {
-	return []event.Subscriber{p1}
+func autoSubscribers(p1 *articles.Invalidator, p2 *notifications.Subscriber) []event.Subscriber {
+	return []event.Subscriber{p1, p2}
 }
 
 // autoHandlers are the services that handle messages.
@@ -84,11 +85,10 @@ func autoServices() []goncini.Service {
 		{Type: "security.Hasher", Provider: "hasher", Needs: []string{}},
 		{Type: "func() time.Time", Provider: "clock", Needs: []string{}},
 		{Type: "*ratelimit.Limiter", Provider: "logins", Needs: []string{"func() time.Time"}},
-		{Type: "*users.Users", Provider: "users.NewUsers", Needs: []string{"*users.Store", "security.Hasher", "*security.Tokens", "*ratelimit.Limiter"}},
-		{Type: "*articles.Store", Provider: "articles.NewStore", Needs: []string{"*db.SQL", "func() time.Time"}},
-		{Type: "articles.Authorship", Provider: "articles.NewAuthorship", Needs: []string{}},
-		{Type: "[]security.Voter", Provider: "autoVoters", Needs: []string{"articles.Authorship"}},
-		{Type: "*security.Access", Provider: "security.NewAccess", Needs: []string{"security.Config", "[]security.Voter"}},
+		{Type: "cache.Config", Provider: "autoDefaultCacheConfig", Needs: []string{}},
+		{Type: "*cache.MemoryStore", Provider: "cache.NewMemoryStore", Needs: []string{}},
+		{Type: "*cache.Cache", Provider: "cache.New", Needs: []string{"cache.Config", "*cache.MemoryStore"}},
+		{Type: "*articles.Invalidator", Provider: "articles.NewInvalidator", Needs: []string{"*cache.Cache"}},
 		{Type: "messenger.Config", Provider: "autoConfigMessenger", Needs: []string{"config.Config"}},
 		{Type: "messenger.Transports", Provider: "messenger.NewSQLTransports", Needs: []string{"*sql.DB", "messenger.Config"}},
 		{Type: "*notifications.Notifications", Provider: "notifications.NewNotifications", Needs: []string{"*db.SQL", "func() time.Time"}},
@@ -98,9 +98,14 @@ func autoServices() []goncini.Service {
 		{Type: "*slog.Logger", Provider: "goncini.NewLogger", Needs: []string{"slog.Handler"}},
 		{Type: "*messenger.Bus", Provider: "messenger.NewBus", Needs: []string{"messenger.Config", "messenger.Transports", "[]messenger.Handlers", "*slog.Logger"}},
 		{Type: "*notifications.Subscriber", Provider: "notifications.NewSubscriber", Needs: []string{"*messenger.Bus"}},
-		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{"*notifications.Subscriber"}},
+		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{"*articles.Invalidator", "*notifications.Subscriber"}},
 		{Type: "*event.Dispatcher", Provider: "goncini.NewDispatcher", Needs: []string{"[]event.Subscriber"}},
-		{Type: "*articles.Articles", Provider: "articles.NewArticles", Needs: []string{"*articles.Store", "*security.Access", "*event.Dispatcher"}},
+		{Type: "*users.Users", Provider: "users.NewUsers", Needs: []string{"*users.Store", "security.Hasher", "*security.Tokens", "*ratelimit.Limiter", "*event.Dispatcher"}},
+		{Type: "*articles.Store", Provider: "articles.NewStore", Needs: []string{"*db.SQL", "func() time.Time"}},
+		{Type: "articles.Authorship", Provider: "articles.NewAuthorship", Needs: []string{}},
+		{Type: "[]security.Voter", Provider: "autoVoters", Needs: []string{"articles.Authorship"}},
+		{Type: "*security.Access", Provider: "security.NewAccess", Needs: []string{"security.Config", "[]security.Voter"}},
+		{Type: "*articles.Articles", Provider: "articles.NewArticles", Needs: []string{"*articles.Store", "*security.Access", "*event.Dispatcher", "*cache.Cache"}},
 		{Type: "*moderation.Moderation", Provider: "moderation.NewModeration", Needs: []string{"*articles.Articles", "*security.Access"}},
 		{Type: "[]routing.Routes", Provider: "routes", Needs: []string{"*security.Firewall[*users.User]", "*security.Firewall[*moderation.Moderator]", "*users.Users", "*articles.Articles", "*notifications.Notifications", "*moderation.Moderation"}},
 		{Type: "*routing.Router", Provider: "goncini.NewRouter", Needs: []string{"[]routing.Routes"}},
@@ -195,3 +200,6 @@ func autoConfigMessenger(c config.Config) messenger.Config { return c.Messenger 
 
 // autoDefaultSchedulerConfig is the default of scheduler.Config, which the config doesn't have.
 func autoDefaultSchedulerConfig() scheduler.Config { return scheduler.Config{} }
+
+// autoDefaultCacheConfig is the default of cache.Config, which the config doesn't have.
+func autoDefaultCacheConfig() cache.Config { return cache.Config{} }

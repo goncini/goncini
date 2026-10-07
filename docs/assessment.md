@@ -249,6 +249,19 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 
 **Order of work:** `event` (typed events, subscribers collected by `goncini generate`, kernel events); `lock` (memory and SQL); `messenger` (bus, handlers, memory and SQL transports, retries, the failure transport, `messenger:consume`); `scheduler`; then the gates.
 
+### 4.3 Milestone 4
+
+**Gates** (proposed 2026-10-07):
+
+1. **Caching is invisible but for speed.** RealWorld caches its tags and article lists with tags of their own: a second request makes no query, and publishing, editing or deleting an article invalidates what it changes, so no test of the Hurl suite sees a stale answer. Concurrent misses of a key compute it once. The Redis adapter passes the same conformance suite as the memory cache, against a real Redis in CI.
+2. **Outgoing HTTP is resilient and traced.** The HTTP client retries connection failures, 429s and 5xxs of idempotent requests on a schedule, honoring `Retry-After`, never retries a POST unless asked, propagates the trace context, and a mock transport answers tests, as Symfony's MockHttpClient does.
+3. **Mail goes out of the request.** RealWorld welcomes a registered user by email: a Messenger message, handled by a worker, renders a multipart text and HTML email that an in-process SMTP server receives and parses back intact.
+4. **Notifications reach their channels.** A notification goes to the channels its importance asks for, email and a chat webhook, each recipient's way, as Symfony's Notifier does.
+5. **Errors speak the client's language.** In the articles example, `Accept-Language: fr` gives French problem titles and violation messages from a catalog, falling back to English, and `translation:lint` lists the messages a catalog lacks.
+6. **Workflows guard their transitions.** The articles example gets a review workflow, draft to reviewed to published: a transition that the article's state doesn't allow is a 409, a guard is a security voter, each transition dispatches events, and `workflow:dump` draws the graph in Mermaid.
+
+**Order of work:** `cache` (memory, tags, stampede protection), `cache/rediscache`; `httpclient`; `mime` and `mailer` (SMTP and in-memory transports, sending through Messenger); `notifier`; `translation`; `workflow`; then the gates.
+
 ## 5. Risks
 
 - **Tooling, once `goncini generate` comes.** Generation runs twice around `ego generate`, and stale generated files are the classic failure. If it's clumsy, ask effect-go for a hook between lowering and layer wiring; its maintainer session has offered to fix what a framework genuinely needs.

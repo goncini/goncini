@@ -1,0 +1,53 @@
+// Package storetest checks that a cache.Store behaves as caches need: it
+// keeps values by key, for their TTLs, and deletes them.
+//
+//	func TestStore(t *testing.T) {
+//		storetest.Run(t, (t *testing.T) => newStore(t))
+//	}
+package storetest
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/goncini/goncini/cache"
+)
+
+// Run runs the checks on stores that newStore returns, new and empty for
+// each check. TTLs are real: a check waits a little over 1s.
+func Run(t *testing.T, newStore func(t *testing.T) cache.Store) {
+	ctx := context.Background()
+	t.Run("get, set and delete", (t *testing.T) => {
+		s := newStore(t)
+		if err := s.Set(ctx, "a", []byte("1"), 0); err != nil {
+			t.Fatal(err)
+		}
+		s.Set(ctx, "b", []byte("2"), time.Hour)
+		s.Set(ctx, "a", []byte("3"), 0) // replaced
+		got, err := s.Get(ctx, "a", "b", "c")
+		if err != nil || string(got["a"]) != "3" || string(got["b"]) != "2" || got["c"] != nil || len(got) != 2 {
+			t.Fatalf("got %q, %v", got, err)
+		}
+		if err := s.Delete(ctx, "a", "c"); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = s.Get(ctx, "a", "b")
+		if got["a"] != nil || string(got["b"]) != "2" {
+			t.Errorf("after delete: %q", got)
+		}
+		if got, err := s.Get(ctx); err != nil || len(got) != 0 {
+			t.Errorf("no keys: %q, %v", got, err)
+		}
+	})
+	t.Run("expiry", (t *testing.T) => {
+		s := newStore(t)
+		s.Set(ctx, "short", []byte("1"), time.Second)
+		s.Set(ctx, "long", []byte("2"), time.Hour)
+		time.Sleep(1100 * time.Millisecond)
+		got, _ := s.Get(ctx, "short", "long")
+		if got["short"] != nil || string(got["long"]) != "2" {
+			t.Errorf("after a second: %q", got)
+		}
+	})
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite" // the "sqlite" database/sql driver
 
+	"github.com/goncini/goncini/cache"
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/goosedb"
 	"github.com/goncini/goncini/lock"
@@ -31,12 +32,13 @@ import (
 
 // Services is the app's own services.
 //
-//line services.ego:29
+//line services.ego:30
 var Services = layer.Set(
 	db.Open, db.NewSQL, migrator,
 	security.NewTokens, hasher, firewall, security.NewAccess,
 	users.NewStore, users.NewUsers, logins,
-	articles.NewStore, articles.NewArticles, articles.NewAuthorship,
+	articles.NewStore, articles.NewArticles, articles.NewAuthorship, articles.NewInvalidator,
+	cache.Memory,
 	moderation.NewFirewall, moderation.NewModeration,
 	notifications.NewNotifications, notifications.NewSubscriber,
 	messenger.SQL, lock.SQL, scheduler.New,
