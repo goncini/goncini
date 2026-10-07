@@ -1,0 +1,212 @@
+package messenger_test
+
+import (
+	"cmp"
+	"context"
+	"database/sql"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/messenger"
+)
+
+// The gates of M3: a worker is a process of its own, this test's binary run
+// again with GATE_WORKER set, consuming a SQLite queue in a file.
+
+// job is the gates' message: its handler records when it starts and ends.
+type job struct {
+	N int `json:"n"`
+}
+
+func TestMain(m *testing.M) {
+	if dbFile := os.Getenv("GATE_WORKER"); dbFile != "" {
+		os.Exit(gateWorker(dbFile))
+	}
+	os.Exit(m.Run())
+}
+
+// openGate opens the gates' database, which processes share.
+func openGate(file string) (*sql.DB, *messenger.Bus) {
+	pool, _ := must db.Open(db.Config{Driver: "sqlite", URL: "file:" + file + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"})
+	must pool.Exec("CREATE TABLE IF NOT EXISTS runs (n INTEGER NOT NULL, event TEXT NOT NULL, pid INTEGER NOT NULL)")
+	async := must messenger.NewSQLTransport(pool, "async")
+	failed := must messenger.NewSQLTransport(pool, "failed")
+	lease := must time.ParseDuration(cmp.Or(os.Getenv("GATE_LEASE"), "1s"))
+	stop := must time.ParseDuration(cmp.Or(os.Getenv("GATE_STOP"), "5s"))
+	b := messenger.NewBus(messenger.Config{Concurrency: 4, Lease: lease, StopTimeout: stop}, messenger.Transports{"async": async, "failed": failed}, nil, slog.New(slog.DiscardHandler))
+	messenger.Route[job](b, "async")
+	return pool, b
+}
+
+// gateWorker is the worker process: it handles jobs, each taking
+// GATE_HANDLE, until SIGTERM, and returns its exit code.
+func gateWorker(file string) int {
+	pool, b := openGate(file)
+	handle := must time.ParseDuration(os.Getenv("GATE_HANDLE"))
+	messenger.Handle(b, func(ctx context.Context, j job) error {
+		pool.Exec("INSERT INTO runs VALUES (?, 'start', ?)", j.N, os.Getpid())
+		select {
+		case <-time.After(handle):
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
+		_, err := pool.Exec("INSERT INTO runs VALUES (?, 'end', ?)", j.N, os.Getpid())
+		return err
+	})
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
+	defer stop()
+	if err := console.Run(ctx, io.Discard, messenger.Commands(b), "", []string{"messenger:consume", "async"}); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
+// gate is a database file and the workers on it.
+type gate struct {
+	t    *testing.T
+	file string
+	pool *sql.DB
+	bus  *messenger.Bus
+}
+
+func newGate(t *testing.T) *gate {
+	if testing.Short() {
+		t.Skip("the gates run worker processes")
+	}
+	file := filepath.Join(t.TempDir(), "gate.db")
+	pool, b := openGate(file)
+	t.Cleanup(() => { pool.Close() })
+	return &gate{t: t, file: file, pool: pool, bus: b}
+}
+
+// start starts a worker process, whose handlers take handle each.
+func (g *gate) start(handle, stop time.Duration) *exec.Cmd {
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), "GATE_WORKER="+g.file, "GATE_HANDLE="+handle.String(), "GATE_STOP="+stop.String())
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		g.t.Fatal(err)
+	}
+	g.t.Cleanup(() => { cmd.Process.Kill(); cmd.Wait() })
+	return cmd
+}
+
+// count returns how many jobs had the event, and how many distinct jobs.
+func (g *gate) count(event string) (int, int) {
+	var all, distinct int
+	must g.pool.QueryRow("SELECT count(*), count(DISTINCT n) FROM runs WHERE event = ?", event).Scan(&all, &distinct)
+	return all, distinct
+}
+
+// waitFor polls cond every 50ms, for up to d.
+func (g *gate) waitFor(what string, d time.Duration, cond func() bool) {
+	g.t.Helper()
+	for deadline := time.Now().Add(d); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if cond() {
+			return
+		}
+	}
+	g.t.Fatalf("timed out waiting for %s", what)
+}
+
+func (g *gate) left() int {
+	list := must g.bus.Transports["async"].(messenger.Browser).List(context.Background())
+	return len(list)
+}
+
+// TestKilledWorkerLosesNothing is M3's first gate: 100 messages, a worker
+// killed with SIGKILL while it handles some, then another worker. Every
+// message is handled to completion, those interrupted again once their
+// lease runs out, and the queue ends empty.
+func TestKilledWorkerLosesNothing(t *testing.T) {
+	g := newGate(t)
+	ctx := context.Background()
+	for n := range 100 {
+		must messenger.Dispatch(ctx, g.bus, job{N: n})
+	}
+	first := g.start(200*time.Millisecond, 5*time.Second)
+	g.waitFor("the first worker to be handling messages", 10*time.Second, () => {
+		started, _ := g.count("start")
+		ended, _ := g.count("end")
+		return started >= 20 && started > ended
+	})
+	must first.Process.Kill() // SIGKILL: no chance to give anything back
+	first.Wait()
+	_, endedBefore := g.count("end")
+	if endedBefore == 100 {
+		t.Fatal("the worker finished before it was killed")
+	}
+	second := g.start(10*time.Millisecond, 5*time.Second)
+	g.waitFor("every job to be handled", 30*time.Second, () => {
+		_, ended := g.count("end")
+		return ended == 100 && g.left() == 0
+	})
+	must second.Process.Signal(syscall.SIGTERM)
+	if err := second.Wait(); err != nil {
+		t.Errorf("the second worker: %v", err)
+	}
+	startedAll, _ := g.count("start")
+	t.Logf("%d jobs ended before the kill; %d starts in all, for 100 jobs", endedBefore, startedAll)
+}
+
+// TestSIGTERMDrains is M3's second gate: a worker sent SIGTERM while it
+// handles messages takes no new one, finishes those it has, and exits 0
+// within its stop timeout; one whose handlers outlive the timeout cancels
+// them, and their messages go back to the queue, as they were.
+func TestSIGTERMDrains(t *testing.T) {
+	g := newGate(t)
+	ctx := context.Background()
+	for n := range 20 {
+		must messenger.Dispatch(ctx, g.bus, job{N: n})
+	}
+	w := g.start(time.Second, 5*time.Second)
+	g.waitFor("the worker to be handling 4 messages", 10*time.Second, () => {
+		started, _ := g.count("start")
+		return started >= 4
+	})
+	start := time.Now()
+	must w.Process.Signal(syscall.SIGTERM)
+	if err := w.Wait(); err != nil {
+		t.Fatalf("the worker: %v", err)
+	}
+	took := time.Since(start)
+	started, _ := g.count("start")
+	ended, _ := g.count("end")
+	if took > 5*time.Second || started != ended || started < 4 || started > 8 || g.left() != 20-ended {
+		t.Errorf("stopping took %v; %d started, %d ended, %d left", took, started, ended, g.left())
+	}
+
+	// Handlers that outlive the stop timeout are cancelled, and their
+	// messages go back as they were.
+	slow := g.start(time.Hour, 500*time.Millisecond)
+	g.waitFor("the slow worker to be handling 4 messages", 10*time.Second, () => {
+		again, _ := g.count("start")
+		return again >= started+4
+	})
+	start = time.Now()
+	must slow.Process.Signal(syscall.SIGTERM)
+	if err := slow.Wait(); err != nil {
+		t.Fatalf("the slow worker: %v", err)
+	}
+	took = time.Since(start)
+	list := must g.bus.Transports["async"].(messenger.Browser).List(ctx)
+	attempts := 0
+	for _, m := range list {
+		attempts += m.Attempts
+	}
+	if took > 2*time.Second || len(list) != 20-ended || attempts != 0 {
+		t.Errorf("stopping took %v; %d left, with %d attempts", took, len(list), attempts)
+	}
+}
+

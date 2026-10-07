@@ -1,0 +1,51 @@
+package scheduler_test
+
+import (
+	"context"
+	"database/sql"
+	"log/slog"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	_ "modernc.org/sqlite"
+
+	"github.com/goncini/goncini/lock"
+	"github.com/goncini/goncini/scheduler"
+)
+
+// TestOneInstancePerTickInSQL is M3's fourth gate: two instances of an
+// app, each with its own pool on one database, run a task every 100ms for a
+// second, and the SQL lock store lets exactly one of them run each tick.
+func TestOneInstancePerTickInSQL(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "locks.db")
+	var mu sync.Mutex
+	ticks := map[int64][]string{} // instances that ran each tick
+	ctx, stop := context.WithTimeout(context.Background(), time.Second+50*time.Millisecond)
+	defer stop()
+	var wg sync.WaitGroup
+	for _, instance := range []string{"a", "b"} {
+		pool := must sql.Open("sqlite", "file:"+file+"?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)")
+		t.Cleanup(() => { pool.Close() })
+		store := must lock.NewSQLStore(pool)
+		s := scheduler.New(store, nil, slog.New(slog.DiscardHandler))
+		s.Add("report", scheduler.Every(100*time.Millisecond), (ctx context.Context) => {
+			tick := time.Now().Truncate(100 * time.Millisecond).UnixMilli()
+			mu.Lock()
+			defer mu.Unlock()
+			ticks[tick] = append(ticks[tick], instance)
+			return nil
+		})
+		wg.Go(() => { s.Run(ctx) })
+	}
+	wg.Wait()
+	if len(ticks) < 9 {
+		t.Errorf("%d ticks ran, want about 10", len(ticks))
+	}
+	for tick, ran := range ticks {
+		if len(ran) != 1 {
+			t.Errorf("tick %d ran in %v", tick, ran)
+		}
+	}
+}
