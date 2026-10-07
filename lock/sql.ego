@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/goncini/goncini/db"
@@ -22,8 +23,9 @@ type SQLStore struct {
 	// Schema.
 	NoSetup bool
 
-	setup sync.Once
-	err   error
+	setup    sync.Once
+	err      error
+	acquired atomic.Int64 // acquisitions, to prune expired locks now and then
 }
 
 // NewSQLStore returns the store of the pool, a SQLite or PostgreSQL
@@ -66,6 +68,10 @@ func (s *SQLStore) Acquire(ctx context.Context, key, owner string, ttl time.Dura
 	query := s.dialect.Rebind(f"INSERT INTO {t} (name, owner, expires_at) VALUES (?, ?, ?) ON CONFLICT (name) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at WHERE {t}.owner = excluded.owner OR {t}.expires_at <= ?")
 	res := check s.pool.ExecContext(ctx, query, key, owner, now.Add(ttl).UnixMilli(), now.UnixMilli())
 	n := check res.RowsAffected()
+	if s.acquired.Add(1)%256 == 0 {
+		// Locks of keys used once, such as a scheduler's ticks, would stay.
+		check s.pool.ExecContext(ctx, s.dialect.Rebind(f"DELETE FROM {t} WHERE expires_at <= ?"), now.UnixMilli())
+	}
 	return n == 1, nil
 }
 

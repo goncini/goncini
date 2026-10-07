@@ -155,8 +155,9 @@ func (lostError) Error() string { return "lock: the lock was lost" }
 // MemoryStore keeps locks in memory: the locks of one process. Its zero
 // value is ready.
 type MemoryStore struct {
-	mu    sync.Mutex
-	holds map[string]hold
+	mu       sync.Mutex
+	holds    map[string]hold
+	acquired int
 }
 
 // hold is who holds a key, until when.
@@ -176,6 +177,13 @@ func (m *MemoryStore) Acquire(ctx context.Context, key, owner string, ttl time.D
 		m.holds = map[string]hold{}
 	}
 	m.holds[key] = hold{owner: owner, expires: now.Add(ttl)}
+	if m.acquired++; m.acquired%256 == 0 {
+		for k, h := range m.holds {
+			if !now.Before(h.expires) {
+				delete(m.holds, k) // keys used once, such as a scheduler's ticks
+			}
+		}
+	}
 	return true, nil
 }
 

@@ -1,0 +1,99 @@
+package scheduler_test
+
+import (
+	"context"
+	"log/slog"
+	"strings"
+	"sync"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/goncini/goncini/lock"
+	"github.com/goncini/goncini/scheduler"
+)
+
+func TestCron(t *testing.T) {
+	from := time.Date(2026, 10, 7, 12, 34, 56, 0, time.UTC) // a Wednesday
+	for expr, want := range map[string]string{
+		"* * * * *":      "2026-10-07T12:35:00Z",
+		"*/15 * * * *":   "2026-10-07T12:45:00Z",
+		"30 2 * * 1-5":   "2026-10-08T02:30:00Z",
+		"0 0 * * 0":      "2026-10-11T00:00:00Z",
+		"0 0 * * 7":      "2026-10-11T00:00:00Z",
+		"@monthly":       "2026-11-01T00:00:00Z",
+		"0 0 29 2 *":     "2028-02-29T00:00:00Z",
+		"0 9 1,15 * 1":   "2026-10-12T09:00:00Z", // the 1st, the 15th, or a Monday
+		"5-10/5 3 * 1 *": "2027-01-01T03:05:00Z",
+	} {
+		c := must scheduler.Cron(expr)
+		if got := c.Next(from).Format(time.RFC3339); got != want {
+			t.Errorf("%s: %s, want %s", expr, got, want)
+		}
+	}
+	never := must scheduler.Cron("0 0 30 2 *")
+	if !never.Next(from).IsZero() {
+		t.Error("February 30th came")
+	}
+	for _, bad := range []string{"* * * *", "60 * * * *", "* * 0 * *", "*/0 * * * *", "a * * * *", "5-1 * * * *"} {
+		if _, err := scheduler.Cron(bad); err == nil {
+			t.Errorf("%q parsed", bad)
+		}
+	}
+	paris := must time.LoadLocation("Europe/Paris")
+	local := must scheduler.CronIn("30 2 * * *", paris)
+	if got := local.Next(from); !got.Equal(time.Date(2026, 10, 8, 2, 30, 0, 0, paris)) {
+		t.Errorf("in Paris: %v", got)
+	}
+}
+
+func TestEvery(t *testing.T) {
+	e := scheduler.Every(time.Hour)
+	if got := e.Next(time.Date(2026, 10, 7, 12, 34, 0, 0, time.UTC)); !got.Equal(time.Date(2026, 10, 7, 13, 0, 0, 0, time.UTC)) {
+		t.Errorf("next %v", got)
+	}
+}
+
+// TestOneInstancePerTick checks that two instances sharing a lock store run
+// each tick once between them, and that without locks each runs them all.
+func TestOneInstancePerTick(t *testing.T) {
+	for _, shared := range []bool{true, false} {
+		synctest.Test(t, (t *testing.T) => {
+			var mu sync.Mutex
+			runs := map[string]int{}
+			var locks lock.Store
+			if shared {
+				locks = &lock.MemoryStore{}
+			}
+			ctx, stop := context.WithTimeout(context.Background(), 10*time.Minute+time.Second)
+			defer stop()
+			var wg sync.WaitGroup
+			for _, instance := range []string{"a", "b"} {
+				s := scheduler.New(locks, nil, slog.New(slog.DiscardHandler))
+				s.Add("report", scheduler.Every(time.Minute), (ctx context.Context) => {
+					mu.Lock()
+					defer mu.Unlock()
+					runs[instance]++
+					return nil
+				})
+				wg.Go(() => { s.Run(ctx) })
+			}
+			wg.Wait()
+			total := runs["a"] + runs["b"]
+			if shared && total != 10 || !shared && (runs["a"] != 10 || runs["b"] != 10) {
+				t.Errorf("shared %v: runs %v", shared, runs)
+			}
+		})
+	}
+}
+
+func TestDebugTable(t *testing.T) {
+	s := scheduler.New(nil, nil, nil)
+	s.Add("digest", scheduler.MustCron("0 8 * * 1-5"), (ctx context.Context) => nil)
+	var out strings.Builder
+	cmds := scheduler.Commands(s)
+	must cmds[1].Run(context.Background(), &out, nil)
+	if !strings.Contains(out.String(), "digest  0 8 * * 1-5") {
+		t.Errorf("table:\n%s", out.String())
+	}
+}

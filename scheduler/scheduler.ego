@@ -1,0 +1,161 @@
+// Package scheduler runs tasks on a schedule, as Symfony's Scheduler does:
+// every hour, or as a cron expression says, in every instance of an app or,
+// with a lock store, in one of them at each tick.
+//
+//	s.Add("digest", scheduler.MustCron("0 8 * * 1-5"), ctx => messenger.Dispatch(ctx, bus, SendDigest{}))
+//
+// scheduler:run runs the tasks until it is told to stop. A task's error is
+// logged; it runs again at its next tick. A task that should be retried
+// dispatches a message, which Messenger retries.
+package scheduler
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"slices"
+	"text/tabwriter"
+	"time"
+
+	"github.com/effect-go/effect-go/scope"
+
+	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/lock"
+	"github.com/goncini/goncini/uid"
+)
+
+// Tasks registers tasks on a scheduler: the services that do are what
+// goncini generate hands New.
+type Tasks interface {
+	Schedule(s *Scheduler)
+}
+
+// Scheduler runs tasks on their triggers.
+type Scheduler struct {
+	// Locks, if any, make each tick run in one instance of the app: the one
+	// that takes its lock. Without, every instance runs every tick.
+	Locks lock.Store
+	// Logger logs the runs; nil means slog.Default().
+	Logger *slog.Logger
+
+	tasks []task
+	owner string // of the locks, unique to this scheduler
+}
+
+// task is a task and its trigger.
+type task struct {
+	name    string
+	trigger Trigger
+	run     func(ctx context.Context) error
+}
+
+// New returns a scheduler of the tasks, with the lock store, if any.
+func New(locks lock.Store, tasks []Tasks, logger *slog.Logger) *Scheduler {
+	s := &Scheduler{Locks: locks, Logger: logger, owner: uid.NewV4().String()}
+	for _, t := range tasks {
+		t.Schedule(s)
+	}
+	return s
+}
+
+// Add adds a task, named for logs and locks, which must be unique.
+func (s *Scheduler) Add(name string, t Trigger, run func(ctx context.Context) error) {
+	if slices.ContainsFunc(s.tasks, other => other.name == name) {
+		panic(f"scheduler: two tasks are named {name:q}")
+	}
+	s.tasks = append(s.tasks, task{name, t, run})
+}
+
+// Run runs each task at its ticks until ctx is done, then waits for the
+// tasks that are running.
+func (s *Scheduler) Run(ctx context.Context) error {
+	if s.owner == "" {
+		s.owner = uid.NewV4().String()
+	}
+	_, err := scope.Run(ctx, func(sc *scope.Scope) (struct{}, error) {
+		var fibers []*scope.Fiber[struct{}]
+		for _, t := range s.tasks {
+			fibers = append(fibers, scope.Fork(sc, func(ctx context.Context) (struct{}, error) {
+				s.loop(ctx, t)
+				return struct{}{}, nil
+			}))
+		}
+		for _, f := range fibers {
+			f.Join()
+		}
+		return struct{}{}, nil
+	})
+	if ctx.Err() != nil {
+		return nil
+	}
+	return err
+}
+
+// loop runs t at each of its ticks until ctx is done.
+func (s *Scheduler) loop(ctx context.Context, t task) {
+	log := (s.Logger ?? slog.Default()).With(slog.String("task", t.name))
+	for {
+		tick := t.trigger.Next(time.Now())
+		if tick.IsZero() {
+			log.WarnContext(ctx, "the task never runs again")
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Until(tick)):
+		}
+		if s.Locks != nil {
+			// A lock per tick, never released, so that an instance that
+			// wakes up late doesn't run the tick again.
+			key := f"scheduler:{t.name}:{tick.Unix()}"
+			ttl := max(t.trigger.Next(tick).Sub(tick), time.Minute)
+			won, err := s.Locks.Acquire(ctx, key, s.owner, ttl)
+			if err != nil {
+				log.ErrorContext(ctx, "taking the task's lock failed: it doesn't run this time", slog.Any("error", err))
+				continue
+			}
+			if !won {
+				continue // another instance runs it
+			}
+		}
+		start := time.Now()
+		if err := s.run(ctx, t); err != nil {
+			log.ErrorContext(ctx, "the task failed", slog.Any("error", err), slog.Duration("duration", time.Since(start)))
+		} else {
+			log.InfoContext(ctx, "the task ran", slog.Duration("duration", time.Since(start)))
+		}
+	}
+}
+
+// run runs t, turning a panic into an error.
+func (s *Scheduler) run(ctx context.Context, t task) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = fmt.Errorf("scheduler: the task panicked: %v", v)
+		}
+	}()
+	return t.run(ctx)
+}
+
+// Commands returns s's console commands: scheduler:run, which runs the
+// tasks until it is told to stop, and debug:scheduler, which lists them.
+func Commands(s *Scheduler) []console.Command {
+	return []console.Command{
+		console.New("scheduler:run", "Runs the scheduled tasks until stopped", (ctx context.Context, out io.Writer, args []string) => s.Run(ctx)),
+		console.New("debug:scheduler", "Lists the scheduled tasks, and when they run next", (ctx context.Context, out io.Writer, args []string) => s.writeTable(out, time.Now())),
+	}
+}
+
+// writeTable lists the tasks and their next runs after now.
+func (s *Scheduler) writeTable(out io.Writer, now time.Time) error {
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "TASK\tTRIGGER\tNEXT RUN")
+	for _, t := range s.tasks {
+		next := t.trigger.Next(now)
+		when := if next.IsZero() { "never" } else { next.Format(time.RFC3339) }
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", t.name, t.trigger, when)
+	}
+	return tw.Flush()
+}

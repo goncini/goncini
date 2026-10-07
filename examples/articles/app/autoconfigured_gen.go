@@ -34,7 +34,7 @@ func autoProblems() []httpkernel.ErrorMapper {
 
 // autoCommands are the services that are console commands, and the commands of the migrator.
 func autoCommands(p1 *articles.SlugCommand, m db.Migrator) []console.Command {
-	return append(db.Commands(m), p1)
+	return append(db.Commands(m), []console.Command{p1}...)
 }
 
 // autoChecks ping the services that can be pinged, such as the database, before serving.

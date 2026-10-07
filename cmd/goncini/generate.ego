@@ -87,6 +87,8 @@ var kinds = []kind{
 	{"autoChecks", "goncini.Check", "autoChecks ping the services that can be pinged, such as the database, before serving."},
 	{"autoVoters", "security.Voter", "autoVoters are the services that are security voters."},
 	{"autoSubscribers", "event.Subscriber", "autoSubscribers are the services that subscribe to events."},
+	{"autoHandlers", "messenger.Handlers", "autoHandlers are the services that handle messages."},
+	{"autoTasks", "scheduler.Tasks", "autoTasks are the services that schedule tasks."},
 }
 
 // sections are the config sections that goncini's providers take.
@@ -395,14 +397,38 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 		}
 	}
 	list := "[]" + a.typeString(elem) + "{" + strings.Join(items, ", ") + "}"
-	if k.name == "autoCommands" {
-		if m := a.lookup("db.Migrator"); m != nil && a.provides(m) {
-			params = append(params, "m "+a.typeString(m))
-			migrations := a.qualify(m.(*types.Named).Obj().Pkg()) + ".Commands(m)"
-			return params, if len(items) == 0 { migrations } else { "append(" + migrations + ", " + strings.Join(items, ", ") + ")" }
-		}
+	if k.name != "autoCommands" {
+		return params, list
 	}
-	return params, list
+	// The services whose packages give them commands: the migrator's, the
+	// bus's and the scheduler's.
+	var lists []string
+	for _, svc := range []struct{ typ, param string }{{"db.Migrator", "m"}, {"*messenger.Bus", "bus"}, {"*scheduler.Scheduler", "s"}} {
+		t := a.lookup(strings.TrimPrefix(svc.typ, "*"))
+		if t == nil {
+			continue
+		}
+		if strings.HasPrefix(svc.typ, "*") {
+			t = types.NewPointer(t)
+		}
+		if !a.provides(t) {
+			continue
+		}
+		params = append(params, svc.param+" "+a.typeString(t))
+		named, _ := types.Unalias(t).(*types.Named)
+		if ptr, ok := t.(*types.Pointer); ok {
+			named = ptr.Elem().(*types.Named)
+		}
+		lists = append(lists, a.qualify(named.Obj().Pkg())+".Commands("+svc.param+")")
+	}
+	if len(items) > 0 || len(lists) == 0 {
+		lists = append(lists, list)
+	}
+	all := lists[0]
+	for _, l := range lists[1:] {
+		all = "append(" + all + ", " + l + "...)"
+	}
+	return params, all
 }
 
 // mappers returns the package-level variables of type elem, an

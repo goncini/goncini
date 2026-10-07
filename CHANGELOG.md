@@ -287,6 +287,41 @@ first needed, with one upsert per acquisition. `db.DialectOf` tells the
 two apart by their driver, and `Dialect.Rebind` numbers placeholders for
 PostgreSQL.
 
+### messenger
+
+Symfony's Messenger, on effect-go:
+
+- **The bus:** `messenger.Handle(bus, handler)` and `messenger.Route[M](bus,
+  "async")` register typed handlers and routes; `messenger.Dispatch(ctx, bus,
+  msg)` handles a message now, or encodes it as JSON and sends it to its
+  transport, with an optional `Delay`.
+- **Transports:** `MemoryTransport`, and `SQLTransport`, a queue in a table
+  of a SQLite or PostgreSQL database. A worker leases each message it
+  receives, and extends the lease while it handles it: a worker that dies
+  loses the message to another when the lease runs out. One statement
+  leases the next message, with `FOR UPDATE SKIP LOCKED` on PostgreSQL, and
+  acknowledgements and retries carry the lease's token, so that a lost
+  lease can't touch the message. `transporttest` checks a transport, as it
+  checks these two, on SQLite and PostgreSQL.
+- **Workers:** `messenger:consume` runs a `Worker`, whose handlers are
+  effect-go fibers. A failing message is retried on an effect-go
+  `Schedule`, three times with exponential backoff by default, then goes to
+  the failure transport, which `messenger:failed:show`, `retry` and
+  `remove` deal with. Told to stop, a worker takes no new message and lets
+  its handlers finish, up to its stop timeout; those it cuts short go back
+  to their transport, as they were.
+- `goncini generate` collects the services that register handlers, and
+  adds the bus's commands.
+
+### scheduler
+
+Symfony's Scheduler: tasks run `Every(d)`, on the multiples of d, or as a
+`Cron` expression says, in UTC or a location. With a lock store, each tick
+runs in one instance of an app: the one that takes the tick's lock.
+`scheduler:run` runs the tasks, and `debug:scheduler` lists them with their
+next runs. Lock stores now prune expired locks, which keys used once, as
+ticks are, would leave.
+
 ### The RealWorld app
 
 [`examples/realworld`](examples/realworld) is the RealWorld "Conduit" API,
