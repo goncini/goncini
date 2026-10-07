@@ -53,12 +53,13 @@ What effect-go provides and doesn't, per its maintainer session:
 | RateLimiter, CORS | Middleware. | M2 |
 | EventDispatcher | Typed events (generics), with subscribers collected by autoconfiguration. | M3 |
 | Messenger | Messages on effect-go: retries are schedules, workers are fibers in the app scope, transports for memory and SQL first. | M3 |
-| Scheduler | `repeat` with a schedule, in the app scope. | M3 |
-| HttpClient | The `net/http` client with `schedule.Retry` and a span per call. | M3 |
-| WebProfilerBundle | A dev profiler built from the spans and log records effect-go already produces. | M4 |
-| MakerBundle | `goncini make:*`, writing `.ego` files. | M4 |
+| Scheduler, Lock | `repeat` with a schedule, in the app scope; locks in memory and in the database. | M3 |
+| HttpClient | The `net/http` client with `schedule.Retry` and a span per call. | M4 |
+| WebProfilerBundle | A dev profiler built from the spans and log records effect-go already produces. | M5 |
+| MakerBundle | `goncini make:*`, writing `.ego` files. | M5 |
 | Bundles, Flex recipes | A bundle is a package exporting a `layer.Set`, a config section, routes and commands. | M5 |
-| Cache, Lock, Mailer, Notifier, Translation, Workflow | When an API needs them. | Later |
+| Cache, Mailer, Mime, Notifier, Translation, Workflow | Cache in memory and Redis, with tags; mail and notifications sent through Messenger; error messages translated; state machines. | M4 |
+| Uid | UUIDs and ULIDs that bind, scan and route. | M2 |
 | Twig, Form, Asset, AssetMapper, UX | Dropped (decided): goncini is for APIs. | — |
 | YAML/XML config, ExpressionLanguage, PropertyAccess, service locators, lazy proxies | Dropped: Go code, typed values and plain constructors replace them. | — |
 
@@ -189,12 +190,33 @@ Each step is a package that works in any `net/http` app, the way Laravel uses Sy
 
 ## 4. Later milestones
 
-| Milestone | Content | Gate (draft) |
+The goal, set by the user on 2026-10-07, is parity with Symfony's components that an API uses, milestone by milestone. Each milestone's packages have tests and docs, an example uses them, its gate passes, and a review of the milestone has its findings fixed.
+
+| Milestone | Content | Gate |
 |---|---|---|
-| **M2: API contract and security** | OpenAPI 3.1 from handler types (`/openapi.json` and a docs page in dev, `openapi:dump`); responses checked against the contract in `webtest`; pagination and filtering helpers; API versioning; voters; firewalls per route group; rate limiting; CORS | Our OpenAPI document is equivalent to RealWorld's `openapi.yml`, and a client generated from it (oapi-codegen) passes the Hurl suite's scenarios |
-| **M3: Messenger and Scheduler** | Typed events; messages with memory and SQL transports; retries as schedules; `messenger:consume` workers as fibers; a failure transport; recurring tasks with `repeat`; outgoing webhooks; an HTTP client with retries | Killing a worker mid-message loses nothing; SIGTERM drains within the deadline |
-| **M4: developer experience** | A profiler for API requests built from spans and logs (JSON endpoints, a `debug:requests` command, OTLP export to existing trace viewers); `goncini new`; `goncini make:*` | A new API goes from `goncini new` to a passing test in one command |
-| **M5: ecosystem** | Bundles; cache; mailer; streaming responses (NDJSON, server-sent events) on effect-go's planned iterator support | A third-party bundle adds services, routes and commands without touching the app's wiring |
+| **M2: API contract and security** | OpenAPI 3.1 from endpoint types (`/openapi.json`, a docs page in dev, `openapi:dump`); responses checked against the contract in `webtest`; CORS; RateLimiter; voters; firewalls per route group; Uid; pagination and filtering helpers | Below |
+| **M3: async** | EventDispatcher (typed events, kernel events); Messenger (memory and SQL transports, retries as schedules, a failure transport, `messenger:consume` workers as fibers); Scheduler; Lock | Killing a worker mid-message loses nothing; SIGTERM drains within the deadline |
+| **M4: integrations** | Cache (memory, Redis in an adapter module, tags); HttpClient (retries, tracing); Mailer and Mime; Notifier; Translation of error messages; Workflow | To propose before M4 |
+| **M5: developer experience** | A profiler built from spans (`debug:requests`, OTLP export); `goncini new` and `make:*`; bundles | To propose before M5 |
+
+### 4.1 Milestone 2
+
+**Gates** (proposed 2026-10-07, refining the user's "a client generated from our OpenAPI document passes the Hurl suite"):
+
+1. **The document covers RealWorld's.** RealWorld's [`openapi.yml`](https://github.com/gothinkster/realworld/blob/main/specs/api/openapi.yml) and the document `examples/realworld` generates have the same operations (method and path), parameters, request bodies and success statuses, and ours declares every error status RealWorld's tests expect. A test compares them.
+2. **The document holds for the whole Hurl suite.** Running the suite with every request and response checked against our document finds no response, status or body that the document doesn't allow.
+3. **A generated client works.** A client generated from our document by oapi-codegen compiles, and a test drives every RealWorld operation through it against the app, decoding each typed response.
+4. **No annotations.** The RealWorld app gets its document without writing any OpenAPI by hand beyond a title, a version and doc comments.
+
+**Order of work:**
+
+1. `openapi`: JSON Schemas from Go types, operations from endpoints and route middleware, the error responses from error sets, `/openapi.json`, a docs page in dev, `openapi:dump`.
+2. `goncini generate` finds which error cases each endpoint can return.
+3. `webtest` checks responses against the document.
+4. The gates.
+5. CORS and RateLimiter, as middleware.
+6. Voters, and firewalls per route group.
+7. Uid; pagination and filtering helpers.
 
 ## 5. Risks
 
