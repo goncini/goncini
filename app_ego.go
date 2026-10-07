@@ -54,7 +54,7 @@ type HTTP struct {
 	Debug bool
 }
 
-// Log configures an app's logger.
+// Log configures the default handler of an app's logs, NewLogHandler.
 type Log struct {
 	// Level is the least severe level logged; the zero value is Info.
 	Level slog.Level
@@ -98,18 +98,24 @@ type Check func(ctx context.Context) error
 //
 //	panic(layer.Build(goncini.Framework, Services, Autoconfigured, NewConduitRenderer))
 //
-// where NewConduitRenderer returns an httpkernel.Renderer. NewMiddleware,
-// NewRenderer and NewValidator are there to be replaced so.
-var Framework = layer.Set(NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewKernel, NewServer, NewApp)
+// where NewConduitRenderer returns an httpkernel.Renderer. NewLogHandler,
+// NewMiddleware, NewRenderer and NewValidator are there to be replaced so.
+var Framework = layer.Set(NewLogHandler, NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewKernel, NewServer, NewApp)
 
-// NewLogger returns the logger of an app: records on stderr that carry the
-// trace and span IDs of the context they're logged with.
-func NewLogger(c Log) *slog.Logger {
+// NewLogHandler returns where an app's logs go: text or JSON records on
+// stderr, from c.Level up. An app that logs with another library, such as
+// zap or zerolog, provides that library's slog.Handler instead.
+func NewLogHandler(c Log) slog.Handler {
 	opts := &slog.HandlerOptions{Level: c.Level}
-	var h slog.Handler = slog.NewTextHandler(os.Stderr, opts)
 	if c.JSON {
-		h = slog.NewJSONHandler(os.Stderr, opts)
+		return slog.NewJSONHandler(os.Stderr, opts)
 	}
+	return slog.NewTextHandler(os.Stderr, opts)
+}
+
+// NewLogger returns the logger of an app, whose records go to h, with the
+// trace and span IDs of the context they're logged with.
+func NewLogger(h slog.Handler) *slog.Logger {
 	return slog.New(trace.LogHandler(h))
 }
 
@@ -147,7 +153,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:140
+//line app.ego:146
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -155,7 +161,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:144
+//line app.ego:150
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
@@ -195,7 +201,7 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 
 // NewApp returns the app made of these parts.
 //
-//line app.ego:176
+//line app.ego:182
 func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger) *App {
 	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger}
 }

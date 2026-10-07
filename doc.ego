@@ -28,7 +28,9 @@
 // that goncini's providers take (HTTP and Log), whose zero values are
 // sensible defaults. It replaces any of goncini's providers by passing its
 // own to layer.Build: an httpkernel.Renderer for an error format of its
-// own, []httpkernel.Middleware, an httpkernel.Validator.
+// own, []httpkernel.Middleware, an httpkernel.Validator, or a slog.Handler
+// to log with zap, zerolog, logrus or OpenTelemetry, as docs/logging.md in
+// the repository shows.
 //
 // # Commands
 //

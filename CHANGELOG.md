@@ -83,6 +83,12 @@ Running an app, in the [layout](docs/layout.md) of goncini apps:
   changes. Environment variables only carry `APP_ENV` and secrets, read with
   `Env.Secret` from the process or from `.env` files, in Symfony's order. An
   unknown environment and every missing secret fail at boot, together.
+- **Logging:** through `log/slog`, Go's PSR-3. `NewLogHandler` is the
+  default handler, text or JSON on stderr; an app that logs with zap,
+  zerolog, logrus, logr or OpenTelemetry provides that library's
+  `slog.Handler` instead, and `NewLogger` still adds trace IDs to its
+  records. [docs/logging.md](docs/logging.md) has a recipe for each,
+  compiled against the libraries.
 - **Providers:** `Framework` sets up the logger, router, kernel and server,
   configured by the `HTTP` and `Log` sections, whose zero values are the
   defaults; `HTTP` has the server's and the kernel's timeouts too. Logs carry

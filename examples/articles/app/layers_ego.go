@@ -36,7 +36,8 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	renderer := goncini.NewRenderer()
 	validator := goncini.NewValidator()
 	log := autoConfigLog(cfg)
-	logger := goncini.NewLogger(log)
+	handler := goncini.NewLogHandler(log)
+	logger := goncini.NewLogger(handler)
 	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
@@ -73,7 +74,8 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	renderer := goncini.NewRenderer()
 	validator := goncini.NewValidator()
 	log := autoConfigLog(cfg)
-	logger := goncini.NewLogger(log)
+	handler := goncini.NewLogHandler(log)
+	logger := goncini.NewLogger(handler)
 	kernel, err := goncini.NewKernel(http, router, v2, v3, renderer, validator, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)

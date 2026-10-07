@@ -207,6 +207,8 @@ plain constructors, matched by their result types.
   the services that can be pinged (checked before serving), and a provider
   per field of the config. A kind that the app provides itself, such as
   `[]routing.Routes` to put them under a prefix, is left to it.
+- A service that logs takes a `*slog.Logger`. The app's logs go to the
+  `slog.Handler` it provides, goncini's text or JSON one by default.
 - A service that needs the time takes a `now func() time.Time`, which the
   app's `clock` provider gives: `time.Now`. Tests change time with
   `testing/synctest`, which fakes `time.Now` and `time.Sleep`.

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/httpkernel"
@@ -204,5 +206,32 @@ func TestDebugConfigMasksStringsOnly(t *testing.T) {
 	must goncini.Run(context.Background(), &out, env, cfg, build(goncini.HTTP{}, nil, nil), []string{"debug:config"})
 	if want := "{\n  \"Limit\": 51,\n  \"URL\": \"db://u:******@h\"\n}\n"; out.String() != want {
 		t.Errorf("debug:config:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
+// recorder is a slog.Handler that keeps the attributes of its records, as a
+// logging library's handler would get them.
+type recorder struct{ attrs map[string]string }
+
+func (r *recorder) Enabled(context.Context, slog.Level) bool { return true }
+func (r *recorder) WithAttrs([]slog.Attr) slog.Handler       { return r }
+func (r *recorder) WithGroup(string) slog.Handler            { return r }
+func (r *recorder) Handle(_ context.Context, rec slog.Record) error {
+	rec.Attrs(a => {
+		r.attrs[a.Key] = a.Value.String()
+		return true
+	})
+	return nil
+}
+
+// TestLoggerOnAnotherHandler: an app's own handler gets the trace IDs.
+func TestLoggerOnAnotherHandler(t *testing.T) {
+	h := &recorder{attrs: map[string]string{}}
+	tid := must trace.TraceIDFromHex("0102030405060708090a0b0c0d0e0f10")
+	sid := must trace.SpanIDFromHex("0102030405060708")
+	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid}))
+	goncini.NewLogger(h).InfoContext(ctx, "hello", "k", "v")
+	if h.attrs["k"] != "v" || h.attrs["trace_id"] != tid.String() || h.attrs["span_id"] != sid.String() {
+		t.Errorf("attributes %v", h.attrs)
 	}
 }
