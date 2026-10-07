@@ -5,7 +5,7 @@ go 1.27
 tool github.com/effect-go/effect-go/cmd/ego
 
 require (
-	github.com/effect-go/effect-go v0.3.0
+	github.com/effect-go/effect-go v0.3.1
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	go.opentelemetry.io/otel v1.46.0
@@ -13,6 +13,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.46.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/tools v0.50.0
+	modernc.org/sqlite v1.60.1
 )
 
 require (
@@ -37,5 +38,4 @@ require (
 	modernc.org/libc v1.77.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	modernc.org/sqlite v1.60.1 // indirect
 )

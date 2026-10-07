@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-goncini requires Go 1.27, and effect-go v0.3.0, which pins the library and
+goncini requires Go 1.27, and effect-go v0.3.1, which pins the library and
 the `ego` tool together.
 
 ### httpkernel
@@ -569,3 +569,6 @@ with their providers and what they need, which `debug:container` lists.
     - `check f() as Case` wrapped errors that already were cases of the set,
       so a case returned through a callback, such as a transaction's, lost
       its response.
+  - v0.3.1:
+    - `must (x).M()` and `check (x).M()` parsed as calls of functions named
+      `must` and `check`, which `ego fmt` then wrote that way.
