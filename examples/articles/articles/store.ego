@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/uid"
 )
 
 // Store keeps the articles in the database.
@@ -17,22 +18,31 @@ func NewStore(s *db.SQL) *Store {
 	return &Store{sql: s}
 }
 
-// List returns the newest articles first, at most limit of them, with the
-// tag if it isn't empty, and how many there are in all.
-effect (s *Store) List(tag string, limit int) ([]Article, int, error) {
+// columns are what scan reads.
+const columns = "SELECT id, slug, title, body, tags, created_at FROM articles"
+
+// List returns the articles with the tag if it isn't empty, sorted by
+// order, an ORDER BY list, from offset and at most limit of them, and how
+// many there are in all.
+effect (s *Store) List(tag, order string, limit, offset int) ([]Article, int, error) {
 	where, args := "", []any{}
 	if tag != "" {
 		where, args = " WHERE EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)", []any{tag}
 	}
 	conn := s.sql.Conn(ctx)
 	count := check db.Value[int](ctx, conn, "SELECT count(*) FROM articles"+where, args...)
-	list := check db.All(ctx, conn, scan, "SELECT slug, title, body, tags, created_at FROM articles"+where+" ORDER BY created_at DESC LIMIT ?", append(args, limit)...)
+	list := check db.All(ctx, conn, scan, columns+where+" ORDER BY "+order+", id LIMIT ? OFFSET ?", append(args, limit, offset)...)
 	return list, count, nil
 }
 
 // Get returns the article with the slug, and reports whether there is one.
 effect (s *Store) Get(slug string) (Article, bool, error) {
-	return db.One(ctx, s.sql.Conn(ctx), scan, "SELECT slug, title, body, tags, created_at FROM articles WHERE slug = ?", slug)
+	return db.One(ctx, s.sql.Conn(ctx), scan, columns+" WHERE slug = ?", slug)
+}
+
+// ByID returns the article with the ID, and reports whether there is one.
+effect (s *Store) ByID(id uid.UUID) (Article, bool, error) {
+	return db.One(ctx, s.sql.Conn(ctx), scan, columns+" WHERE id = ?", id)
 }
 
 // Add adds an article, unless its slug is taken, and reports whether it
@@ -46,8 +56,8 @@ effect (s *Store) Add(art Article) (bool, error) {
 			return nil
 		}
 		tags := check json.Marshal(art.Tags) ""
-		check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO articles (slug, title, body, tags, created_at) VALUES (?, ?, ?, ?, ?)",
-			art.Slug, art.Title, art.Body, string(tags), art.CreatedAt.UnixMicro())
+		check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO articles (id, slug, title, body, tags, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+			art.ID, art.Slug, art.Title, art.Body, string(tags), art.CreatedAt.UnixMicro())
 		added = true
 		return nil
 	}) ""
@@ -59,7 +69,7 @@ func scan(row db.Scanner) (Article, error) {
 	var art Article
 	var tags string
 	var created int64
-	check row.Scan(&art.Slug, &art.Title, &art.Body, &tags, &created) ""
+	check row.Scan(&art.ID, &art.Slug, &art.Title, &art.Body, &tags, &created) ""
 	check json.Unmarshal([]byte(tags), &art.Tags) ""
 	art.CreatedAt = time.UnixMicro(created).UTC()
 	return art, nil

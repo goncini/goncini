@@ -79,12 +79,15 @@ func autoServices() []goncini.Service {
 func autoOpenAPI() openapi.Annotations {
 	return openapi.Annotations{
 		Operations: map[string]openapi.OperationDoc{
-			"github.com/goncini/goncini/examples/articles/articles.(*Articles).Create": {Errors: []error{articles.Duplicate{}, articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/articles/articles.(*Articles).List":   {Summary: "Returns the newest articles first, with the tag if one is given.", Errors: []error{articles.Unavailable{}}},
-			"github.com/goncini/goncini/examples/articles/articles.(*Articles).Show":   {Errors: []error{articles.NotFound{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/articles/articles.(*Articles).Create":   {Errors: []error{articles.Duplicate{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/articles/articles.(*Articles).List":     {Summary: "Returns a page of the articles, the newest first unless the sort says otherwise, with the tag if one is given.", Errors: []error{articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/articles/articles.(*Articles).Show":     {Errors: []error{articles.NotFound{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/articles/articles.(*Articles).ShowByID": {Summary: "Returns the article with the ID.", Errors: []error{articles.NotFound{}, articles.Unavailable{}}},
 		},
 		Types: map[reflect.Type]openapi.TypeDoc{
-			reflect.TypeFor[articles.Article](): {Description: "Article is what the API serves."},
+			reflect.TypeFor[articles.Article]():   {Description: "Article is what the API serves."},
+			reflect.TypeFor[articles.ListInput](): {Fields: map[string]string{"Tag": "only the articles with this tag"}},
+			reflect.TypeFor[articles.Order]():     {Description: "Order is what lists of articles can be sorted by."},
 		},
 	}
 }

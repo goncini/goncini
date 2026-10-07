@@ -127,6 +127,14 @@ type UpdateInput struct {
   "#/article/title", Detail: "can't be blank"})`.
 - `httpkernel.Optional[T]` tells an absent member from `null` and from a
   value, for updates: `.Set`, `.Null`, `.Value`, `.Present()`.
+- IDs are `uid.UUID`, made with `uid.NewV7()`, or `uid.ULID`: they bind,
+  scan, and route with `.Require("id", routing.UUID)`.
+- A list embeds `listing.Window` (`?limit=20&offset=40`) and returns a
+  `listing.Page[T]`, with `Link` headers to the other pages. It sorts with
+  `Sort listing.Sort[Order] \`query:"sort" default:"-createdAt"\``, where
+  `Order`'s `Fields` maps the API's names to SQL, and `Sort.SQL()` is safe
+  in `ORDER BY`. `listing.Cursor[K]` pages by keys instead. Filters are
+  typed parameters.
 - The result is written as JSON with 200. `httpkernel.Created[T]{Body: b}`
   answers 201, and `httpkernel.NoContent{}` answers 204.
 - An input with no values is `struct{}`.

@@ -208,7 +208,7 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 3. **A generated client works.** A client generated from our document by oapi-codegen compiles, and a test drives every RealWorld operation through it against the app, decoding each typed response.
 4. **No annotations.** The RealWorld app gets its document without writing any OpenAPI by hand beyond a title, a version and doc comments.
 
-> **Status (2026-10-07):** steps 1 to 4 are built: [`openapi`](../openapi), the annotations that `goncini generate` writes, and contract checks in `webtest`. Gates 1 to 4 pass, in [examples/realworld](../examples/realworld): `TestDocumentCoversRealWorlds`, `TestSpec`, `TestClient`, and an app whose only OpenAPI settings are a title and a version.
+> **Status (2026-10-07):** steps 1 to 7 are built: [`openapi`](../openapi), the annotations that `goncini generate` writes, contract checks in `webtest`, [`cors`](../cors), [`ratelimit`](../ratelimit), voters and firewalls per route group in [`security`](../security), [`uid`](../uid) and [`listing`](../listing). Gates 1 to 4 pass, in [examples/realworld](../examples/realworld): `TestDocumentCoversRealWorlds`, `TestSpec`, `TestClient`, and an app whose only OpenAPI settings are a title and a version.
 
 **Decisions taken on the user's behalf:**
 

@@ -45,6 +45,7 @@ func newBinder(t reflect.Type) *binder {
 		panic(f"httpkernel.Endpoint: the input type {t} isn't a struct")
 	}
 	b := &binder{body: -1}
+	mustNotHide(t, t, nil)
 	for _, f := range reflect.VisibleFields(t) {
 		if f.Name == "Body" && len(f.Index) == 1 {
 			b.body = f.Index[0]
@@ -92,6 +93,41 @@ func newBinder(t reflect.Type) *binder {
 		b.params = append(b.params, p)
 	}
 	return b
+}
+
+// mustNotHide panics if a field of t, the input type in, or of the structs
+// it embeds, has a path, query or header tag but is hidden by a field of
+// the same name nearer to in, which Go's selectors would pick instead: a
+// value that would never be bound.
+func mustNotHide(in, t reflect.Type, index []int) {
+	for i := range t.NumField() {
+		f := t.Field(i)
+		at := append(slices.Clone(index), i)
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			mustNotHide(in, f.Type, at)
+		}
+		if len(at) == 1 || !hasSourceTag(f) {
+			continue
+		}
+		if visible, ok := in.FieldByName(f.Name); !ok || !slices.Equal(visible.Index, at) {
+			panic(f"httpkernel.Endpoint: field {in}.{f.Name}, which has a {sourceTag(f)} tag, is hidden by another field named {f.Name}: rename one")
+		}
+	}
+}
+
+// hasSourceTag reports whether f has a path, query or header tag.
+func hasSourceTag(f reflect.StructField) bool {
+	return sourceTag(f) != ""
+}
+
+// sourceTag is the name of f's path, query or header tag, or "".
+func sourceTag(f reflect.StructField) string {
+	for _, s := range []paramSource{inPath, inQuery, inHeader} {
+		if _, ok := f.Tag.Lookup(s.tag()); ok {
+			return s.tag()
+		}
+	}
+	return ""
 }
 
 // source returns where a field gets its value from its tags: path, query or

@@ -21,6 +21,7 @@ const (
 	PositiveInt = `[1-9][0-9]*`
 	ASCIISlug   = `[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*`
 	UUID        = `[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`
+	ULID        = `[0-7][0-9A-HJKMNP-TV-Z]{25}`
 	DateYMD     = `[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])`
 )
 
@@ -91,7 +92,7 @@ func cutRequirements(path, source string) (string, [][2]string) {
 			} else {
 				cut = open + end + 1
 			}
-//line requirements.ego:84
+//line requirements.ego:85
 			b.WriteString(path[:cut])
 			path = path[cut:]
 			continue
@@ -137,7 +138,7 @@ func shape(route *Route) string {
 		}
 		b.WriteString("/" + v2)
 	}
-//line requirements.ego:121
+//line requirements.ego:122
 	return b.String()
 }
 
@@ -193,12 +194,12 @@ func pathValues(segs []segment, path string) []string {
 				raw = strings.Join(parts[i:], "/")
 			}
 		}
-//line requirements.ego:172
+//line requirements.ego:173
 		value, err := url.PathUnescape(raw)
 		if err != nil {
 			value = raw
 		}
-//line requirements.ego:173
+//line requirements.ego:174
 		values = append(values, value)
 	}
 	return values

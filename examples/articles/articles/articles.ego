@@ -10,10 +10,12 @@ import (
 
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/uid"
 )
 
 // Article is what the API serves.
 type Article struct {
+	ID        uid.UUID  `json:"id"`
 	Slug      string    `json:"slug"`
 	Title     string    `json:"title"`
 	Body      string    `json:"body"`

@@ -1,0 +1,145 @@
+package listing_test
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/listing"
+	"github.com/goncini/goncini/openapi"
+	"github.com/goncini/goncini/routing"
+)
+
+// byDate sorts notes by date or title.
+type byDate struct{}
+
+func (byDate) Fields() map[string]string {
+	return map[string]string{"createdAt": "n.created_at", "title": "n.title"}
+}
+
+type note struct {
+	Title string `json:"title"`
+}
+
+type listInput struct {
+	listing.Window
+	Sort  listing.Sort[byDate]  `query:"sort" default:"-createdAt"`
+	After listing.Cursor[[]any] `query:"after"`
+}
+
+// notes is an API that lists 45 notes, saying how it sorts them.
+func notes() (*routing.Router, *httpkernel.Kernel) {
+	r := routing.New()
+	r.Get("/notes", httpkernel.Endpoint(func(ctx context.Context, in listInput) (listing.Page[note], error) {
+		return listing.Page[note]{Items: []note{{in.Sort.SQL()}}, Total: 45, Window: in.Window}, nil
+	}))
+	return r, &httpkernel.Kernel{Handler: r}
+}
+
+func get(k http.Handler, target string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	k.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+	return w
+}
+
+func TestPage(t *testing.T) {
+	_, k := notes()
+	w := get(k, "/notes?limit=20&offset=20&tag=go")
+	if w.Code != 200 || w.Body.String() != `{"items":[{"title":"n.created_at DESC"}],"total":45}` {
+		t.Errorf("%d %s", w.Code, w.Body)
+	}
+	want := []string{
+		`</notes?limit=20&offset=0&tag=go>; rel="first"`,
+		`</notes?limit=20&offset=0&tag=go>; rel="prev"`,
+		`</notes?limit=20&offset=40&tag=go>; rel="next"`,
+		`</notes?limit=20&offset=40&tag=go>; rel="last"`,
+	}
+	if got := w.Header().Values("Link"); !slices.Equal(got, want) {
+		t.Errorf("links:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+func TestLinks(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/notes", nil)
+	for _, c := range []struct {
+		o     listing.Window
+		total int
+		want  string // the rels
+	}{
+		{listing.Window{Limit: 10}, 0, "first last"},
+		{listing.Window{Limit: 10}, 10, "first last"},
+		{listing.Window{Limit: 10}, 11, "first next last"},
+		{listing.Window{Limit: 10, Offset: 5}, 11, "first prev last"}, // 5 to 14 hold the 11th
+		{listing.Window{Limit: 10, Offset: 10}, 11, "first prev last"},
+	} {
+		var rels []string
+		for _, l := range listing.Links(r, c.o, c.total) {
+			rels = append(rels, l[strings.Index(l, `rel="`)+5:len(l)-1])
+		}
+		if got := strings.Join(rels, " "); got != c.want {
+			t.Errorf("%+v of %d: %s, want %s", c.o, c.total, got, c.want)
+		}
+	}
+}
+
+func TestSort(t *testing.T) {
+	_, k := notes()
+	if w := get(k, "/notes?sort=title,-createdAt"); !strings.Contains(w.Body.String(), `"n.title, n.created_at DESC"`) {
+		t.Errorf("%s", w.Body)
+	}
+	w := get(k, "/notes?sort=-password")
+	if w.Code != 400 || !strings.Contains(w.Body.String(), `can't sort by \"password\": sort by createdAt, title`) {
+		t.Errorf("%d %s", w.Code, w.Body)
+	}
+	var s listing.Sort[byDate]
+	must s.UnmarshalText([]byte("-title"))
+	text := must s.MarshalText()
+	if string(text) != "-title" {
+		t.Errorf("%s", text)
+	}
+}
+
+func TestCursor(t *testing.T) {
+	c := listing.After([]any{"2026-10-07", 42.0})
+	text := must c.MarshalText()
+	var back listing.Cursor[[]any]
+	must back.UnmarshalText(text)
+	if !back.Set || back.Key[0] != "2026-10-07" || back.Key[1] != 42.0 {
+		t.Errorf("%+v", back)
+	}
+	_, k := notes()
+	if w := get(k, "/notes?after="+string(text)); w.Code != 200 {
+		t.Errorf("%d %s", w.Code, w.Body)
+	}
+	if w := get(k, "/notes?after=nope"); w.Code != 400 || !strings.Contains(w.Body.String(), "not a cursor of this list") {
+		t.Errorf("%d %s", w.Code, w.Body)
+	}
+}
+
+// TestDocumented checks the schemas of pages, sorts and cursors.
+func TestDocumented(t *testing.T) {
+	r, k := notes()
+	doc := must openapi.Generate(r.List(), k, openapi.Config{}, openapi.Annotations{})
+	op := doc.Paths["/notes"].Get
+	params := map[string]*openapi.Schema{}
+	for _, p := range op.Parameters {
+		params[p.Name] = p.Schema
+	}
+	if s := params["sort"]; s.Pattern != "^-?(createdAt|title)(,-?(createdAt|title))*$" || s.Default != "-createdAt" {
+		t.Errorf("sort: %+v", s)
+	}
+	if s := params["after"]; s.Description != "an opaque cursor" {
+		t.Errorf("after: %+v", s)
+	}
+	if s := params["limit"]; s.Default != int64(20) || *s.Maximum != 100 {
+		t.Errorf("limit: %+v", s)
+	}
+	page := doc.Components.Schemas["PageNote"]
+	if page == nil || page.Properties["items"] == nil || page.Properties["offset"] != nil {
+		t.Errorf("page: %+v", page)
+	}
+}

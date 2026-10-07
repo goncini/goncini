@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/uid"
 
 	"github.com/effect-go/effect-go/trace"
 )
 
 // Store keeps the articles in the database.
 //
-//line store.ego:12
+//line store.ego:13
 type Store struct {
 	sql *db.SQL
 }
@@ -24,12 +25,16 @@ func NewStore(s *db.SQL) *Store {
 	return &Store{sql: s}
 }
 
-// List returns the newest articles first, at most limit of them, with the
-// tag if it isn't empty, and how many there are in all.
-func (s *Store) List(ctx context.Context, tag string, limit int) (_ []Article, _ int, err error) {
+// columns are what scan reads.
+const columns = "SELECT id, slug, title, body, tags, created_at FROM articles"
+
+// List returns the articles with the tag if it isn't empty, sorted by
+// order, an ORDER BY list, from offset and at most limit of them, and how
+// many there are in all.
+func (s *Store) List(ctx context.Context, tag, order string, limit, offset int) (_ []Article, _ int, err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.List")
 	defer trace.End(span, &err)
-//line store.ego:23
+//line store.ego:28
 	where, args := "", []any{}
 	if tag != "" {
 		where, args = " WHERE EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)", []any{tag}
@@ -39,12 +44,12 @@ func (s *Store) List(ctx context.Context, tag string, limit int) (_ []Article, _
 	if err != nil {
 		return nil, 0, fmt.Errorf("db.Value: %w", err)
 	}
-//line store.ego:29
-	list, err := db.All(ctx, conn, scan, "SELECT slug, title, body, tags, created_at FROM articles"+where+" ORDER BY created_at DESC LIMIT ?", append(args, limit)...)
+//line store.ego:34
+	list, err := db.All(ctx, conn, scan, columns+where+" ORDER BY "+order+", id LIMIT ? OFFSET ?", append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("db.All: %w", err)
 	}
-//line store.ego:30
+//line store.ego:35
 	return list, count, nil
 }
 
@@ -52,25 +57,34 @@ func (s *Store) List(ctx context.Context, tag string, limit int) (_ []Article, _
 func (s *Store) Get(ctx context.Context, slug string) (_ Article, _ bool, err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.Get")
 	defer trace.End(span, &err)
-	return db.One(ctx, s.sql.Conn(ctx), scan, "SELECT slug, title, body, tags, created_at FROM articles WHERE slug = ?", slug)
+	return db.One(ctx, s.sql.Conn(ctx), scan, columns+" WHERE slug = ?", slug)
+}
+
+// ByID returns the article with the ID, and reports whether there is one.
+//
+//line store.ego:44
+func (s *Store) ByID(ctx context.Context, id uid.UUID) (_ Article, _ bool, err error) {
+	ctx, span := trace.Start(ctx, "articles.Store.ByID")
+	defer trace.End(span, &err)
+	return db.One(ctx, s.sql.Conn(ctx), scan, columns+" WHERE id = ?", id)
 }
 
 // Add adds an article, unless its slug is taken, and reports whether it
 // did. Checking the slug and adding the article is one transaction, which
 // Get takes part in.
 //
-//line store.ego:41
+//line store.ego:51
 func (s *Store) Add(ctx context.Context, art Article) (_ bool, err error) {
 	ctx, span := trace.Start(ctx, "articles.Store.Add")
 	defer trace.End(span, &err)
-//line store.ego:42
+//line store.ego:52
 	added := false
 	if err := s.sql.InTx(ctx, func(ctx context.Context) error {
 		_, taken, err := s.Get(ctx, art.Slug)
 		if err != nil {
 			return fmt.Errorf("s.Get: %w", err)
 		}
-//line store.ego:45
+//line store.ego:55
 		if taken {
 			return nil
 		}
@@ -78,18 +92,18 @@ func (s *Store) Add(ctx context.Context, art Article) (_ bool, err error) {
 		if err != nil {
 			return err
 		}
-//line store.ego:49
-		if _, err := s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO articles (slug, title, body, tags, created_at) VALUES (?, ?, ?, ?, ?)",
-			art.Slug, art.Title, art.Body, string(tags), art.CreatedAt.UnixMicro()); err != nil {
+//line store.ego:59
+		if _, err := s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO articles (id, slug, title, body, tags, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+			art.ID, art.Slug, art.Title, art.Body, string(tags), art.CreatedAt.UnixMicro()); err != nil {
 			return fmt.Errorf("Conn.ExecContext: %w", err)
 		}
-//line store.ego:51
+//line store.ego:61
 		added = true
 		return nil
 	}); err != nil {
 		return false, err
 	}
-//line store.ego:54
+//line store.ego:64
 	return added, nil
 }
 
@@ -98,14 +112,14 @@ func scan(row db.Scanner) (Article, error) {
 	var art Article
 	var tags string
 	var created int64
-	if err := row.Scan(&art.Slug, &art.Title, &art.Body, &tags, &created); err != nil {
+	if err := row.Scan(&art.ID, &art.Slug, &art.Title, &art.Body, &tags, &created); err != nil {
 		return Article{}, err
 	}
-//line store.ego:63
+//line store.ego:73
 	if err := json.Unmarshal([]byte(tags), &art.Tags); err != nil {
 		return Article{}, err
 	}
-//line store.ego:64
+//line store.ego:74
 	art.CreatedAt = time.UnixMicro(created).UTC()
 	return art, nil
 }

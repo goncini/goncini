@@ -14,12 +14,14 @@ import (
 
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/uid"
 )
 
 // Article is what the API serves.
 //
-//line articles.ego:16
+//line articles.ego:17
 type Article struct {
+	ID        uid.UUID  `json:"id"`
 	Slug      string    `json:"slug"`
 	Title     string    `json:"title"`
 	Body      string    `json:"body"`
@@ -84,7 +86,7 @@ func (e Unavailable) As(target any) bool {
 // Problem says what each ArticleError looks like over HTTP. A new case
 // doesn't compile until it has an arm here.
 //
-//line articles.ego:34
+//line articles.ego:36
 func Problem(err error) httpkernel.Problem {
 	var v httpkernel.Problem
 	if err == nil {
@@ -103,7 +105,7 @@ func Problem(err error) httpkernel.Problem {
 
 // Problems is what a kernel registers to answer ArticleErrors.
 //
-//line articles.ego:44
+//line articles.ego:46
 var Problems = httpkernel.Map[ArticleError](Problem)
 
 // Articles serves the articles of its store.

@@ -50,6 +50,7 @@ func newBinder(t reflect.Type) *binder {
 		panic(fmt.Sprintf("httpkernel.Endpoint: the input type %v isn't a struct", t))
 	}
 	b := &binder{body: -1}
+	mustNotHide(t, t, nil)
 	for _, f := range reflect.VisibleFields(t) {
 		if f.Name == "Body" && len(f.Index) == 1 {
 			b.body = f.Index[0]
@@ -94,7 +95,7 @@ func newBinder(t reflect.Type) *binder {
 			} else {
 				p.def = []string{def}
 			}
-//line bind.ego:88
+//line bind.ego:89
 			if detail := p.set(reflect.New(f.Type).Elem(), p.def); detail != "" {
 				panic(fmt.Sprintf("%s has an invalid default %q: it %s", where, def, detail))
 			}
@@ -102,6 +103,41 @@ func newBinder(t reflect.Type) *binder {
 		b.params = append(b.params, p)
 	}
 	return b
+}
+
+// mustNotHide panics if a field of t, the input type in, or of the structs
+// it embeds, has a path, query or header tag but is hidden by a field of
+// the same name nearer to in, which Go's selectors would pick instead: a
+// value that would never be bound.
+func mustNotHide(in, t reflect.Type, index []int) {
+	for i := range t.NumField() {
+		f := t.Field(i)
+		at := append(slices.Clone(index), i)
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			mustNotHide(in, f.Type, at)
+		}
+		if len(at) == 1 || !hasSourceTag(f) {
+			continue
+		}
+		if visible, ok := in.FieldByName(f.Name); !ok || !slices.Equal(visible.Index, at) {
+			panic(fmt.Sprintf("httpkernel.Endpoint: field %v.%s, which has a %s tag, is hidden by another field named %s: rename one", in, f.Name, sourceTag(f), f.Name))
+		}
+	}
+}
+
+// hasSourceTag reports whether f has a path, query or header tag.
+func hasSourceTag(f reflect.StructField) bool {
+	return sourceTag(f) != ""
+}
+
+// sourceTag is the name of f's path, query or header tag, or "".
+func sourceTag(f reflect.StructField) string {
+	for _, s := range []paramSource{inPath, inQuery, inHeader} {
+		if _, ok := f.Tag.Lookup(s.tag()); ok {
+			return s.tag()
+		}
+	}
+	return ""
 }
 
 // source returns where a field gets its value from its tags: path, query or
@@ -143,7 +179,7 @@ func (s paramSource) tag() string {
 // throughPointer reports whether the field at index is reached through an
 // embedded pointer, which may be nil.
 //
-//line bind.ego:128
+//line bind.ego:164
 func throughPointer(t reflect.Type, index []int) bool {
 	for _, i := range index[:len(index)-1] {
 		f := t.Field(i)
@@ -172,7 +208,7 @@ func parser(t reflect.Type) (func(string) (reflect.Value, error), bool) {
 			return v.Elem(), nil
 		}, true
 	}
-//line bind.ego:154
+//line bind.ego:190
 	switch t.Kind() {
 	case reflect.String:
 		return parsing(t, "", asString), true
@@ -186,7 +222,7 @@ func parser(t reflect.Type) (func(string) (reflect.Value, error), bool) {
 		} else {
 			detail = fmt.Sprintf("must be an integer from %d to %d", lo, hi)
 		}
-//line bind.ego:162
+//line bind.ego:198
 		return parsing(t, detail, func(s string) (int64, error) { return strconv.ParseInt(s, 10, t.Bits()) }), true
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		hi := uint64(math.MaxUint64) >> (64 - t.Bits())
@@ -196,7 +232,7 @@ func parser(t reflect.Type) (func(string) (reflect.Value, error), bool) {
 		} else {
 			detail = fmt.Sprintf("must be an integer from 0 to %d", hi)
 		}
-//line bind.ego:166
+//line bind.ego:202
 		return parsing(t, detail, func(s string) (uint64, error) { return strconv.ParseUint(s, 10, t.Bits()) }), true
 	case reflect.Float32, reflect.Float64:
 		return parsing(t, "must be a number", func(s string) (float64, error) { return parseFinite(s, t.Bits()) }), true
@@ -233,14 +269,14 @@ func (b *binder) bind(w http.ResponseWriter, r *http.Request, in reflect.Value, 
 		switch p.in {
 		case inPath:
 
-//line bind.ego:201
+//line bind.ego:237
 			if v := r.PathValue(p.key); v != "" {
 				values = []string{v}
 			}
 
 		case inQuery:
 
-//line bind.ego:206
+//line bind.ego:242
 			if !queryRead {
 				var err error
 				if query, err = url.ParseQuery(r.URL.RawQuery); err != nil {
@@ -251,7 +287,7 @@ func (b *binder) bind(w http.ResponseWriter, r *http.Request, in reflect.Value, 
 			values = nonEmpty(query[p.key])
 
 		case inHeader:
-//line bind.ego:215
+//line bind.ego:251
 			values = nonEmpty(r.Header.Values(p.key))
 		}
 		if len(values) == 0 {

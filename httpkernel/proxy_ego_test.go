@@ -127,18 +127,15 @@ func TestBaseURL(t *testing.T) {
 	proxied.Header.Set("X-Forwarded-Proto", "https")
 	proxied.Header.Set("X-Forwarded-Host", "shop.example")
 	for want, r := range map[string]*http.Request{
-		"http://api.example.com":       httptest.NewRequest(http.MethodGet, "http://api.example.com/x", nil),
-		"https://api.example.com:8443": httptest.NewRequest(http.MethodGet, "https://api.example.com:8443/x", nil),
-		"https://shop.example":         proxied,
+		"http://api.example.com 192.0.2.1":       httptest.NewRequest(http.MethodGet, "http://api.example.com/x", nil),
+		"https://api.example.com:8443 192.0.2.1": httptest.NewRequest(http.MethodGet, "https://api.example.com:8443/x", nil),
+		"https://shop.example 198.51.100.9":      proxied,
 	} {
-		got = ""
+		got, ip = "", netip.Addr{}
 		k.ServeHTTP(httptest.NewRecorder(), r)
-		if got != want {
-			t.Errorf("BaseURL = %q, want %q", got, want)
+		if got+" "+ip.String() != want {
+			t.Errorf("BaseURL and ClientIPOf = %q %v, want %q", got, ip, want)
 		}
-	}
-	if ip.String() != "198.51.100.9" {
-		t.Errorf("ClientIPOf = %v", ip)
 	}
 	if base := httpkernel.BaseURL(context.Background()); base != "" {
 		t.Errorf("BaseURL outside a kernel = %q", base)
@@ -153,7 +150,7 @@ func TestProxiesIPv4MappedRange(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line proxy_test.ego:142
+//line proxy_test.ego:139
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "[::ffff:10.0.0.5]:80"
 	r.Header.Set("X-Forwarded-For", "198.51.100.9")
@@ -171,7 +168,7 @@ func TestPrivateProxies(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line proxy_test.ego:156
+//line proxy_test.ego:153
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "[::ffff:172.17.0.2]:5000" // Docker's bridge, as IPv4-mapped IPv6
 	r.Header.Set("X-Forwarded-For", "198.51.100.9")

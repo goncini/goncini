@@ -212,6 +212,8 @@ document generated from the code, with nothing to annotate.
   lists now return a `Summary`, without one.
 - In a request, a struct member whose own members are required is
   required: without it, they would be missing.
+- An input field that a nearer field of the same name hides, which
+  binding would never fill, now panics when the route is registered.
 - `httpkernel.Describe` says what an endpoint takes and returns, and
   `routing.Info` has the route's middleware.
 
@@ -239,6 +241,24 @@ key, which a `Store` keeps.
 - RealWorld throttles logins as Symfony's security does: 5 a minute per
   email and client address, which a successful login gives back. Endpoints
   get the client's address with `httpkernel.ClientIPOf(ctx)`.
+
+### uid
+
+Symfony's Uid component: `uid.UUID`, version 4 or 7, time-ordered even
+within a millisecond, and `uid.ULID`, which convert to each other. Both
+bind from requests, scan from text or 16 bytes, and describe themselves in
+OpenAPI documents; `routing.ULID` joins `routing.UUID`. The articles
+example gives its articles UUIDs, with a migration that gives the articles
+there are some.
+
+### listing
+
+API Platform's pagination and order filter: `Window` binds
+`?limit=&offset=`, `Page[T]` writes a page with RFC 8288 `Link` headers to
+the first, previous, next and last pages, `Cursor[K]` pages by opaque keys,
+and `Sort[O]` binds `?sort=-createdAt,title` against the fields an `Order`
+allows, for an `ORDER BY` that can't be injected. The articles example lists
+with them.
 
 ### The RealWorld app
 

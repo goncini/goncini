@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/listing"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/uid"
 )
 
 // Routes registers the endpoints, and keeps the route of an article to build
@@ -13,24 +15,42 @@ import (
 // which httpkernel.Endpoint serves.
 func (a *Articles) Routes(r *routing.Router) {
 	r.Get("/articles", httpkernel.Endpoint(a.List)).Name("article_list")
+	r.Get("/articles/{id}", httpkernel.Endpoint(a.ShowByID)).Name("article_show_by_id").Require("id", routing.UUID)
 	a.show = r.Get("/articles/{slug}", httpkernel.Endpoint(a.Show)).Name("article_show")
 	r.Post("/articles", httpkernel.Endpoint(a.Create)).Name("article_create")
 }
 
 type ListInput struct {
-	Tag   string `query:"tag"`
-	Limit int    `query:"limit" default:"20" validate:"min=1,max=100"`
+	listing.Window
+	Sort listing.Sort[Order] `query:"sort" default:"-createdAt"`
+	Tag  string              `query:"tag"` // only the articles with this tag
 }
 
-type ListOutput struct {
-	Articles []Article `json:"articles"`
-	Count    int       `json:"count"`
+// Order is what lists of articles can be sorted by.
+type Order struct{}
+
+func (Order) Fields() map[string]string {
+	return map[string]string{"createdAt": "created_at", "title": "title"}
 }
 
-// List returns the newest articles first, with the tag if one is given.
-effect (a *Articles) List(in ListInput) (ListOutput, ArticleError) {
-	list, count := check a.store.List(in.Tag, in.Limit) as Unavailable
-	return ListOutput{Articles: list, Count: count}, nil
+// List returns a page of the articles, the newest first unless the sort
+// says otherwise, with the tag if one is given.
+effect (a *Articles) List(in ListInput) (listing.Page[Article], ArticleError) {
+	list, count := check a.store.List(in.Tag, in.Sort.SQL(), in.Limit, in.Offset) as Unavailable
+	return listing.Page[Article]{Items: list, Total: count, Window: in.Window}, nil
+}
+
+type IDInput struct {
+	ID uid.UUID `path:"id"`
+}
+
+// ShowByID returns the article with the ID.
+effect (a *Articles) ShowByID(in IDInput) (Article, ArticleError) {
+	art, ok := check a.store.ByID(in.ID) as Unavailable
+	if !ok {
+		fail NotFound{Slug: in.ID.String()}
+	}
+	return art, nil
 }
 
 type ShowInput struct {
@@ -73,7 +93,7 @@ func (in *CreateInput) Validate() error {
 effect (a *Articles) Create(in CreateInput) (httpkernel.Created[Article], ArticleError) {
 	// The store keeps times to the microsecond: so does the response.
 	created := a.now().Truncate(time.Microsecond)
-	art := Article{Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: created}
+	art := Article{ID: uid.NewV7(), Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: created}
 	added := check a.store.Add(art) as Unavailable
 	if !added {
 		fail Duplicate{Slug: art.Slug}

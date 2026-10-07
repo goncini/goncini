@@ -4,12 +4,15 @@ package articles_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/listing"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/uid"
 	"github.com/goncini/goncini/webtest"
 
 	"github.com/goncini/goncini/examples/articles/app"
@@ -23,7 +26,7 @@ import (
 // that ticks a minute at each call, finer than the store keeps, and migrates its database: a new one
 // in memory.
 //
-//line controller_test.ego:21
+//line controller_test.ego:24
 func boot(t *testing.T) *goncini.App {
 	now := time.Date(2026, 10, 4, 9, 0, 0, 123456789, time.UTC)
 	clock := func() time.Time { now = now.Add(time.Minute); return now }
@@ -53,13 +56,19 @@ func TestArticlesAPI(t *testing.T) {
 	}
 	c.Get("/articles/nope").Problem(404).HasDetail("no article nope")
 
-	var list articles.ListOutput
+	c.Get("/articles/" + hello.ID.String()).Status(200).Contains(`"slug":"hello-world"`)
+	c.Get("/articles/" + uid.NewV7().String()).Problem(404)
+
+	var list listing.Page[articles.Article]
 	c.Get("/articles").Status(200).JSON(&list)
-	if list.Count != 2 || list.Articles[0].Slug != "second-post" {
+	if list.Total != 2 || list.Items[0].Slug != "second-post" {
 		t.Errorf("list %+v", list)
 	}
-	c.Get("/articles?tag=go").Status(200).Contains(`"count":1`)
-	c.Get("/articles?limit=1").Status(200).Contains(`{"articles":[{"slug":"second-post"`)
+	c.Get("/articles?tag=go").Status(200).Contains(`"total":1`)
+	c.Get("/articles?sort=title").Status(200).Contains(`{"items":[{"id":"` + hello.ID.String() + `"`)
+	c.Get("/articles?limit=1&offset=1").Status(200).Contains(`"slug":"hello-world"`).
+		HasHeader("Link", `</articles?limit=1&offset=0>; rel="first"`)
+	c.Get("/articles?sort=body").Problem(400).Violation("sort", `is invalid: can't sort by "body": sort by createdAt, title`)
 	c.Delete("/articles/hello-world").Problem(405).HasDetail("DELETE isn't allowed on /articles/hello-world")
 }
 
@@ -91,13 +100,17 @@ func TestRoutes(t *testing.T) {
 	if err := routing.WriteTable(&b, boot(t).Router.List()); err != nil {
 		panic(err)
 	}
-//line controller_test.ego:84
-	want := "" +
-		"NAME            METHOD  PATH              HANDLER\n" +
-		"article_list    GET     /articles         articles.(*Articles).List\n" +
-		"article_show    GET     /articles/{slug}  articles.(*Articles).Show\n" +
-		"article_create  POST    /articles         articles.(*Articles).Create\n" +
-		"openapi         GET     /openapi.json     openapi.Handler\n"
+//line controller_test.ego:93
+	byID := "/articles/{id<" + routing.UUID + ">}"
+	line := func(name, method, path, handler string) string {
+		return fmt.Sprintf("%-20s%-8s%-*s%s\n", name, method, len(byID)+2, path, handler)
+	}
+	want := line("NAME", "METHOD", "PATH", "HANDLER") +
+		line("article_list", "GET", "/articles", "articles.(*Articles).List") +
+		line("article_show_by_id", "GET", byID, "articles.(*Articles).ShowByID") +
+		line("article_show", "GET", "/articles/{slug}", "articles.(*Articles).Show") +
+		line("article_create", "POST", "/articles", "articles.(*Articles).Create") +
+		line("openapi", "GET", "/openapi.json", "openapi.Handler")
 	if b.String() != want {
 		t.Errorf("routes:\n%s\nwant:\n%s", b.String(), want)
 	}

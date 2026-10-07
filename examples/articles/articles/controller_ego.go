@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/listing"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/uid"
 
 	"github.com/effect-go/effect-go/trace"
 )
@@ -18,37 +20,65 @@ import (
 // its URL. Each effect method compiles to a func(ctx, In) (Out, error),
 // which httpkernel.Endpoint serves.
 //
-//line controller.ego:14
+//line controller.ego:16
 func (a *Articles) Routes(r *routing.Router) {
 	r.Get("/articles", httpkernel.Endpoint(a.List)).Name("article_list")
+	r.Get("/articles/{id}", httpkernel.Endpoint(a.ShowByID)).Name("article_show_by_id").Require("id", routing.UUID)
 	a.show = r.Get("/articles/{slug}", httpkernel.Endpoint(a.Show)).Name("article_show")
 	r.Post("/articles", httpkernel.Endpoint(a.Create)).Name("article_create")
 }
 
 type ListInput struct {
-	Tag   string `query:"tag"`
-	Limit int    `query:"limit" default:"20" validate:"min=1,max=100"`
+	listing.Window
+	Sort listing.Sort[Order] `query:"sort" default:"-createdAt"`
+	Tag  string              `query:"tag"` // only the articles with this tag
 }
 
-type ListOutput struct {
-	Articles []Article `json:"articles"`
-	Count    int       `json:"count"`
+// Order is what lists of articles can be sorted by.
+type Order struct{}
+
+func (Order) Fields() map[string]string {
+	return map[string]string{"createdAt": "created_at", "title": "title"}
 }
 
-// List returns the newest articles first, with the tag if one is given.
-func (a *Articles) List(ctx context.Context, in ListInput) (_ ListOutput, err error) {
+// List returns a page of the articles, the newest first unless the sort
+// says otherwise, with the tag if one is given.
+func (a *Articles) List(ctx context.Context, in ListInput) (_ listing.Page[Article], err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.List")
 	defer trace.End(span, &err)
-//line controller.ego:32
-	list, count, err := a.store.List(ctx, in.Tag, in.Limit)
+//line controller.ego:39
+	list, count, err := a.store.List(ctx, in.Tag, in.Sort.SQL(), in.Limit, in.Offset)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
-			return ListOutput{}, err
+			return listing.Page[Article]{}, err
 		}
-		return ListOutput{}, Unavailable{Cause: err}
+		return listing.Page[Article]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:33
-	return ListOutput{Articles: list, Count: count}, nil
+//line controller.ego:40
+	return listing.Page[Article]{Items: list, Total: count, Window: in.Window}, nil
+}
+
+type IDInput struct {
+	ID uid.UUID `path:"id"`
+}
+
+// ShowByID returns the article with the ID.
+func (a *Articles) ShowByID(ctx context.Context, in IDInput) (_ Article, err error) {
+	ctx, span := trace.Start(ctx, "articles.Articles.ShowByID")
+	defer trace.End(span, &err)
+//line controller.ego:49
+	art, ok, err := a.store.ByID(ctx, in.ID)
+	if err != nil {
+		if _, ok := errors.AsType[ArticleError](err); ok {
+			return Article{}, err
+		}
+		return Article{}, Unavailable{Cause: err}
+	}
+//line controller.ego:50
+	if !ok {
+		return Article{}, NotFound{Slug: in.ID.String()}
+	}
+	return art, nil
 }
 
 type ShowInput struct {
@@ -58,7 +88,7 @@ type ShowInput struct {
 func (a *Articles) Show(ctx context.Context, in ShowInput) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Show")
 	defer trace.End(span, &err)
-//line controller.ego:41
+//line controller.ego:61
 	art, ok, err := a.store.Get(ctx, in.Slug)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -66,7 +96,7 @@ func (a *Articles) Show(ctx context.Context, in ShowInput) (_ Article, err error
 		}
 		return Article{}, Unavailable{Cause: err}
 	}
-//line controller.ego:42
+//line controller.ego:62
 	if !ok {
 		return Article{}, NotFound{Slug: in.Slug}
 	}
@@ -102,9 +132,9 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 	ctx, span := trace.Start(ctx, "articles.Articles.Create")
 	defer trace.End(span, &err)
 	// The store keeps times to the microsecond: so does the response.
-//line controller.ego:75
+//line controller.ego:95
 	created := a.now().Truncate(time.Microsecond)
-	art := Article{Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: created}
+	art := Article{ID: uid.NewV7(), Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: created}
 	added, err := a.store.Add(ctx, art)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -112,7 +142,7 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 		}
 		return httpkernel.Created[Article]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:78
+//line controller.ego:98
 	if !added {
 		return httpkernel.Created[Article]{}, Duplicate{Slug: art.Slug}
 	}
@@ -121,6 +151,6 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 	if err != nil {
 		panic(err)
 	}
-//line controller.ego:83
+//line controller.ego:103
 	return httpkernel.Created[Article]{Location: loc, Body: art}, nil
 }
