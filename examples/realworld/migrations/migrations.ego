@@ -1,0 +1,10 @@
+// Package migrations holds the database's migrations, for goose: run them
+// with db:migrate.
+package migrations
+
+import "embed"
+
+// FS is the migrations, embedded in the binary.
+//
+//go:embed *.sql
+var FS embed.FS

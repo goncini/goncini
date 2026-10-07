@@ -70,6 +70,23 @@ func (r *Router) Include(routes ...Routes) {
 	}
 }
 
+// Prefix returns the Routes that registers the routes of each of routes
+// under prefix, as Group does, such as an API's controllers under /api:
+//
+//	routing.New(routing.Prefix("/api", users, articles))
+func Prefix(prefix string, routes ...Routes) Routes {
+	return prefixed{prefix, routes}
+}
+
+type prefixed struct {
+	prefix string
+	routes []Routes
+}
+
+func (p prefixed) Routes(r *Router) {
+	r.Group(p.prefix).Include(p.routes...)
+}
+
 // Get registers h for GET requests to path, and HEAD requests.
 func (r *Router) Get(path string, h http.Handler) *Route {
 	return r.add(http.MethodGet, path, h)

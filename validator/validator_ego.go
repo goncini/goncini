@@ -35,7 +35,8 @@ import (
 //
 //line validator.ego:32
 type Validator struct {
-	rules *playground.Validate
+	rules    *playground.Validate
+	messages map[string]string
 }
 
 // New returns a validator with go-playground/validator's rules, as
@@ -44,6 +45,18 @@ func New() *Validator {
 	rules := playground.New(playground.WithRequiredStructEnabled())
 	rules.RegisterTagNameFunc(fieldName)
 	return &Validator{rules: rules}
+}
+
+// Message replaces the detail of the violations of a rule, such as
+// required, by detail, and returns v:
+//
+//	validator.New().Message("required", "can't be blank")
+func (v *Validator) Message(rule, detail string) *Validator {
+	if v.messages == nil {
+		v.messages = map[string]string{}
+	}
+	v.messages[rule] = detail
+	return v
 }
 
 // Rules returns the underlying go-playground validator, to register rules
@@ -63,8 +76,13 @@ func (v *Validator) Validate(ctx context.Context, in any) error {
 	}
 	violations := make([]httpkernel.Violation, len(failures))
 	for i, f := range failures {
-		violations[i] = violation(f)
+		v2, ok := v.messages[f.Tag()]
+		if !ok {
+			v2 = detailOf(f)
+		}
+		violations[i] = violation(f, v2)
 	}
+//line validator.ego:76
 	return httpkernel.Invalid(violations...)
 }
 
@@ -95,11 +113,10 @@ func fieldName(f reflect.StructField) string {
 	return v
 }
 
-// violation is where f failed, and why.
+// violation is where f failed, with the detail.
 //
-//line validator.ego:89
-func violation(f playground.FieldError) httpkernel.Violation {
-	detail := detailOf(f)
+//line validator.ego:102
+func violation(f playground.FieldError, detail string) httpkernel.Violation {
 	segments := strings.Split(f.Namespace(), ".")[1:] // without the input's type
 	for _, s := range segments {
 		named, ok := strings.CutPrefix(s, marker)
@@ -118,7 +135,7 @@ func violation(f playground.FieldError) httpkernel.Violation {
 		}
 		return v
 	}
-//line validator.ego:104
+//line validator.ego:116
 	if len(segments) > 0 && segments[0] == "Body" {
 		segments = segments[1:]
 	}
@@ -158,7 +175,7 @@ func detailOf(f playground.FieldError) string {
 	default:
 		size = ""
 	}
-//line validator.ego:139
+//line validator.ego:151
 	var v string
 	switch f.Tag() {
 	case "required", "required_if", "required_unless", "required_with", "required_without":

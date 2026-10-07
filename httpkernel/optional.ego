@@ -1,0 +1,41 @@
+package httpkernel
+
+import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+)
+
+// Optional is a member of a JSON body that can be absent, null or a value,
+// three cases that updates tell apart: an absent member leaves the field
+// as it is, and null may clear it or be refused.
+//
+//	type UpdateInput struct {
+//		Body struct {
+//			Bio   httpkernel.Optional[string] `json:"bio"`   // null clears it
+//			Email httpkernel.Optional[string] `json:"email"` // null is refused
+//		}
+//	}
+type Optional[T any] struct {
+	// Set reports whether the member is in the body, null or not.
+	Set bool
+	// Null reports whether the member is null.
+	Null bool
+	// Value is the member's value, when it is set and not null.
+	Value T
+}
+
+// Present reports whether the member is set to a value, not null.
+func (o Optional[T]) Present() bool {
+	return o.Set && !o.Null
+}
+
+// UnmarshalJSONFrom decodes the member: null or a T.
+func (o *Optional[T]) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	o.Set = true
+	if d.PeekKind() == 'n' {
+		o.Null = true
+		_, err := d.ReadToken()
+		return err
+	}
+	return json.UnmarshalDecode(d, &o.Value)
+}

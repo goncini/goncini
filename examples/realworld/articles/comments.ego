@@ -1,0 +1,58 @@
+package articles
+
+import (
+	"github.com/goncini/goncini/httpkernel"
+
+	"github.com/goncini/goncini/examples/realworld/users"
+)
+
+// CommentBody is a comment, as the API sends it.
+type CommentBody struct {
+	Comment Comment `json:"comment"`
+}
+
+// CommentsBody is the comments of an article.
+type CommentsBody struct {
+	Comments []Comment `json:"comments"`
+}
+
+effect (a *Articles) Comments(in SlugInput) (CommentsBody, ArticleError) {
+	art := check a.find(in.Slug) ""
+	comments := check a.store.Comments(users.Viewer(ctx), art.ID) as Unavailable
+	return CommentsBody{comments}, nil
+}
+
+type AddCommentInput struct {
+	SlugInput
+	Body struct {
+		Comment struct {
+			Body string `json:"body" validate:"required"`
+		} `json:"comment"`
+	}
+}
+
+effect (a *Articles) AddComment(in AddCommentInput) (httpkernel.Created[CommentBody], ArticleError) {
+	art := check a.find(in.Slug) ""
+	viewer := users.Viewer(ctx)
+	id := check a.store.AddComment(art.ID, viewer, in.Body.Comment.Body) as Unavailable
+	c, _ := check a.store.Comment(viewer, art.ID, id) as Unavailable
+	return httpkernel.Created[CommentBody]{Body: CommentBody{c}}, nil
+}
+
+type DeleteCommentInput struct {
+	SlugInput
+	ID int64 `path:"id"`
+}
+
+effect (a *Articles) DeleteComment(in DeleteCommentInput) (httpkernel.NoContent, ArticleError) {
+	art := check a.find(in.Slug) ""
+	c, ok := check a.store.Comment(0, art.ID, in.ID) as Unavailable
+	if !ok {
+		fail NoComment{ID: in.ID}
+	}
+	if c.AuthorID != users.Viewer(ctx) {
+		fail NotCommentAuthor{ID: in.ID}
+	}
+	check a.store.DeleteComment(in.ID) as Unavailable
+	return httpkernel.NoContent{}, nil
+}

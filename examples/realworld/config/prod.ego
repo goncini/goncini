@@ -1,0 +1,6 @@
+package config
+
+func prod(c *Config) {
+	c.HTTP.TrustedProxies = []string{"private"}
+	c.Log.JSON = true
+}

@@ -1,0 +1,39 @@
+package main
+
+import (
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/goncini/goncini/webtest"
+
+	"github.com/goncini/goncini/examples/realworld/app"
+	"github.com/goncini/goncini/examples/realworld/config"
+)
+
+// TestSpec runs RealWorld's official Hurl suite, in testdata/hurl, against
+// the app, as it serves over HTTP. It needs hurl (https://hurl.dev).
+func TestSpec(t *testing.T) {
+	hurl, err := exec.LookPath("hurl")
+	if err != nil && os.Getenv("CI") != "" {
+		t.Fatal("hurl isn't installed: CI must run the suite")
+	}
+	if err != nil {
+		t.Skip("hurl isn't installed")
+	}
+	a := webtest.Boot(t, config.Load, app.Build)
+	webtest.Run(t, a, "db:migrate")
+	srv := httptest.NewServer(a.Kernel)
+	defer srv.Close()
+
+	files := must filepath.Glob("testdata/hurl/*.hurl")
+	args := []string{"--test", "--jobs", "1", "--variable", "host=" + srv.URL, "--variable", "uid=" + strconv.FormatInt(time.Now().UnixNano(), 36)}
+	out, err := exec.CommandContext(t.Context(), hurl, append(args, files...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the suite failed: %v\n%s", err, out)
+	}
+}

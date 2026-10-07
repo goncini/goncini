@@ -87,3 +87,20 @@ func TestBadTag(t *testing.T) {
 	}()
 	validator.New().Validate(context.Background(), input{})
 }
+
+func TestMessage(t *testing.T) {
+	type input struct {
+		Body struct {
+			Title string `json:"title" validate:"required"`
+			Body  string `json:"body" validate:"required,max=3"`
+		}
+	}
+	in := input{}
+	in.Body.Body = "long"
+	err := validator.New().Message("required", "can't be blank").Validate(context.Background(), in)
+	p, _ := errors.AsType[httpkernel.Problem](err)
+	want := []httpkernel.Violation{{Pointer: "#/title", Detail: "can't be blank"}, {Pointer: "#/body", Detail: "must have at most 3 characters"}}
+	if !reflect.DeepEqual(p.Errors, want) {
+		t.Errorf("violations %v", p.Errors)
+	}
+}

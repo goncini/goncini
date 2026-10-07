@@ -157,6 +157,38 @@ Symfony's Security component, the light version:
   `WWW-Authenticate` header. For that, `httpkernel.Problem` gained a
   `Header` of response headers, which the kernel's 405 now uses for `Allow`.
 
+### The RealWorld app
+
+[`examples/realworld`](examples/realworld) is the RealWorld "Conduit" API,
+in goncini's layout 2, on SQLite: users, profiles and follows; articles,
+tags, favorites, the feed and comments. It passes RealWorld's official Hurl
+suite, 13 files and 154 requests, which `TestSpec` runs and CI requires.
+It is 1,192 lines of `.ego`, plus a 58-line migration.
+
+What it needed, now in goncini:
+
+- `httpkernel.Optional[T]`, for updates that tell an absent member from
+  `null` and from a value;
+- `validator.Message`, to change a rule's message, such as `required`'s
+  to "can't be blank";
+- `routing.Prefix`, to register controllers under `/api`.
+
+RealWorld's error format, `{"errors": {"title": ["can't be blank"]}}`, is
+a `Renderer` of its own, and security's 401s are mapped to it: both replace
+goncini's defaults with providers passed to `layer.Build`.
+
+M1's gates:
+
+- RealWorld's suite passes.
+- A case added to an error set without a response fails the build:
+  `match on UserError doesn't handle Suspended`.
+- When the app is stopped during a slow request, the request completes,
+  its database is released after it, and no goroutine is left
+  (`TestShutdownDuringASlowRequest`). It runs on a real network, which
+  `testing/synctest` can't fake, rather than under synctest as planned.
+- Not yet: the app written with plain `net/http`, to compare, and the
+  agent test of AGENTS.md.
+
 ### Found while building
 
 - **Reviews:** independent reviews found 15 defects in `httpkernel` and 9 in

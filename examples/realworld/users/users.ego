@@ -1,0 +1,72 @@
+// Package users is the users feature: registration, login, the current
+// user, and profiles with their followers.
+package users
+
+import (
+	"context"
+	"net/http"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/security"
+
+	"github.com/goncini/goncini/examples/realworld/conduit"
+)
+
+// User is a user, as stored.
+type User struct {
+	ID           int64
+	Username     string
+	Email        string
+	PasswordHash string
+	Bio          *string
+	Image        *string
+}
+
+// Profile is a user as others see them.
+type Profile struct {
+	Username  string  `json:"username"`
+	Bio       *string `json:"bio"`
+	Image     *string `json:"image"`
+	Following bool    `json:"following"`
+}
+
+// UserError is everything the users endpoints fail with.
+error UserError {
+	// Taken means that another user has the username or email: Field.
+	Taken{ Field string } "{Field} has already been taken"
+	// BadCredentials means that no user has the email and password.
+	BadCredentials{} "invalid credentials"
+	// NoProfile means that no user has the username.
+	NoProfile{ Username string } "no user {Username}"
+	// Unavailable means that the store failed.
+	Unavailable{ Cause error } "the users are unavailable"
+}
+
+// Problem says what each UserError looks like over HTTP.
+func Problem(err UserError) httpkernel.Problem {
+	return match err {
+		nil               => httpkernel.Problem{}
+		Taken(e)          => conduit.Problem(http.StatusConflict, e.Field, "has already been taken")
+		BadCredentials(_) => conduit.Problem(http.StatusUnauthorized, "credentials", "invalid")
+		NoProfile(_)      => conduit.Problem(http.StatusNotFound, "profile", "not found")
+		Unavailable(_)    => httpkernel.Problem{Status: http.StatusServiceUnavailable}
+	}
+}
+
+// Problems is what a kernel registers to answer UserErrors.
+var Problems = httpkernel.Map[UserError](Problem)
+
+// Current returns the user that the request ctx belongs to was
+// authenticated as. Its routes are behind security.Required, so there is
+// one.
+func Current(ctx context.Context) *User {
+	u := must security.CurrentUser[*User](ctx)
+	return u
+}
+
+// Viewer returns the ID of the user the request ctx belongs to was
+// authenticated as, or 0 for an anonymous request.
+func Viewer(ctx context.Context) int64 {
+	u, _ := security.User[*User](ctx)
+	return u?.ID
+}

@@ -1,0 +1,74 @@
+// Package articles is the articles feature: articles, their tags,
+// favorites and comments, and the feed of the authors a user follows.
+package articles
+
+import (
+	"net/http"
+	"strings"
+	"time"
+	"unicode"
+
+	"github.com/goncini/goncini/httpkernel"
+
+	"github.com/goncini/goncini/examples/realworld/conduit"
+	"github.com/goncini/goncini/examples/realworld/users"
+)
+
+// Article is an article, as a viewer sees it.
+type Article struct {
+	ID             int64         `json:"-"`
+	AuthorID       int64         `json:"-"`
+	Slug           string        `json:"slug"`
+	Title          string        `json:"title"`
+	Description    string        `json:"description"`
+	Body           *string       `json:"body,omitempty"` // left out of lists
+	TagList        []string      `json:"tagList"`
+	CreatedAt      time.Time     `json:"createdAt"`
+	UpdatedAt      time.Time     `json:"updatedAt"`
+	Favorited      bool          `json:"favorited"`
+	FavoritesCount int           `json:"favoritesCount"`
+	Author         users.Profile `json:"author"`
+}
+
+// Comment is a comment on an article, as a viewer sees it.
+type Comment struct {
+	ID        int64         `json:"id"`
+	AuthorID  int64         `json:"-"`
+	CreatedAt time.Time     `json:"createdAt"`
+	UpdatedAt time.Time     `json:"updatedAt"`
+	Body      string        `json:"body"`
+	Author    users.Profile `json:"author"`
+}
+
+// ArticleError is everything the articles endpoints fail with.
+error ArticleError {
+	NoArticle{ Slug string } "no article {Slug}"
+	// NotAuthor means that the user isn't the author of the article.
+	NotAuthor{ Slug string } "not the author of {Slug}"
+	NoComment{ ID int64 } "no comment {ID}"
+	// NotCommentAuthor means that the user isn't the author of the comment.
+	NotCommentAuthor{ ID int64 } "not the author of comment {ID}"
+	// Unavailable means that the store failed.
+	Unavailable{ Cause error } "the articles are unavailable"
+}
+
+// Problem says what each ArticleError looks like over HTTP.
+func Problem(err ArticleError) httpkernel.Problem {
+	return match err {
+		nil                 => httpkernel.Problem{}
+		NoArticle(_)        => conduit.Problem(http.StatusNotFound, "article", "not found")
+		NotAuthor(_)        => conduit.Problem(http.StatusForbidden, "article", "forbidden")
+		NoComment(_)        => conduit.Problem(http.StatusNotFound, "comment", "not found")
+		NotCommentAuthor(_) => conduit.Problem(http.StatusForbidden, "comment", "forbidden")
+		Unavailable(_)      => httpkernel.Problem{Status: http.StatusServiceUnavailable}
+	}
+}
+
+// Problems is what a kernel registers to answer ArticleErrors.
+var Problems = httpkernel.Map[ArticleError](Problem)
+
+// slugify turns a title into a slug: "Hello, World!" becomes "hello-world".
+func slugify(title string) string {
+	words := strings.FieldsFunc(strings.ToLower(title), r => !unicode.IsLetter(r) && !unicode.IsDigit(r))
+	return strings.Join(words, "-")
+}

@@ -1,0 +1,16 @@
+// Command realworld is the RealWorld "Conduit" API, built with goncini:
+// https://github.com/gothinkster/realworld.
+//
+//	go run . db:migrate
+//	go run .
+//	curl localhost:8080/api/articles
+package main
+
+import (
+	"github.com/goncini/goncini"
+
+	"github.com/goncini/goncini/examples/realworld/app"
+	"github.com/goncini/goncini/examples/realworld/config"
+)
+
+func main() { goncini.Main(config.Load, app.Build) }

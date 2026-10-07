@@ -1,0 +1,236 @@
+package articles
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json/v2"
+	"errors"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/goncini/goncini/db"
+)
+
+// Store keeps the articles, their tags, favorites and comments.
+type Store struct {
+	sql *db.SQL
+	now func() time.Time
+}
+
+func NewStore(s *db.SQL, now func() time.Time) *Store {
+	return &Store{sql: s, now: now}
+}
+
+// Filter selects articles. Its zero value selects them all.
+type Filter struct {
+	Tag       string
+	Author    string // a username
+	Favorited string // a username
+	FeedOf    int64  // a user ID: the articles of the authors they follow
+}
+
+// where returns the conditions of f, and their arguments.
+func (f Filter) where() (string, []any) {
+	var conds []string
+	var args []any
+	add := (cond string, arg any) => {
+		conds = append(conds, cond)
+		args = append(args, arg)
+	}
+	if f.Tag != "" {
+		add("EXISTS (SELECT 1 FROM article_tags t WHERE t.article_id = a.id AND t.tag = ?)", f.Tag)
+	}
+	if f.Author != "" {
+		add("u.username = ?", f.Author)
+	}
+	if f.Favorited != "" {
+		add("EXISTS (SELECT 1 FROM favorites f JOIN users fu ON fu.id = f.user_id WHERE f.article_id = a.id AND fu.username = ?)", f.Favorited)
+	}
+	if f.FeedOf != 0 {
+		add("a.author_id IN (SELECT followed_id FROM follows WHERE follower_id = ?)", f.FeedOf)
+	}
+	if len(conds) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args
+}
+
+// selectArticles selects an article as the viewer, a user ID or 0, sees it:
+// its author's profile, whether the viewer favorited it, and its tags.
+const selectArticles = `SELECT a.id, a.author_id, a.slug, a.title, a.description, a.body, a.created_at, a.updated_at,
+	u.username, u.bio, u.image,
+	(SELECT count(*) FROM favorites f WHERE f.article_id = a.id),
+	EXISTS (SELECT 1 FROM favorites f WHERE f.article_id = a.id AND f.user_id = ?),
+	EXISTS (SELECT 1 FROM follows fo WHERE fo.followed_id = a.author_id AND fo.follower_id = ?),
+	(SELECT json_group_array(tag) FROM (SELECT tag FROM article_tags t WHERE t.article_id = a.id ORDER BY position))
+FROM articles a JOIN users u ON u.id = a.author_id`
+
+// List returns the articles that f selects, newest first, without their
+// bodies, from offset and at most limit of them, with how many there are.
+effect (s *Store) List(viewer int64, f Filter, limit, offset int) ([]Article, int, error) {
+	where, args := f.where()
+	var count int
+	check s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT count(*) FROM articles a JOIN users u ON u.id = a.author_id"+where, args...).Scan(&count)
+	query := selectArticles + where + " ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?"
+	rows := check s.sql.Conn(ctx).QueryContext(ctx, query, append(append([]any{viewer, viewer}, args...), limit, offset)...)
+	defer rows.Close()
+	list := []Article{}
+	for rows.Next() {
+		art := check scanArticle(rows) ""
+		art.Body = nil
+		list = append(list, art)
+	}
+	check rows.Err()
+	return list, count, nil
+}
+
+// BySlug returns the article with the slug, as the viewer sees it, and
+// reports whether there is one.
+effect (s *Store) BySlug(viewer int64, slug string) (Article, bool, error) {
+	row := s.sql.Conn(ctx).QueryRowContext(ctx, selectArticles+" WHERE a.slug = ?", viewer, viewer, slug)
+	art, err := scanArticle(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Article{}, false, nil
+	}
+	check err ""
+	return art, true, nil
+}
+
+// scanArticle reads an article that selectArticles selects.
+func scanArticle(row interface{ Scan(dest ...any) error }) (Article, error) {
+	var art Article
+	var body, tags string
+	var created, updated int64
+	check row.Scan(&art.ID, &art.AuthorID, &art.Slug, &art.Title, &art.Description, &body, &created, &updated,
+		&art.Author.Username, &art.Author.Bio, &art.Author.Image,
+		&art.FavoritesCount, &art.Favorited, &art.Author.Following, &tags) ""
+	check json.Unmarshal([]byte(tags), &art.TagList) ""
+	art.Body = &body
+	art.CreatedAt, art.UpdatedAt = time.UnixMicro(created).UTC(), time.UnixMicro(updated).UTC()
+	return art, nil
+}
+
+// Save inserts art with a slug of its title, unique, if its ID is 0, or
+// else updates it, keeping its slug; then sets its tags, if tags isn't nil.
+// It returns the slug.
+effect (s *Store) Save(art Article, tags []string) (string, error) {
+	now := s.now().UnixMicro()
+	check s.sql.InTx(ctx, func(ctx context.Context) error {
+		conn := s.sql.Conn(ctx)
+		if art.ID != 0 {
+			check conn.ExecContext(ctx, "UPDATE articles SET title = ?, description = ?, body = ?, updated_at = ? WHERE id = ?",
+				art.Title, art.Description, *art.Body, now, art.ID)
+		} else {
+			art.Slug = check s.freeSlug(ctx, slugify(art.Title)) ""
+			res := check conn.ExecContext(ctx, "INSERT INTO articles (slug, title, description, body, author_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				art.Slug, art.Title, art.Description, *art.Body, art.AuthorID, now, now)
+			art.ID = check res.LastInsertId()
+		}
+		if tags == nil {
+			return nil
+		}
+		check conn.ExecContext(ctx, "DELETE FROM article_tags WHERE article_id = ?", art.ID)
+		for i, tag := range tags {
+			check conn.ExecContext(ctx, "INSERT INTO article_tags (article_id, position, tag) VALUES (?, ?, ?)", art.ID, i, tag)
+		}
+		return nil
+	}) ""
+	return art.Slug, nil
+}
+
+// freeSlug returns base, or base followed by the first number that makes
+// it a slug no article has: two articles can have the same title.
+func (s *Store) freeSlug(ctx context.Context, base string) (string, error) {
+	slug := base
+	for n := 2; ; n++ {
+		var taken bool
+		check s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM articles WHERE slug = ?)", slug).Scan(&taken) ""
+		if !taken {
+			return slug, nil
+		}
+		slug = base + "-" + strconv.Itoa(n)
+	}
+}
+
+// Delete deletes the article with the ID, with its tags, favorites and
+// comments.
+effect (s *Store) Delete(id int64) error {
+	check s.sql.Conn(ctx).ExecContext(ctx, "DELETE FROM articles WHERE id = ?", id)
+	return nil
+}
+
+// Favorite makes the user favorite the article, or not.
+effect (s *Store) Favorite(user, article int64, favorite bool) error {
+	query := if favorite { "INSERT OR IGNORE INTO favorites (user_id, article_id) VALUES (?, ?)" } else { "DELETE FROM favorites WHERE user_id = ? AND article_id = ?" }
+	check s.sql.Conn(ctx).ExecContext(ctx, query, user, article)
+	return nil
+}
+
+// Tags returns every tag of an article, sorted.
+effect (s *Store) Tags() ([]string, error) {
+	rows := check s.sql.Conn(ctx).QueryContext(ctx, "SELECT DISTINCT tag FROM article_tags ORDER BY tag")
+	defer rows.Close()
+	tags := []string{}
+	for rows.Next() {
+		var tag string
+		check rows.Scan(&tag)
+		tags = append(tags, tag)
+	}
+	check rows.Err()
+	return tags, nil
+}
+
+// selectComments selects a comment as the viewer, a user ID or 0, sees it.
+const selectComments = `SELECT c.id, c.author_id, c.body, c.created_at, c.updated_at, u.username, u.bio, u.image,
+	EXISTS (SELECT 1 FROM follows fo WHERE fo.followed_id = c.author_id AND fo.follower_id = ?)
+FROM comments c JOIN users u ON u.id = c.author_id`
+
+// Comments returns the comments of the article, oldest first.
+effect (s *Store) Comments(viewer, article int64) ([]Comment, error) {
+	rows := check s.sql.Conn(ctx).QueryContext(ctx, selectComments+" WHERE c.article_id = ? ORDER BY c.id", viewer, article)
+	defer rows.Close()
+	comments := []Comment{}
+	for rows.Next() {
+		c := check scanComment(rows) ""
+		comments = append(comments, c)
+	}
+	check rows.Err()
+	return comments, nil
+}
+
+// Comment returns the comment of the article with the ID, and reports
+// whether there is one.
+effect (s *Store) Comment(viewer, article, id int64) (Comment, bool, error) {
+	row := s.sql.Conn(ctx).QueryRowContext(ctx, selectComments+" WHERE c.article_id = ? AND c.id = ?", viewer, article, id)
+	c, err := scanComment(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Comment{}, false, nil
+	}
+	check err ""
+	return c, true, nil
+}
+
+// scanComment reads a comment that selectComments selects.
+func scanComment(row interface{ Scan(dest ...any) error }) (Comment, error) {
+	var c Comment
+	var created, updated int64
+	check row.Scan(&c.ID, &c.AuthorID, &c.Body, &created, &updated, &c.Author.Username, &c.Author.Bio, &c.Author.Image, &c.Author.Following) ""
+	c.CreatedAt, c.UpdatedAt = time.UnixMicro(created).UTC(), time.UnixMicro(updated).UTC()
+	return c, nil
+}
+
+// AddComment adds a comment by the author to the article, and returns its
+// ID.
+effect (s *Store) AddComment(article, author int64, body string) (int64, error) {
+	now := s.now().UnixMicro()
+	res := check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO comments (article_id, author_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+		article, author, body, now, now)
+	return res.LastInsertId()
+}
+
+// DeleteComment deletes the comment with the ID.
+effect (s *Store) DeleteComment(id int64) error {
+	check s.sql.Conn(ctx).ExecContext(ctx, "DELETE FROM comments WHERE id = ?", id)
+	return nil
+}

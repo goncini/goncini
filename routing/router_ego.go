@@ -74,6 +74,23 @@ func (r *Router) Include(routes ...Routes) {
 	}
 }
 
+// Prefix returns the Routes that registers the routes of each of routes
+// under prefix, as Group does, such as an API's controllers under /api:
+//
+//	routing.New(routing.Prefix("/api", users, articles))
+func Prefix(prefix string, routes ...Routes) Routes {
+	return prefixed{prefix, routes}
+}
+
+type prefixed struct {
+	prefix string
+	routes []Routes
+}
+
+func (p prefixed) Routes(r *Router) {
+	r.Group(p.prefix).Include(p.routes...)
+}
+
 // Get registers h for GET requests to path, and HEAD requests.
 func (r *Router) Get(path string, h http.Handler) *Route {
 	return r.add(http.MethodGet, path, h)
@@ -167,7 +184,7 @@ func (r *Router) Handler(req *http.Request) (h http.Handler, pattern string) {
 // Route is a registered route. Name names it, Require sets requirements on
 // its wildcards, and URL builds its URLs.
 //
-//line router.ego:161
+//line router.ego:178
 type Route struct {
 	t            *table
 	name         string
@@ -206,7 +223,7 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 	} else {
 		pattern = muxPath
 	}
-//line router.ego:194
+//line router.ego:211
 	if f, ok := h.(http.HandlerFunc); h == nil || ok && f == nil {
 		panic(fmt.Sprintf("routing: nil handler for %s (%s)", pattern, source))
 	}
@@ -252,7 +269,7 @@ func mustBeRoutable(p, source string) {
 		if err != nil {
 			text = s
 		}
-//line router.ego:236
+//line router.ego:253
 		if text == "." || text == ".." {
 			panic(fmt.Sprintf("routing: path %q has a %q segment (%s), which clients resolve away", p, text, source))
 		}

@@ -30,7 +30,8 @@ import (
 
 // Validator checks inputs against their validate tags.
 type Validator struct {
-	rules *playground.Validate
+	rules    *playground.Validate
+	messages map[string]string
 }
 
 // New returns a validator with go-playground/validator's rules, as
@@ -39,6 +40,18 @@ func New() *Validator {
 	rules := playground.New(playground.WithRequiredStructEnabled())
 	rules.RegisterTagNameFunc(fieldName)
 	return &Validator{rules: rules}
+}
+
+// Message replaces the detail of the violations of a rule, such as
+// required, by detail, and returns v:
+//
+//	validator.New().Message("required", "can't be blank")
+func (v *Validator) Message(rule, detail string) *Validator {
+	if v.messages == nil {
+		v.messages = map[string]string{}
+	}
+	v.messages[rule] = detail
+	return v
 }
 
 // Rules returns the underlying go-playground validator, to register rules
@@ -58,7 +71,7 @@ func (v *Validator) Validate(ctx context.Context, in any) error {
 	}
 	violations := make([]httpkernel.Violation, len(failures))
 	for i, f := range failures {
-		violations[i] = violation(f)
+		violations[i] = violation(f, v.messages[f.Tag()] ?? detailOf(f))
 	}
 	return httpkernel.Invalid(violations...)
 }
@@ -85,9 +98,8 @@ func fieldName(f reflect.StructField) string {
 	}
 }
 
-// violation is where f failed, and why.
-func violation(f playground.FieldError) httpkernel.Violation {
-	detail := detailOf(f)
+// violation is where f failed, with the detail.
+func violation(f playground.FieldError, detail string) httpkernel.Violation {
 	segments := strings.Split(f.Namespace(), ".")[1:] // without the input's type
 	for _, s := range segments {
 		named, ok := strings.CutPrefix(s, marker)

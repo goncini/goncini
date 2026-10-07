@@ -1,0 +1,89 @@
+package users
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+
+	"github.com/goncini/goncini/db"
+)
+
+// Store keeps the users and who follows whom.
+type Store struct {
+	sql *db.SQL
+}
+
+func NewStore(s *db.SQL) *Store {
+	return &Store{sql: s}
+}
+
+const columns = "id, username, email, password_hash, bio, image"
+
+// ByID returns the user with the ID, and reports whether there is one: the
+// firewall's Load.
+effect (s *Store) ByID(id string) (*User, bool, error) {
+	return s.one(ctx, "SELECT "+columns+" FROM users WHERE id = ?", id)
+}
+
+// ByEmail returns the user with the email, and reports whether there is one.
+effect (s *Store) ByEmail(email string) (*User, bool, error) {
+	return s.one(ctx, "SELECT "+columns+" FROM users WHERE email = ?", email)
+}
+
+// ByUsername returns the user with the username, and reports whether there
+// is one.
+effect (s *Store) ByUsername(username string) (*User, bool, error) {
+	return s.one(ctx, "SELECT "+columns+" FROM users WHERE username = ?", username)
+}
+
+// one returns the user that a query selects.
+func (s *Store) one(ctx context.Context, query string, arg any) (*User, bool, error) {
+	var u User
+	err := s.sql.Conn(ctx).QueryRowContext(ctx, query, arg).Scan(&u.ID, &u.Username, &u.Email, &u.PasswordHash, &u.Bio, &u.Image)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	check err ""
+	return &u, true, nil
+}
+
+// Save inserts u if its ID is 0, or else updates it, unless another user
+// has its username or email: then it returns which of them, and changes
+// nothing.
+effect (s *Store) Save(u *User) (taken string, err error) {
+	check s.sql.InTx(ctx, func(ctx context.Context) error {
+		for _, field := range []string{"username", "email"} {
+			value := if field == "username" { u.Username } else { u.Email }
+			var n int
+			check s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT count(*) FROM users WHERE "+field+" = ? AND id != ?", value, u.ID).Scan(&n)
+			if n > 0 {
+				taken = field
+				return nil
+			}
+		}
+		if u.ID != 0 {
+			check s.sql.Conn(ctx).ExecContext(ctx, "UPDATE users SET username = ?, email = ?, password_hash = ?, bio = ?, image = ? WHERE id = ?",
+				u.Username, u.Email, u.PasswordHash, u.Bio, u.Image, u.ID)
+			return nil
+		}
+		res := check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO users (username, email, password_hash, bio, image) VALUES (?, ?, ?, ?, ?)",
+			u.Username, u.Email, u.PasswordHash, u.Bio, u.Image)
+		u.ID = check res.LastInsertId()
+		return nil
+	}) ""
+	return taken, nil
+}
+
+// Follow makes follower follow followed, or stop following them.
+effect (s *Store) Follow(follower, followed int64, follow bool) error {
+	query := if follow { "INSERT OR IGNORE INTO follows (follower_id, followed_id) VALUES (?, ?)" } else { "DELETE FROM follows WHERE follower_id = ? AND followed_id = ?" }
+	check s.sql.Conn(ctx).ExecContext(ctx, query, follower, followed)
+	return nil
+}
+
+// Follows reports whether follower follows followed.
+effect (s *Store) Follows(follower, followed int64) (bool, error) {
+	var yes bool
+	check s.sql.Conn(ctx).QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM follows WHERE follower_id = ? AND followed_id = ?)", follower, followed).Scan(&yes)
+	return yes, nil
+}

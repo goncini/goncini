@@ -23,7 +23,9 @@ Status: early. [`httpkernel`](httpkernel), [`routing`](routing),
 [`validator`](validator), config as code, the [`console`](console),
 `goncini.Main` and [`db`](db), with adapters for pgx, GORM, goose and
 golang-migrate, [`webtest`](webtest) and [`security`](security) are
-implemented ([CHANGELOG.md](CHANGELOG.md)); the RealWorld app comes next. The plan is in
+implemented ([CHANGELOG.md](CHANGELOG.md)).
+[examples/realworld](examples/realworld), the RealWorld API, passes its
+official test suite. The plan is in
 [docs/assessment.md](docs/assessment.md), and the layout of an app in
 [docs/layout.md](docs/layout.md).
 

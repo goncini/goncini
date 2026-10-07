@@ -276,6 +276,15 @@ func (userRoutes) Routes(r *routing.Router) {
 	r.Get("/users", echo()).Name("user_list")
 }
 
+func TestPrefix(t *testing.T) {
+	r := routing.New(routing.Prefix("/api", articleRoutes{}, userRoutes{}))
+	for _, path := range []string{"/api/articles", "/api/users"} {
+		if rec := serve(r, "GET", path); rec.Code != 200 {
+			t.Errorf("GET %s: %d", path, rec.Code)
+		}
+	}
+}
+
 func TestNamePrefixesAndInclude(t *testing.T) {
 	r := routing.New(articleRoutes{})
 	api := r.Group("/api").NamePrefix("api_")

@@ -1,0 +1,110 @@
+package goncini_test
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"runtime"
+	"slices"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/routing"
+)
+
+// slowRoutes has a request that takes a while, and logs when it starts and
+// ends.
+type slowRoutes struct{ log func(string) }
+
+func (s slowRoutes) Routes(r *routing.Router) {
+	r.Get("/slow", http.HandlerFunc((w http.ResponseWriter, req *http.Request) => {
+		s.log("request started")
+		time.Sleep(200 * time.Millisecond)
+		io.WriteString(w, "done")
+		s.log("request ended")
+	}))
+}
+
+// TestShutdownDuringASlowRequest is M1's gate: when the app is stopped, as
+// SIGTERM stops it, during a slow request, the request completes, the
+// resources the app's scope holds, such as its database, are released
+// after it, and no goroutine is left.
+func TestShutdownDuringASlowRequest(t *testing.T) {
+	before := runtime.NumGoroutine()
+	var mu sync.Mutex
+	var events []string
+	log := func(e string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, e)
+	}
+
+	ln := must net.Listen("tcp", "127.0.0.1:0")
+	addr := ln.Addr().String()
+	ln.Close()
+
+	ctx, stop := context.WithCancel(context.Background()) // what SIGTERM cancels
+	served := make(chan error, 1)
+	go func() {
+		_, err := scope.Run(ctx, func(s *scope.Scope) (struct{}, error) {
+			s.Defer(func(context.Context) error { log("database closed"); return nil })
+			c := goncini.HTTP{Addr: addr}
+			logger := slog.New(slog.DiscardHandler)
+			router := goncini.NewRouter([]routing.Routes{slowRoutes{log}})
+			kernel := must goncini.NewKernel(c, router, nil, nil, nil, nil, logger)
+			app := goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, nil, nil, logger)
+			return struct{}{}, goncini.Run(s.Context(), io.Discard, goncini.NewEnv("prod", nil), c, app, nil)
+		})
+		served <- err
+	}()
+
+	var res *http.Response
+	var err error
+	got := make(chan struct{})
+	go func() {
+		for i := 0; i < 100; i++ { // until the server listens
+			if res, err = http.Get("http://" + addr + "/slow"); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		close(got)
+	}()
+	for {
+		mu.Lock()
+		started := slices.Contains(events, "request started")
+		mu.Unlock()
+		if started {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	stop()
+	<-got
+	if err != nil {
+		t.Fatalf("the request failed: %v", err)
+	}
+	body := must io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || string(body) != "done" {
+		t.Errorf("response: %d %s", res.StatusCode, body)
+	}
+	if err := <-served; err != nil {
+		t.Errorf("serving: %v", err)
+	}
+	if want := []string{"request started", "request ended", "database closed"}; !slices.Equal(events, want) {
+		t.Errorf("events: %v, want %v", events, want)
+	}
+
+	http.DefaultClient.CloseIdleConnections()
+	for i := 0; runtime.NumGoroutine() > before && i < 100; i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := runtime.NumGoroutine(); n > before {
+		t.Errorf("%d goroutines left, of %d before", n-before, n)
+	}
+}
