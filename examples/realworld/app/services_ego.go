@@ -15,6 +15,7 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/goosedb"
 	"github.com/goncini/goncini/lock"
+	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/routing"
@@ -32,13 +33,13 @@ import (
 
 // Services is the app's own services.
 //
-//line services.ego:30
+//line services.ego:31
 var Services = layer.Set(
 	db.Open, db.NewSQL, migrator,
 	security.NewTokens, hasher, firewall, security.NewAccess,
 	users.NewStore, users.NewUsers, logins,
 	articles.NewStore, articles.NewArticles, articles.NewAuthorship, articles.NewInvalidator,
-	cache.Memory,
+	cache.Memory, mailer.Async,
 	moderation.NewFirewall, moderation.NewModeration,
 	notifications.NewNotifications, notifications.NewSubscriber,
 	messenger.SQL, lock.SQL, scheduler.New,

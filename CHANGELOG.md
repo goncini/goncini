@@ -322,6 +322,25 @@ runs in one instance of an app: the one that takes the tick's lock.
 next runs. Lock stores now prune expired locks, which keys used once, as
 ticks are, would leave.
 
+### mime and mailer (M4)
+
+Symfony's Mime and Mailer. `mime.Email` has its addresses, subject, text
+and HTML versions, attachments, inline images and extra headers, and
+`Bytes` writes it as an RFC 5322 message: multipart alternatives, related
+parts and attachments, quoted-printable text, encoded non-ASCII headers,
+no Bcc, and line breaks refused in addresses and headers. Bodies are the
+app's strings: goncini has no templates.
+
+`mailer.Mailer` sends emails through the transport its DSN names: SMTP,
+with STARTTLS when offered or over TLS, `log://`, `memory://` or
+`null://`. `mailer.Async` sends them as `SendEmail` messages that a worker
+sends, so that a request doesn't wait for the mail server; `mailer.Sync`
+sends them at once. `mailertest` runs an SMTP server in a test.
+`messenger:consume -drain` stops once the queues are empty, for tests.
+
+RealWorld welcomes registered users by email, through its queue: M4's
+third gate.
+
 ### httpclient (M4)
 
 Symfony's HttpClient, on `net/http`: a `Client` of an API, with a base URL

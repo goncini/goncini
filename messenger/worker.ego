@@ -36,6 +36,9 @@ type Worker struct {
 	// Limit stops the worker after it handled that many messages; zero
 	// means no limit.
 	Limit int
+	// Drain stops the worker once its transports have no message available:
+	// for tests, and for runs from cron.
+	Drain bool
 	// Logger logs what goes wrong; nil means slog.Default().
 	Logger *slog.Logger
 }
@@ -105,6 +108,10 @@ func (w *Worker) loop(ctx, handling context.Context, take func() (bool, bool), d
 			// A database that is busy, or away for a while: try again
 			// after a poll, rather than stop consuming.
 			(w.Logger ?? slog.Default()).ErrorContext(ctx, "receiving a message failed", slog.Any("error", err))
+		}
+		if !ok && w.Drain && err == nil {
+			done()
+			return nil
 		}
 		if !ok {
 			poll := if w.Poll > 0 { w.Poll } else { time.Second }

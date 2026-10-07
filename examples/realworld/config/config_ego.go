@@ -8,7 +8,9 @@ import (
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/cors"
 	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/mime"
 	"github.com/goncini/goncini/openapi"
 
 	"github.com/goncini/goncini/examples/realworld/moderation"
@@ -17,7 +19,7 @@ import (
 
 // Config is the API's config, one section per part of the app.
 //
-//line config.ego:17
+//line config.ego:19
 type Config struct {
 	HTTP       goncini.HTTP
 	Log        goncini.Log
@@ -26,6 +28,7 @@ type Config struct {
 	OpenAPI    openapi.Config
 	Moderation moderation.Config
 	Messenger  messenger.Config
+	Mailer     mailer.Config
 }
 
 // Load returns the config of env: what every environment shares, then what
@@ -36,6 +39,7 @@ func Load(env *goncini.Env) Config {
 		DB:         db.Config{Driver: "sqlite", URL: env.Secret("DATABASE_URL")},
 		Security:   security.Config{Secret: env.Secret("APP_SECRET"), Scheme: "Token"},
 		OpenAPI:    openapi.Config{Title: "RealWorld Conduit API", Version: "2.0.0"},
+		Mailer:     mailer.Config{DSN: env.Secret("MAILER_DSN"), From: mime.Address{Name: "Conduit", Email: "hello@conduit.example"}},
 		Moderation: moderation.Config{Keys: map[string]string{env.Secret("MODERATOR_KEY"): "moderator"}},
 	}
 	switch env.Name {

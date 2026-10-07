@@ -1,11 +1,14 @@
 package users
 
 import (
+	"html"
 	"strconv"
 	"strings"
 
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/mailer"
+	"github.com/goncini/goncini/mime"
 	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
@@ -18,15 +21,16 @@ type Users struct {
 	tokens *security.Tokens
 	logins *ratelimit.Limiter // by email and client address
 	events *event.Dispatcher
+	mailer *mailer.Mailer
 	// dummy is the hash that a login with an unknown email checks, so that
 	// it takes as long as with a known one: the time doesn't tell which
 	// emails have users.
 	dummy string
 }
 
-func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins *ratelimit.Limiter, events *event.Dispatcher) (*Users, error) {
+func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins *ratelimit.Limiter, events *event.Dispatcher, m *mailer.Mailer) (*Users, error) {
 	dummy := check hasher.Hash("no user has this password") ""
-	return &Users{store: store, hasher: hasher, tokens: tokens, logins: logins, events: events, dummy: dummy}, nil
+	return &Users{store: store, hasher: hasher, tokens: tokens, logins: logins, events: events, mailer: m, dummy: dummy}, nil
 }
 
 // Updated is the event of a user's profile changed, for the features that
@@ -85,6 +89,7 @@ effect (u *Users) Register(in RegisterInput) (httpkernel.Created[UserBody], User
 	if taken != "" {
 		fail Taken{Field: taken}
 	}
+	check u.mailer.Send(ctx, welcome(user)) as Unavailable // sent by a worker
 	body := check u.body(user) as Unavailable
 	return httpkernel.Created[UserBody]{Body: body}, nil
 }
@@ -227,4 +232,14 @@ effect (u *Users) profile(username string, follow *bool) (ProfileBody, UserError
 	}
 	following := check u.store.Follows(viewer, user.ID) as Unavailable
 	return ProfileBody{Profile{Username: user.Username, Bio: user.Bio, Image: user.Image, Following: following}}, nil
+}
+
+// welcome is the email that welcomes a new user.
+func welcome(user *User) *mime.Email {
+	return &mime.Email{
+		To:      []mime.Address{{Name: user.Username, Email: user.Email}},
+		Subject: "Welcome to Conduit, " + user.Username,
+		Text:    "Welcome to Conduit, " + user.Username + ".\n\nFollow the authors you like, and write your own articles.",
+		HTML:    "<p>Welcome to <b>Conduit</b>, " + html.EscapeString(user.Username) + ".</p><p>Follow the authors you like, and write your own articles.</p>",
+	}
 }

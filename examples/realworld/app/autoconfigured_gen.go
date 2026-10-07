@@ -19,6 +19,7 @@ import (
 	"github.com/goncini/goncini/examples/realworld/notifications"
 	"github.com/goncini/goncini/examples/realworld/users"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/scheduler"
@@ -27,7 +28,7 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger, autoDefaultSchedulerConfig, autoDefaultCacheConfig)
+var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger, autoConfigMailer, autoDefaultSchedulerConfig, autoDefaultCacheConfig)
 
 // autoProblems are the error mappers that the app's packages declare.
 func autoProblems() []httpkernel.ErrorMapper {
@@ -55,8 +56,8 @@ func autoSubscribers(p1 *articles.Invalidator, p2 *notifications.Subscriber) []e
 }
 
 // autoHandlers are the services that handle messages.
-func autoHandlers(p1 *notifications.Notifications) []messenger.Handlers {
-	return []messenger.Handlers{p1}
+func autoHandlers(p1 *mailer.Handler, p2 *notifications.Notifications) []messenger.Handlers {
+	return []messenger.Handlers{p1, p2}
 }
 
 // autoTasks are the services that schedule tasks.
@@ -91,16 +92,20 @@ func autoServices() []goncini.Service {
 		{Type: "*articles.Invalidator", Provider: "articles.NewInvalidator", Needs: []string{"*cache.Cache"}},
 		{Type: "messenger.Config", Provider: "autoConfigMessenger", Needs: []string{"config.Config"}},
 		{Type: "messenger.Transports", Provider: "messenger.NewSQLTransports", Needs: []string{"*sql.DB", "messenger.Config"}},
-		{Type: "*notifications.Notifications", Provider: "notifications.NewNotifications", Needs: []string{"*db.SQL", "func() time.Time"}},
-		{Type: "[]messenger.Handlers", Provider: "autoHandlers", Needs: []string{"*notifications.Notifications"}},
+		{Type: "mailer.Config", Provider: "autoConfigMailer", Needs: []string{"config.Config"}},
 		{Type: "goncini.Log", Provider: "autoConfigLog", Needs: []string{"config.Config"}},
 		{Type: "slog.Handler", Provider: "goncini.NewLogHandler", Needs: []string{"goncini.Log"}},
 		{Type: "*slog.Logger", Provider: "goncini.NewLogger", Needs: []string{"slog.Handler"}},
+		{Type: "mailer.Transport", Provider: "mailer.NewTransport", Needs: []string{"mailer.Config", "*slog.Logger"}},
+		{Type: "*mailer.Handler", Provider: "mailer.NewHandler", Needs: []string{"mailer.Config", "mailer.Transport"}},
+		{Type: "*notifications.Notifications", Provider: "notifications.NewNotifications", Needs: []string{"*db.SQL", "func() time.Time"}},
+		{Type: "[]messenger.Handlers", Provider: "autoHandlers", Needs: []string{"*mailer.Handler", "*notifications.Notifications"}},
 		{Type: "*messenger.Bus", Provider: "messenger.NewBus", Needs: []string{"messenger.Config", "messenger.Transports", "[]messenger.Handlers", "*slog.Logger"}},
 		{Type: "*notifications.Subscriber", Provider: "notifications.NewSubscriber", Needs: []string{"*messenger.Bus"}},
 		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{"*articles.Invalidator", "*notifications.Subscriber"}},
 		{Type: "*event.Dispatcher", Provider: "goncini.NewDispatcher", Needs: []string{"[]event.Subscriber"}},
-		{Type: "*users.Users", Provider: "users.NewUsers", Needs: []string{"*users.Store", "security.Hasher", "*security.Tokens", "*ratelimit.Limiter", "*event.Dispatcher"}},
+		{Type: "*mailer.Mailer", Provider: "mailer.NewAsync", Needs: []string{"mailer.Config", "*messenger.Bus"}},
+		{Type: "*users.Users", Provider: "users.NewUsers", Needs: []string{"*users.Store", "security.Hasher", "*security.Tokens", "*ratelimit.Limiter", "*event.Dispatcher", "*mailer.Mailer"}},
 		{Type: "*articles.Store", Provider: "articles.NewStore", Needs: []string{"*db.SQL", "func() time.Time"}},
 		{Type: "articles.Authorship", Provider: "articles.NewAuthorship", Needs: []string{}},
 		{Type: "[]security.Voter", Provider: "autoVoters", Needs: []string{"articles.Authorship"}},
@@ -197,6 +202,9 @@ func autoConfigModeration(c config.Config) moderation.Config { return c.Moderati
 
 // autoConfigMessenger is the Messenger section of the config.
 func autoConfigMessenger(c config.Config) messenger.Config { return c.Messenger }
+
+// autoConfigMailer is the Mailer section of the config.
+func autoConfigMailer(c config.Config) mailer.Config { return c.Mailer }
 
 // autoDefaultSchedulerConfig is the default of scheduler.Config, which the config doesn't have.
 func autoDefaultSchedulerConfig() scheduler.Config { return scheduler.Config{} }

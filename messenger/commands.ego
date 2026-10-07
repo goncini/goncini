@@ -30,6 +30,7 @@ type consumeCommand struct {
 	bus         *Bus
 	limit       int
 	concurrency int
+	drain       bool
 }
 
 func (*consumeCommand) Name() string { return "messenger:consume" }
@@ -40,6 +41,7 @@ func (*consumeCommand) Summary() string {
 func (c *consumeCommand) Flags(fs *flag.FlagSet) {
 	fs.IntVar(&c.limit, "limit", 0, "stop after handling that many messages")
 	fs.IntVar(&c.concurrency, "concurrency", 0, "how many messages to handle at once, instead of the config's")
+	fs.BoolVar(&c.drain, "drain", false, "stop once no message is available")
 }
 
 // Run runs a worker until ctx is done: on SIGTERM, it stops receiving, and
@@ -63,6 +65,7 @@ func (c *consumeCommand) Run(ctx context.Context, out io.Writer, transports []st
 		Lease:       c.bus.Config.Lease,
 		StopTimeout: c.bus.Config.StopTimeout,
 		Limit:       c.limit,
+		Drain:       c.drain,
 		Logger:      c.bus.Logger,
 	}
 	fmt.Fprintf(out, "Consuming %v\n", transports)

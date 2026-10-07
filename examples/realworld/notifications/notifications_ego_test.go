@@ -35,7 +35,7 @@ func TestNotifications(t *testing.T) {
 
 	ann.Get("/api/notifications").Status(200).Contains(`{"notifications":[]}`) // not yet: a worker writes it
 	webtest.Run(t, a, "messenger:failed:show")                                 // nothing failed
-	out := webtest.Run(t, a, "messenger:consume", "-limit", "1")
+	out := webtest.Run(t, a, "messenger:consume", "-drain")
 	t.Log(out)
 	ann.Get("/api/notifications").Status(200).Contains(`"article":"news","author":"bob"`)
 	cat.Get("/api/notifications").Status(200).Contains(`{"notifications":[]}`) // cat follows no one
@@ -45,7 +45,7 @@ func TestNotifications(t *testing.T) {
 	bob.Delete("/api/articles/news").Status(204)
 	ann.Get("/api/notifications").Status(200).Contains(`{"notifications":[]}`)
 	bob.Post("/api/articles", `{"article":{"title":"News","description":"d","body":"b"}}`).Status(201)
-	webtest.Run(t, a, "messenger:consume", "-limit", "1")
+	webtest.Run(t, a, "messenger:consume", "-drain")
 	ann.Get("/api/notifications").Status(200).Contains(`"article":"news","author":"bob"`)
 	c.Get("/api/notifications").Status(401)
 }

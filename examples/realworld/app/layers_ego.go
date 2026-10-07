@@ -19,6 +19,7 @@ import (
 	"github.com/goncini/goncini/examples/realworld/notifications"
 	"github.com/goncini/goncini/examples/realworld/users"
 	"github.com/goncini/goncini/lock"
+	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/scheduler"
 	"github.com/goncini/goncini/security"
@@ -59,16 +60,23 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("NewSQLTransports: %w", err)
 	}
-	notifications2 := notifications.NewNotifications(sql2, v)
-	v2 := autoHandlers(notifications2)
+	config7 := autoConfigMailer(cfg)
 	log := autoConfigLog(cfg)
 	handler := goncini.NewLogHandler(log)
 	logger := goncini.NewLogger(handler)
+	transport, err := mailer.NewTransport(config7, logger)
+	if err != nil {
+		return nil, fmt.Errorf("NewTransport: %w", err)
+	}
+	handler2 := mailer.NewHandler(config7, transport)
+	notifications2 := notifications.NewNotifications(sql2, v)
+	v2 := autoHandlers(handler2, notifications2)
 	bus := messenger.NewBus(config6, transports, v2, logger)
 	subscriber := notifications.NewSubscriber(bus)
 	v3 := autoSubscribers(invalidator, subscriber)
 	dispatcher := goncini.NewDispatcher(v3)
-	users2, err := users.NewUsers(store, hasher2, tokens, limiter, dispatcher)
+	mailer2 := mailer.NewAsync(config7, bus)
+	users2, err := users.NewUsers(store, hasher2, tokens, limiter, dispatcher, mailer2)
 	if err != nil {
 		return nil, fmt.Errorf("users.NewUsers: %w", err)
 	}
@@ -93,19 +101,19 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	config7 := autoDefaultSchedulerConfig()
+	config8 := autoDefaultSchedulerConfig()
 	sqlStore, err := lock.NewSQLStore(db2)
 	if err != nil {
 		return nil, fmt.Errorf("NewSQLStore: %w", err)
 	}
 	v8 := autoTasks(notifications2)
-	scheduler2 := scheduler.New(config7, sqlStore, v8, logger)
+	scheduler2 := scheduler.New(config8, sqlStore, v8, logger)
 	v9 := autoCommands(migrator2, bus, scheduler2)
 	v10 := autoChecks(db2)
 	v11 := autoServices()
-	config8 := autoConfigOpenAPI(cfg)
+	config9 := autoConfigOpenAPI(cfg)
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config8, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config9, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
@@ -149,16 +157,23 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config) (*Test, e
 	if err != nil {
 		return nil, fmt.Errorf("NewSQLTransports: %w", err)
 	}
-	notifications2 := notifications.NewNotifications(sql2, v)
-	v2 := autoHandlers(notifications2)
+	config7 := autoConfigMailer(cfg)
 	log := autoConfigLog(cfg)
 	handler := goncini.NewLogHandler(log)
 	logger := goncini.NewLogger(handler)
+	transport, err := mailer.NewTransport(config7, logger)
+	if err != nil {
+		return nil, fmt.Errorf("NewTransport: %w", err)
+	}
+	handler2 := mailer.NewHandler(config7, transport)
+	notifications2 := notifications.NewNotifications(sql2, v)
+	v2 := autoHandlers(handler2, notifications2)
 	bus := messenger.NewBus(config6, transports, v2, logger)
 	subscriber := notifications.NewSubscriber(bus)
 	v3 := autoSubscribers(invalidator, subscriber)
 	dispatcher := goncini.NewDispatcher(v3)
-	users2, err := users.NewUsers(store, hasher2, tokens, limiter, dispatcher)
+	mailer2 := mailer.NewAsync(config7, bus)
+	users2, err := users.NewUsers(store, hasher2, tokens, limiter, dispatcher, mailer2)
 	if err != nil {
 		return nil, fmt.Errorf("users.NewUsers: %w", err)
 	}
@@ -183,19 +198,19 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config) (*Test, e
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	config7 := autoDefaultSchedulerConfig()
+	config8 := autoDefaultSchedulerConfig()
 	sqlStore, err := lock.NewSQLStore(db2)
 	if err != nil {
 		return nil, fmt.Errorf("NewSQLStore: %w", err)
 	}
 	v8 := autoTasks(notifications2)
-	scheduler2 := scheduler.New(config7, sqlStore, v8, logger)
+	scheduler2 := scheduler.New(config8, sqlStore, v8, logger)
 	v9 := autoCommands(migrator2, bus, scheduler2)
 	v10 := autoChecks(db2)
 	v11 := autoServices()
-	config8 := autoConfigOpenAPI(cfg)
+	config9 := autoConfigOpenAPI(cfg)
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config8, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config9, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}

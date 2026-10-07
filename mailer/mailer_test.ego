@@ -1,0 +1,79 @@
+package mailer_test
+
+import (
+	"bytes"
+	"context"
+	"log/slog"
+	"net/mail"
+	"testing"
+
+	"github.com/goncini/goncini/mailer"
+	"github.com/goncini/goncini/mailer/mailertest"
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/mime"
+)
+
+func welcome() *mime.Email {
+	return &mime.Email{To: []mime.Address{{Email: "ann@example.com"}}, Bcc: []mime.Address{{Email: "audit@example.com"}}, Subject: "Welcome", Text: "Hi Ann."}
+}
+
+func TestSMTP(t *testing.T) {
+	server := mailertest.NewServer(t)
+	c := mailer.Config{DSN: server.DSN(), From: mime.Address{Name: "Conduit", Email: "hello@conduit.example"}}
+	tr := must mailer.NewTransport(c, slog.New(slog.DiscardHandler))
+	must mailer.New(c, tr).Send(context.Background(), welcome())
+	got := server.Messages()
+	if len(got) != 1 || got[0].From != "hello@conduit.example" || len(got[0].To) != 2 {
+		t.Fatalf("received %+v", got)
+	}
+	msg := must mail.ReadMessage(bytes.NewReader(got[0].Data))
+	if msg.Header.Get("Subject") != "Welcome" || msg.Header.Get("Bcc") != "" {
+		t.Errorf("header %v", msg.Header)
+	}
+}
+
+func TestDSNs(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+	for dsn, want := range map[string]string{
+		"":                             "*mailer.LogTransport",
+		"log://":                       "*mailer.LogTransport",
+		"memory://":                    "*mailer.MemoryTransport",
+		"null://":                      "mailer.NullTransport",
+		"smtps://u:p@mail.example.com": "*mailer.SMTPTransport",
+		"smtp://mail.example.com:2525": "*mailer.SMTPTransport",
+	} {
+		tr, err := mailer.NewTransport(mailer.Config{DSN: dsn}, logger)
+		if err != nil || f"{tr:T}" != want {
+			t.Errorf("%q: %T, %v", dsn, tr, err)
+		}
+	}
+	tr := must mailer.NewTransport(mailer.Config{DSN: "smtps://u:p%40ss@mail.example.com"}, logger)
+	smtp := tr.(*mailer.SMTPTransport)
+	if smtp.Addr != "mail.example.com:465" || !smtp.TLS || smtp.Password != "p@ss" {
+		t.Errorf("%+v", smtp)
+	}
+	for _, bad := range []string{"smtp://", "carrier-pigeon://x"} {
+		if _, err := mailer.NewTransport(mailer.Config{DSN: bad}, logger); err == nil {
+			t.Errorf("%q: no error", bad)
+		}
+	}
+}
+
+// TestAsync checks that an Async mailer sends emails as messages, which a
+// worker sends.
+func TestAsync(t *testing.T) {
+	c := mailer.Config{DSN: "memory://", From: mime.Address{Email: "hello@conduit.example"}}
+	tr := must mailer.NewTransport(c, slog.New(slog.DiscardHandler))
+	bus := messenger.NewBus(messenger.Config{}, messenger.NewMemoryTransports(messenger.Config{}), []messenger.Handlers{mailer.NewHandler(c, tr)}, slog.New(slog.DiscardHandler))
+	ctx := context.Background()
+	must mailer.NewAsync(c, bus).Send(ctx, welcome())
+	memory := tr.(*mailer.MemoryTransport)
+	if len(memory.Sent()) != 0 {
+		t.Fatal("sent in the request")
+	}
+	w := &messenger.Worker{Bus: bus, Transports: []string{"async"}, Limit: 1}
+	must w.Run(ctx)
+	if sent := memory.Sent(); len(sent) != 1 || sent[0].To[0] != "ann@example.com" {
+		t.Errorf("sent %+v", sent)
+	}
+}

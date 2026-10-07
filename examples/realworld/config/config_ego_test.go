@@ -22,6 +22,7 @@ var secrets = map[string]string{
 	"DATABASE_URL":  ":memory:",
 	"APP_SECRET":    "a secret of at least thirty-two bytes",
 	"MODERATOR_KEY": "a moderator's key of at least thirty-two bytes",
+	"MAILER_DSN":    "null://",
 }
 
 // TestEnvironments builds the app in each environment, which checks that

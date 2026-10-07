@@ -40,6 +40,9 @@ type Worker struct {
 	// Limit stops the worker after it handled that many messages; zero
 	// means no limit.
 	Limit int
+	// Drain stops the worker once its transports have no message available:
+	// for tests, and for runs from cron.
+	Drain bool
 	// Logger logs what goes wrong; nil means slog.Default().
 	Logger *slog.Logger
 }
@@ -109,7 +112,7 @@ func (w *Worker) stopTimeout() time.Duration {
 
 // loop receives and handles messages until ctx is done or take refuses.
 //
-//line worker.ego:101
+//line worker.ego:104
 func (w *Worker) loop(ctx, handling context.Context, take func() (bool, bool), done func()) error {
 	for ctx.Err() == nil {
 		lease, ok, err := w.receive(ctx)
@@ -122,7 +125,11 @@ func (w *Worker) loop(ctx, handling context.Context, take func() (bool, bool), d
 			}
 			(v).ErrorContext(ctx, "receiving a message failed", slog.Any("error", err))
 		}
-//line worker.ego:109
+//line worker.ego:112
+		if !ok && w.Drain && err == nil {
+			done()
+			return nil
+		}
 		if !ok {
 			var poll time.Duration
 			if w.Poll > 0 {
@@ -130,7 +137,7 @@ func (w *Worker) loop(ctx, handling context.Context, take func() (bool, bool), d
 			} else {
 				poll = time.Second
 			}
-//line worker.ego:111
+//line worker.ego:118
 			select {
 			case <-ctx.Done():
 			case <-time.After(poll):
@@ -180,7 +187,7 @@ func (w *Worker) lease() time.Duration {
 // process handles a leased message, extending its lease meanwhile, then
 // acknowledges it, retries it later, or fails it over.
 //
-//line worker.ego:153
+//line worker.ego:160
 func (w *Worker) process(ctx context.Context, lease Lease) {
 	msg := lease.Message()
 	v := w.Logger
@@ -188,7 +195,7 @@ func (w *Worker) process(ctx context.Context, lease Lease) {
 		v = slog.Default()
 	}
 	log := (v).With(slog.String("message", msg.Type), slog.String("id", msg.ID))
-//line worker.ego:156
+//line worker.ego:163
 	hctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	extended := make(chan struct{})

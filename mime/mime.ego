@@ -1,0 +1,279 @@
+// Package mime writes emails, as Symfony's Mime component does: an Email
+// has its addresses, a subject, a text and an HTML version, attachments and
+// inline images, and Bytes writes it as an RFC 5322 message, MIME parts
+// and encoded headers included.
+//
+//	e := &mime.Email{
+//		From:    mime.Address{Name: "Conduit", Email: "hello@conduit.example"},
+//		To:      []mime.Address{{Email: "ann@example.com"}},
+//		Subject: "Welcome, Ann",
+//		Text:    "Welcome to Conduit.",
+//		HTML:    "<p>Welcome to <b>Conduit</b>.</p>",
+//	}
+//
+// Bodies are strings that the app writes: goncini has no templates, and
+// html/template is the standard library's.
+package mime
+
+import (
+	"bytes"
+	"cmp"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	stdmime "mime"
+	"mime/multipart"
+	"mime/quotedprintable"
+	"net/mail"
+	"net/textproto"
+	"strings"
+	"time"
+)
+
+// Address is an email address, with an optional name.
+type Address struct {
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email"`
+}
+
+// String writes the address as a header does: "Ann" <ann@example.com>,
+// with a name that isn't ASCII encoded.
+func (a Address) String() string {
+	return (&mail.Address{Name: a.Name, Address: a.Email}).String()
+}
+
+// Part is an attachment, or an image the HTML shows inline by its
+// ContentID: <img src="cid:logo">.
+type Part struct {
+	Name        string `json:"name"`
+	ContentType string `json:"contentType"` // empty means guessed from Name
+	Data        []byte `json:"data"`
+	ContentID   string `json:"contentId,omitempty"` // inline when not empty
+}
+
+// Email is an email.
+type Email struct {
+	From    Address   `json:"from"`
+	To      []Address `json:"to"`
+	Cc      []Address `json:"cc,omitempty"`
+	Bcc     []Address `json:"bcc,omitempty"`
+	ReplyTo []Address `json:"replyTo,omitempty"`
+	Subject string    `json:"subject"`
+	// Text and HTML are the email's versions; one at least.
+	Text string `json:"text,omitempty"`
+	HTML string `json:"html,omitempty"`
+	// Parts are its attachments and inline images.
+	Parts []Part `json:"parts,omitempty"`
+	// Header holds more headers, such as List-Unsubscribe.
+	Header map[string]string `json:"header,omitempty"`
+	// Date is when it is written; zero means when Bytes is called.
+	Date time.Time `json:"date,omitzero"`
+}
+
+// Recipients are the addresses the email goes to: To, Cc and Bcc.
+func (e *Email) Recipients() []string {
+	var out []string
+	for _, list := range [][]Address{e.To, e.Cc, e.Bcc} {
+		for _, a := range list {
+			out = append(out, a.Email)
+		}
+	}
+	return out
+}
+
+// Validate reports what the email lacks: a sender, a recipient, or a body.
+func (e *Email) Validate() error {
+	switch {
+	case e.From.Email == "":
+		return errors.New("mime: the email has no sender")
+	case len(e.Recipients()) == 0:
+		return errors.New("mime: the email has no recipient")
+	case e.Text == "" && e.HTML == "":
+		return errors.New("mime: the email has no text and no HTML")
+	}
+	for _, a := range append(append([]Address{e.From}, e.To...), append(e.Cc, e.Bcc...)...) {
+		if _, err := mail.ParseAddress(a.Email); err != nil || strings.ContainsAny(a.Email, "\r\n") {
+			return fmt.Errorf("mime: invalid address %q", a.Email)
+		}
+	}
+	return nil
+}
+
+// Bytes writes the email as an RFC 5322 message, without Bcc.
+func (e *Email) Bytes() ([]byte, error) {
+	check e.Validate() ""
+	var b bytes.Buffer
+	h := textproto.MIMEHeader{}
+	h.Set("From", e.From.String())
+	setList(h, "To", e.To)
+	setList(h, "Cc", e.Cc)
+	setList(h, "Reply-To", e.ReplyTo)
+	h.Set("Subject", stdmime.QEncoding.Encode("utf-8", e.Subject))
+	date := if e.Date.IsZero() { time.Now() } else { e.Date }
+	h.Set("Date", date.Format(time.RFC1123Z))
+	h.Set("Message-ID", "<"+randomID()+"@"+domain(e.From.Email)+">")
+	h.Set("MIME-Version", "1.0")
+	for name, value := range e.Header {
+		if strings.ContainsAny(name+value, "\r\n") {
+			return nil, fmt.Errorf("mime: header %q has a line break", name)
+		}
+		h.Set(name, stdmime.QEncoding.Encode("utf-8", value))
+	}
+	var attachments, inline []Part
+	for _, p := range e.Parts {
+		if p.ContentID != "" {
+			inline = append(inline, p)
+		} else {
+			attachments = append(attachments, p)
+		}
+	}
+	body := check bodyPart(e.Text, e.HTML, inline) ""
+	if len(attachments) > 0 {
+		body = check mixed(body, attachments) ""
+	}
+	for name, values := range body.header {
+		h[name] = values
+	}
+	writeHeader(&b, h)
+	b.Write(body.data)
+	return b.Bytes(), nil
+}
+
+// part is a MIME part: its header and its encoded body.
+type part struct {
+	header textproto.MIMEHeader
+	data   []byte
+}
+
+// bodyPart is the text, the HTML with its inline images, or both as
+// alternatives.
+func bodyPart(text, html string, inline []Part) (part, error) {
+	var parts []part
+	if text != "" {
+		parts = append(parts, textPart("text/plain", text))
+	}
+	if html != "" {
+		p := textPart("text/html", html)
+		if len(inline) > 0 {
+			files := []part{p}
+			for _, img := range inline {
+				files = append(files, filePart(img, "inline"))
+			}
+			p = check multipartOf("related", files) ""
+		}
+		parts = append(parts, p)
+	}
+	if len(parts) == 1 {
+		return parts[0], nil
+	}
+	return multipartOf("alternative", parts)
+}
+
+// mixed puts the attachments after the body.
+func mixed(body part, attachments []Part) (part, error) {
+	parts := []part{body}
+	for _, a := range attachments {
+		parts = append(parts, filePart(a, "attachment"))
+	}
+	return multipartOf("mixed", parts)
+}
+
+// textPart is a text in UTF-8, quoted-printable.
+func textPart(contentType, text string) part {
+	var b bytes.Buffer
+	w := quotedprintable.NewWriter(&b)
+	w.Write([]byte(strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\n", "\r\n")))
+	w.Close()
+	h := textproto.MIMEHeader{}
+	h.Set("Content-Type", contentType+"; charset=utf-8")
+	h.Set("Content-Transfer-Encoding", "quoted-printable")
+	return part{h, b.Bytes()}
+}
+
+// filePart is a file in base64, as an attachment or inline.
+func filePart(p Part, disposition string) part {
+	contentType := p.ContentType
+	if contentType == "" {
+		i := strings.LastIndexByte(p.Name, '.')
+		contentType = if i >= 0 { stdmime.TypeByExtension(p.Name[i:]) } else { "" }
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+	}
+	h := textproto.MIMEHeader{}
+	h.Set("Content-Type", stdmime.FormatMediaType(contentType, map[string]string{"name": p.Name}))
+	h.Set("Content-Disposition", stdmime.FormatMediaType(disposition, map[string]string{"filename": p.Name}))
+	h.Set("Content-Transfer-Encoding", "base64")
+	if p.ContentID != "" {
+		h.Set("Content-ID", "<"+p.ContentID+">")
+	}
+	encoded := base64.StdEncoding.EncodeToString(p.Data)
+	var b bytes.Buffer
+	for len(encoded) > 76 {
+		b.WriteString(encoded[:76] + "\r\n")
+		encoded = encoded[76:]
+	}
+	b.WriteString(encoded + "\r\n")
+	return part{h, b.Bytes()}
+}
+
+// multipartOf puts parts in a multipart of the subtype.
+func multipartOf(subtype string, parts []part) (part, error) {
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	for _, p := range parts {
+		pw := check w.CreatePart(p.header) ""
+		pw.Write(p.data)
+	}
+	check w.Close() ""
+	h := textproto.MIMEHeader{}
+	h.Set("Content-Type", "multipart/"+subtype+"; boundary="+w.Boundary())
+	return part{h, b.Bytes()}, nil
+}
+
+// setList sets a header of addresses, if there are any.
+func setList(h textproto.MIMEHeader, name string, list []Address) {
+	if len(list) == 0 {
+		return
+	}
+	var s []string
+	for _, a := range list {
+		s = append(s, a.String())
+	}
+	h.Set(name, strings.Join(s, ", "))
+}
+
+// writeHeader writes h, in a stable order, and the blank line after it.
+func writeHeader(b *bytes.Buffer, h textproto.MIMEHeader) {
+	order := []string{"From", "To", "Cc", "Reply-To", "Subject", "Date", "Message-Id", "Mime-Version", "Content-Type", "Content-Transfer-Encoding"}
+	written := map[string]bool{}
+	write := (name string) => {
+		for _, v := range h[name] {
+			fmt.Fprintf(b, "%s: %s\r\n", name, v)
+		}
+		written[name] = true
+	}
+	for _, name := range order {
+		write(name)
+	}
+	for name := range h {
+		if !written[name] {
+			write(name)
+		}
+	}
+	b.WriteString("\r\n")
+}
+
+func randomID() string {
+	var b [12]byte
+	rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// domain is the domain of an address.
+func domain(email string) string {
+	_, d, _ := strings.Cut(email, "@")
+	return cmp.Or(d, "localhost")
+}

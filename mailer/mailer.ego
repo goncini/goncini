@@ -1,0 +1,239 @@
+// Package mailer sends emails, as Symfony's Mailer does: through a
+// transport chosen by a DSN, now or through Messenger, so that a request
+// doesn't wait for the mail server.
+//
+//	check m.Send(ctx, &mime.Email{To: …, Subject: …, Text: …}) ""
+//
+// DSNs:
+//
+//	smtp://user:password@host:587   SMTP, with STARTTLS when the server offers it
+//	smtps://user:password@host:465  SMTP over TLS
+//	log://                          logs the emails: for development
+//	memory://                       keeps them: for tests
+//	null://                         drops them
+//
+// Sync and Async are the sets of providers to wire: Async sends emails as
+// SendEmail messages, which a worker sends.
+package mailer
+
+import (
+	"cmp"
+	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/smtp"
+	"net/url"
+	"slices"
+	"strings"
+	"sync"
+
+	"github.com/effect-go/effect-go/layer"
+
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/mime"
+)
+
+// Config configures a mailer.
+type Config struct {
+	// DSN chooses the transport; empty means log://. It holds a password:
+	// read it with env.Secret.
+	DSN string
+	// From is the sender of the emails that have none.
+	From mime.Address
+	// Async is the Messenger transport that Async's emails go through;
+	// empty means "async".
+	Async string
+}
+
+// Transport sends emails, written as RFC 5322 messages.
+type Transport interface {
+	Send(ctx context.Context, from string, to []string, raw []byte) error
+}
+
+// Sync is the providers of a mailer that sends emails when they're sent.
+var Sync = layer.Set(NewTransport, New)
+
+// Async is the providers of a mailer that sends emails through Messenger,
+// to the transport Config.Async names.
+var Async = layer.Set(NewTransport, NewHandler, NewAsync)
+
+// Mailer sends emails.
+type Mailer struct {
+	Config    Config
+	Transport Transport // nil when the mailer is Async's
+	bus       *messenger.Bus
+}
+
+// New returns a mailer that sends emails through t when they're sent.
+func New(c Config, t Transport) *Mailer {
+	return &Mailer{Config: c, Transport: t}
+}
+
+// NewAsync returns a mailer that sends emails as SendEmail messages, which
+// NewHandler's handler sends.
+func NewAsync(c Config, bus *messenger.Bus) *Mailer {
+	return &Mailer{Config: c, bus: bus}
+}
+
+// SendEmail is the message of an email to send.
+type SendEmail struct {
+	From string   `json:"from"`
+	To   []string `json:"to"`
+	Raw  []byte   `json:"raw"`
+}
+
+// Send sends e, from Config.From if it has no sender.
+func (m *Mailer) Send(ctx context.Context, e *mime.Email) error {
+	if e.From.Email == "" {
+		e.From = m.Config.From
+	}
+	raw := check e.Bytes() ""
+	if m.bus != nil {
+		return messenger.Dispatch(ctx, m.bus, SendEmail{From: e.From.Email, To: e.Recipients(), Raw: raw})
+	}
+	return m.Transport.Send(ctx, e.From.Email, e.Recipients(), raw)
+}
+
+// Handler sends the SendEmail messages through a transport.
+type Handler struct {
+	config    Config
+	transport Transport
+}
+
+// NewHandler returns the handler of SendEmail, which it routes to
+// Config.Async.
+func NewHandler(c Config, t Transport) *Handler {
+	return &Handler{config: c, transport: t}
+}
+
+// Handlers registers the handler, and the route.
+func (h *Handler) Handlers(b *messenger.Bus) {
+	messenger.Handle(b, (ctx context.Context, m SendEmail) => h.transport.Send(ctx, m.From, m.To, m.Raw))
+	messenger.Route[SendEmail](b, cmp.Or(h.config.Async, "async"))
+}
+
+// NewTransport returns the transport of c.DSN.
+func NewTransport(c Config, logger *slog.Logger) (Transport, error) {
+	dsn := cmp.Or(c.DSN, "log://")
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("mailer: invalid DSN: %w", err)
+	}
+	switch u.Scheme {
+	case "smtp", "smtps":
+		return newSMTP(u)
+	case "log":
+		return &LogTransport{Logger: logger}, nil
+	case "memory":
+		return &MemoryTransport{}, nil
+	case "null":
+		return NullTransport{}, nil
+	}
+	return nil, fmt.Errorf("mailer: unknown transport %q: use smtp, smtps, log, memory or null", u.Scheme)
+}
+
+// SMTPTransport sends emails to an SMTP server.
+type SMTPTransport struct {
+	// Addr is the server's host and port.
+	Addr string
+	// Username and Password authenticate, if Username isn't empty, with
+	// PLAIN, which net/smtp only allows over TLS or to localhost.
+	Username, Password string
+	// TLS connects over TLS at once (smtps); otherwise STARTTLS is used when
+	// the server offers it.
+	TLS bool
+}
+
+func newSMTP(u *url.URL) (*SMTPTransport, error) {
+	t := &SMTPTransport{TLS: u.Scheme == "smtps", Username: u.User.Username()}
+	t.Password, _ = u.User.Password()
+	port := u.Port()
+	if port == "" {
+		port = if t.TLS { "465" } else { "587" }
+	}
+	if u.Hostname() == "" {
+		return nil, errors.New("mailer: the SMTP DSN has no host")
+	}
+	t.Addr = net.JoinHostPort(u.Hostname(), port)
+	return t, nil
+}
+
+func (t *SMTPTransport) Send(ctx context.Context, from string, to []string, raw []byte) error {
+	host, _, _ := net.SplitHostPort(t.Addr)
+	var d net.Dialer
+	conn := check d.DialContext(ctx, "tcp", t.Addr) ""
+	if deadline, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(deadline)
+	}
+	if t.TLS {
+		conn = tls.Client(conn, &tls.Config{ServerName: host})
+	}
+	c, err := smtp.NewClient(conn, host)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("mailer: %w", err)
+	}
+	defer c.Close()
+	if ok, _ := c.Extension("STARTTLS"); ok && !t.TLS {
+		check c.StartTLS(&tls.Config{ServerName: host}) ""
+	}
+	if t.Username != "" {
+		check c.Auth(smtp.PlainAuth("", t.Username, t.Password, host)) ""
+	}
+	check c.Mail(from) ""
+	for _, rcpt := range to {
+		check c.Rcpt(rcpt) ""
+	}
+	w := check c.Data() ""
+	check w.Write(raw) ""
+	check w.Close() ""
+	return c.Quit()
+}
+
+// LogTransport logs the emails it's given instead of sending them.
+type LogTransport struct {
+	Logger *slog.Logger
+}
+
+func (t *LogTransport) Send(ctx context.Context, from string, to []string, raw []byte) error {
+	head, _, _ := strings.Cut(string(raw), "\r\n\r\n")
+	(t.Logger ?? slog.Default()).InfoContext(ctx, "an email, not sent", slog.String("from", from), slog.Any("to", to), slog.String("header", head))
+	return nil
+}
+
+// MemoryTransport keeps the emails it's given, for tests.
+type MemoryTransport struct {
+	mu   sync.Mutex
+	sent []Sent
+}
+
+// Sent is an email that a MemoryTransport was given.
+type Sent struct {
+	From string
+	To   []string
+	Raw  []byte
+}
+
+func (t *MemoryTransport) Send(ctx context.Context, from string, to []string, raw []byte) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sent = append(t.sent, Sent{from, slices.Clone(to), slices.Clone(raw)})
+	return nil
+}
+
+// Sent returns the emails that t was given, in order.
+func (t *MemoryTransport) Sent() []Sent {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return slices.Clone(t.sent)
+}
+
+// NullTransport drops the emails it's given.
+type NullTransport struct{}
+
+func (NullTransport) Send(ctx context.Context, from string, to []string, raw []byte) error {
+	return nil
+}

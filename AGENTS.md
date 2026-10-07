@@ -283,7 +283,8 @@ func (n *Notifications) Schedule(s *scheduler.Scheduler) {
 ```
 
 A test runs the worker for the messages it expects:
-`webtest.Run(t, a, "messenger:consume", "-limit", "1")`.
+`webtest.Run(t, a, "messenger:consume", "-drain")`, which stops once the
+queues are empty.
 
 ## Caching
 

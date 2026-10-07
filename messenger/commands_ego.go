@@ -34,6 +34,7 @@ type consumeCommand struct {
 	bus         *Bus
 	limit       int
 	concurrency int
+	drain       bool
 }
 
 func (*consumeCommand) Name() string { return "messenger:consume" }
@@ -44,6 +45,7 @@ func (*consumeCommand) Summary() string {
 func (c *consumeCommand) Flags(fs *flag.FlagSet) {
 	fs.IntVar(&c.limit, "limit", 0, "stop after handling that many messages")
 	fs.IntVar(&c.concurrency, "concurrency", 0, "how many messages to handle at once, instead of the config's")
+	fs.BoolVar(&c.drain, "drain", false, "stop once no message is available")
 }
 
 // Run runs a worker until ctx is done: on SIGTERM, it stops receiving, and
@@ -73,9 +75,10 @@ func (c *consumeCommand) Run(ctx context.Context, out io.Writer, transports []st
 		Lease:       c.bus.Config.Lease,
 		StopTimeout: c.bus.Config.StopTimeout,
 		Limit:       c.limit,
+		Drain:       c.drain,
 		Logger:      c.bus.Logger,
 	}
-//line commands.ego:68
+//line commands.ego:71
 	fmt.Fprintf(out, "Consuming %v\n", transports)
 	return w.Run(ctx)
 }
@@ -94,12 +97,12 @@ func (b *Bus) showFailed(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-//line commands.ego:83
+//line commands.ego:86
 	list, err := tr.List(ctx)
 	if err != nil {
 		return err
 	}
-//line commands.ego:84
+//line commands.ego:87
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tTYPE\tATTEMPTS\tFAILED AT\tERROR")
 	for _, m := range list {
@@ -115,12 +118,12 @@ func (b *Bus) retryFailed(ctx context.Context, out io.Writer, ids []string) erro
 	if err != nil {
 		return err
 	}
-//line commands.ego:96
+//line commands.ego:99
 	list, err := tr.List(ctx)
 	if err != nil {
 		return err
 	}
-//line commands.ego:97
+//line commands.ego:100
 	for _, m := range list {
 		if len(ids) > 0 && !slices.Contains(ids, m.ID) {
 			continue
@@ -136,11 +139,11 @@ func (b *Bus) retryFailed(ctx context.Context, out io.Writer, ids []string) erro
 		if err := dest.Send(ctx, m); err != nil {
 			return err
 		}
-//line commands.ego:110
+//line commands.ego:113
 		if err := tr.Remove(ctx, m.ID); err != nil {
 			return err
 		}
-//line commands.ego:111
+//line commands.ego:114
 		fmt.Fprintf(out, "Sent %s %s to %s\n", m.Type, m.ID, transport)
 	}
 	return nil
@@ -154,12 +157,12 @@ func (b *Bus) removeFailed(ctx context.Context, out io.Writer, ids []string) err
 	if err != nil {
 		return err
 	}
-//line commands.ego:121
+//line commands.ego:124
 	for _, id := range ids {
 		if err := tr.Remove(ctx, id); err != nil {
 			return err
 		}
-//line commands.ego:123
+//line commands.ego:126
 		fmt.Fprintf(out, "Removed %s\n", id)
 	}
 	return nil
