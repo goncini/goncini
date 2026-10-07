@@ -63,12 +63,13 @@ func (v *Validator) Validate(ctx context.Context, in any) error {
 	return httpkernel.Invalid(violations...)
 }
 
-// A field bound from the path, query or headers is named after its source
-// and its parameter, behind a marker that JSON names can't start with.
+// A field that isn't a JSON member is named source:name behind a marker,
+// which JSON names can't start with: query:limit, header:X-Version, or
+// -:Field for a field that isn't in the request.
 const marker = "\x00"
 
-// fieldName is the name of a field in violations: its parameter or header
-// with its source, or else its JSON member name.
+// fieldName is the name of a field in violations: its JSON member name, or
+// else its source and its name there.
 func fieldName(f reflect.StructField) string {
 	for _, source := range []string{"path", "query", "header"} {
 		if tag, ok := f.Tag.Lookup(source); ok {
@@ -78,7 +79,7 @@ func fieldName(f reflect.StructField) string {
 	}
 	name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 	return match name {
-		"-" => "" // not in JSON: go-playground then uses the field name
+		"-" => marker + "-:" + f.Name
 		""  => f.Name
 		_   => name
 	}
@@ -89,11 +90,15 @@ func violation(f playground.FieldError) httpkernel.Violation {
 	detail := detailOf(f)
 	segments := strings.Split(f.Namespace(), ".")[1:] // without the input's type
 	for _, s := range segments {
-		if source, name, ok := strings.Cut(strings.TrimPrefix(s, marker), ":"); ok && strings.HasPrefix(s, marker) {
-			return match source {
-				"header" => httpkernel.Violation{Header: name, Detail: detail}
-				_        => httpkernel.Violation{Parameter: name, Detail: detail}
-			}
+		named, ok := strings.CutPrefix(s, marker)
+		if !ok {
+			continue
+		}
+		source, name, _ := strings.Cut(named, ":")
+		return match source {
+			"header" => httpkernel.Violation{Header: name, Detail: detail}
+			"-"      => httpkernel.Violation{Detail: name + " " + detail} // where the request can't point
+			_        => httpkernel.Violation{Parameter: name, Detail: detail}
 		}
 	}
 	if len(segments) > 0 && segments[0] == "Body" {

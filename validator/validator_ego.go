@@ -68,12 +68,13 @@ func (v *Validator) Validate(ctx context.Context, in any) error {
 	return httpkernel.Invalid(violations...)
 }
 
-// A field bound from the path, query or headers is named after its source
-// and its parameter, behind a marker that JSON names can't start with.
+// A field that isn't a JSON member is named source:name behind a marker,
+// which JSON names can't start with: query:limit, header:X-Version, or
+// -:Field for a field that isn't in the request.
 const marker = "\x00"
 
-// fieldName is the name of a field in violations: its parameter or header
-// with its source, or else its JSON member name.
+// fieldName is the name of a field in violations: its JSON member name, or
+// else its source and its name there.
 func fieldName(f reflect.StructField) string {
 	for _, source := range []string{"path", "query", "header"} {
 		if tag, ok := f.Tag.Lookup(source); ok {
@@ -85,7 +86,7 @@ func fieldName(f reflect.StructField) string {
 	var v string
 	switch name {
 	case "-":
-		v = ""
+		v = marker + "-:" + f.Name
 	case "":
 		v = f.Name
 	default:
@@ -96,23 +97,28 @@ func fieldName(f reflect.StructField) string {
 
 // violation is where f failed, and why.
 //
-//line validator.ego:88
+//line validator.ego:89
 func violation(f playground.FieldError) httpkernel.Violation {
 	detail := detailOf(f)
 	segments := strings.Split(f.Namespace(), ".")[1:] // without the input's type
 	for _, s := range segments {
-		if source, name, ok := strings.Cut(strings.TrimPrefix(s, marker), ":"); ok && strings.HasPrefix(s, marker) {
-			var v httpkernel.Violation
-			switch source {
-			case "header":
-				v = httpkernel.Violation{Header: name, Detail: detail}
-			default:
-				v = httpkernel.Violation{Parameter: name, Detail: detail}
-			}
-			return v
+		named, ok := strings.CutPrefix(s, marker)
+		if !ok {
+			continue
 		}
+		source, name, _ := strings.Cut(named, ":")
+		var v httpkernel.Violation
+		switch source {
+		case "header":
+			v = httpkernel.Violation{Header: name, Detail: detail}
+		case "-":
+			v = httpkernel.Violation{Detail: name + " " + detail}
+		default:
+			v = httpkernel.Violation{Parameter: name, Detail: detail}
+		}
+		return v
 	}
-//line validator.ego:99
+//line validator.ego:104
 	if len(segments) > 0 && segments[0] == "Body" {
 		segments = segments[1:]
 	}
@@ -152,7 +158,7 @@ func detailOf(f playground.FieldError) string {
 	default:
 		size = ""
 	}
-//line validator.ego:134
+//line validator.ego:139
 	var v string
 	switch f.Tag() {
 	case "required", "required_if", "required_unless", "required_with", "required_without":

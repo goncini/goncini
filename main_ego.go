@@ -3,6 +3,7 @@
 package goncini
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -36,7 +37,7 @@ import (
 // exits with status 2. Anything else that fails is logged, and exits with
 // status 1.
 //
-//line main.ego:34
+//line main.ego:35
 func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C) (*App, error)) {
 	env, cfg, err := Load(ProjectDir(), "", load)
 	if err != nil {
@@ -57,7 +58,7 @@ func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C)
 		}
 		return err
 	})
-//line main.ego:51
+//line main.ego:52
 	if usage != nil {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
@@ -73,12 +74,12 @@ func Load[C any](dir, name string, load func(*Env) C) (*Env, C, error) {
 	if err != nil {
 		return nil, *new(C), err
 	}
-//line main.ego:63
+//line main.ego:64
 	cfg = load(env)
 	if err := env.Err(); err != nil {
 		return nil, *new(C), err
 	}
-//line main.ego:65
+//line main.ego:66
 	return env, cfg, nil
 }
 
@@ -91,7 +92,7 @@ func ProjectDir() string {
 	if err != nil {
 		wd = "."
 	}
-//line main.ego:74
+//line main.ego:75
 	for dir := wd; ; dir = filepath.Dir(dir) {
 		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
@@ -105,16 +106,16 @@ func ProjectDir() string {
 // Run runs the command of app that args[0] names, with the rest of args,
 // writing its output to out: serve when args is empty. Besides the app's
 // own commands, there are:
-//   - serve, which serves the app over HTTP until ctx is done, then shuts
-//     down gracefully; -addr overrides the address of the config, for a
-//     developer whose port is taken;
+//   - serve, which runs the app's checks, then serves it over HTTP until
+//     ctx is done, and shuts down gracefully; -addr overrides the address
+//     of the config, for a developer whose port is taken;
 //   - debug:router, which lists the routes;
 //   - debug:config, which prints cfg as JSON, with the values of env's
 //     secrets masked, and without its zero values, which are defaults;
 //   - list and help, which describe the commands.
 func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, args []string) error {
 	commands := []console.Command{
-		serveCommand{app.Server},
+		serveCommand{app.Server, app.Checks},
 		console.New("debug:router", "Lists the routes", func(ctx context.Context, out io.Writer, args []string) error {
 			return routing.WriteTable(out, app.Router.List())
 		}),
@@ -123,8 +124,11 @@ func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, a
 	return console.Run(ctx, out, append(commands, app.Commands...), "serve", args)
 }
 
-// serveCommand serves the app until ctx is done.
-type serveCommand struct{ server *httpkernel.Server }
+// serveCommand serves the app until ctx is done, once its checks pass.
+type serveCommand struct {
+	server *httpkernel.Server
+	checks []Check
+}
 
 func (serveCommand) Name() string    { return "serve" }
 func (serveCommand) Summary() string { return "Serves the app over HTTP" }
@@ -137,27 +141,43 @@ func (c serveCommand) Run(ctx context.Context, out io.Writer, args []string) err
 	if len(args) > 0 {
 		return console.Usage{Command: "serve", Reason: fmt.Sprintf("unexpected argument %q", args[0])}
 	}
+	for _, check := range c.checks {
+		if err := check(ctx); err != nil {
+			return fmt.Errorf("goncini: the app isn't ready to serve: %w", err)
+		}
+	}
 	return c.server.ListenAndServe(ctx)
 }
 
 // writeConfig writes cfg as indented JSON, without its zero values, which
-// are defaults, and with the values of env's secrets masked.
+// are defaults, and with the values of env's secrets masked in its strings.
 func writeConfig(out io.Writer, env *Env, cfg any) error {
 	durations := json.MarshalToFunc(func(enc *jsontext.Encoder, d time.Duration) error { return enc.WriteToken(jsontext.String(d.String())) })
-	b, err2 := json.Marshal(cfg, jsontext.WithIndent("  "), json.OmitZeroStructFields(true), json.WithMarshalers(durations))
-	if err2 != nil {
-		return err2
+	b, err := json.Marshal(cfg, json.OmitZeroStructFields(true), json.WithMarshalers(durations))
+	if err != nil {
+		return err
 	}
-//line main.ego:125
-	text := string(b)
-	for _, secret := range env.read {
-		quoted, err := json.Marshal(secret)
-		if err != nil {
-			panic(err)
+//line main.ego:134
+	dec := jsontext.NewDecoder(bytes.NewReader(b))
+	enc := jsontext.NewEncoder(out, jsontext.WithIndent("  "))
+	for {
+		tok, err := dec.ReadToken()
+		if err == io.EOF {
+			return nil
 		}
-//line main.ego:128
-		text = strings.ReplaceAll(text, string(quoted[1:len(quoted)-1]), "******")
+		if err != nil {
+			return err
+		}
+//line main.ego:142
+		if tok.Kind() == '"' {
+			s := tok.String()
+			for _, secret := range env.read {
+				s = strings.ReplaceAll(s, secret, "******")
+			}
+			tok = jsontext.String(s)
+		}
+		if err := enc.WriteToken(tok); err != nil {
+			return err
+		}
 	}
-	_, err := fmt.Fprintln(out, text)
-	return err
 }

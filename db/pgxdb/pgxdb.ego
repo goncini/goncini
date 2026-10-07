@@ -23,12 +23,13 @@ import (
 	"github.com/goncini/goncini/db"
 )
 
-// Open opens the pool of c.URL and checks that the database answers, so
-// that an app whose database is down fails at boot. c.MaxOpenConns,
+// Open opens the pool of c.URL, and returns the function that closes it:
+// as a provider, Open's pool is closed with the app's scope. c.MaxOpenConns,
 // c.ConnMaxLifetime and c.ConnMaxIdleTime set the pool's MaxConns,
 // MaxConnLifetime and MaxConnIdleTime when they aren't zero; c.Driver is
-// unused. The returned function closes the pool: as a provider, Open's
-// pool is closed with the app's scope.
+// unused. Open doesn't connect, so that commands that don't need the
+// database work without it; the app checks it before serving with
+// pool.Ping, as a goncini.Check.
 func Open(ctx context.Context, c db.Config) (*pgxpool.Pool, func(), error) {
 	cfg, err := pgxpool.ParseConfig(c.URL)
 	if err != nil {
@@ -46,10 +47,6 @@ func Open(ctx context.Context, c db.Config) (*pgxpool.Pool, func(), error) {
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("pgxdb: %w", err)
-	}
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, nil, fmt.Errorf("pgxdb: the database doesn't answer: %w", err)
 	}
 	return pool, pool.Close, nil
 }
@@ -74,7 +71,7 @@ type Transactor struct {
 	TxOptions pgx.TxOptions
 }
 
-var _ db.Transactor = (*Transactor)(nil)
+var _ db.Isolator = (*Transactor)(nil)
 
 // New returns the Transactor of pool.
 func New(pool *pgxpool.Pool) *Transactor {
@@ -97,6 +94,16 @@ func (t *Transactor) Conn(ctx context.Context) Conn {
 func (t *Transactor) Tx(ctx context.Context) (pgx.Tx, bool) {
 	tx, ok := ctx.Value(txKey{t.Pool}).(pgx.Tx)
 	return tx, ok
+}
+
+// Isolate begins a transaction, and returns a context with it and the
+// function that rolls it back, as db.Isolator says.
+func (t *Transactor) Isolate(ctx context.Context) (context.Context, func() error, error) {
+	tx, err := t.Pool.BeginTx(ctx, t.TxOptions)
+	if err != nil {
+		return nil, nil, fmt.Errorf("pgxdb: beginning a transaction: %w", err)
+	}
+	return context.WithValue(ctx, txKey{t.Pool}, tx), () => tx.Rollback(context.WithoutCancel(ctx)), nil
 }
 
 // InTx runs fn in a transaction of the pool, as db.Transactor says.

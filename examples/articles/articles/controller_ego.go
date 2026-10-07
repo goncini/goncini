@@ -5,6 +5,7 @@ package articles
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
@@ -16,7 +17,7 @@ import (
 // its URL. Each effect method compiles to a func(ctx, In) (Out, error),
 // which httpkernel.Endpoint serves.
 //
-//line controller.ego:13
+//line controller.ego:14
 func (a *Articles) Routes(r *routing.Router) {
 	r.Get("/articles", httpkernel.Endpoint(a.List)).Name("article_list")
 	a.show = r.Get("/articles/{slug}", httpkernel.Endpoint(a.Show)).Name("article_show")
@@ -37,12 +38,12 @@ type ListOutput struct {
 func (a *Articles) List(ctx context.Context, in ListInput) (_ ListOutput, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.List")
 	defer trace.End(span, &err)
-//line controller.ego:31
+//line controller.ego:32
 	list, count, err := a.store.List(ctx, in.Tag, in.Limit)
 	if err != nil {
 		return ListOutput{}, Unavailable{Cause: err}
 	}
-//line controller.ego:32
+//line controller.ego:33
 	return ListOutput{Articles: list, Count: count}, nil
 }
 
@@ -53,12 +54,12 @@ type ShowInput struct {
 func (a *Articles) Show(ctx context.Context, in ShowInput) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Show")
 	defer trace.End(span, &err)
-//line controller.ego:40
+//line controller.ego:41
 	art, ok, err := a.store.Get(ctx, in.Slug)
 	if err != nil {
 		return Article{}, Unavailable{Cause: err}
 	}
-//line controller.ego:41
+//line controller.ego:42
 	if !ok {
 		return Article{}, NotFound{Slug: in.Slug}
 	}
@@ -93,13 +94,15 @@ func (in *CreateInput) Validate() error {
 func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Created[Article], err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Create")
 	defer trace.End(span, &err)
-//line controller.ego:73
-	art := Article{Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: a.now()}
+	// The store keeps times to the microsecond: so does the response.
+//line controller.ego:75
+	created := a.now().Truncate(time.Microsecond)
+	art := Article{Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: created}
 	added, err := a.store.Add(ctx, art)
 	if err != nil {
 		return httpkernel.Created[Article]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:75
+//line controller.ego:78
 	if !added {
 		return httpkernel.Created[Article]{}, Duplicate{Slug: art.Slug}
 	}
@@ -108,6 +111,6 @@ func (a *Articles) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 	if err != nil {
 		panic(err)
 	}
-//line controller.ego:80
+//line controller.ego:83
 	return httpkernel.Created[Article]{Location: loc, Body: art}, nil
 }

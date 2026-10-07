@@ -11,12 +11,13 @@ import (
 
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/pgxdb"
+	"github.com/goncini/goncini/webtest"
 )
 
 // open opens a pool on the database of PGXDB_TEST_URL, with an empty
 // articles table, or skips the test without one.
 //
-//line pgxdb_test.ego:16
+//line pgxdb_test.ego:17
 func open(t *testing.T) *pgxdb.Transactor {
 	url := os.Getenv("PGXDB_TEST_URL")
 	if url == "" {
@@ -27,16 +28,16 @@ func open(t *testing.T) *pgxdb.Transactor {
 	if err != nil {
 		panic(err)
 	}
-//line pgxdb_test.ego:23
+//line pgxdb_test.ego:24
 	t.Cleanup(closePool)
 	if _, err := pool.Exec(ctx, "DROP TABLE IF EXISTS pgxdb_articles; CREATE TABLE pgxdb_articles (slug text PRIMARY KEY)"); err != nil {
 		panic(err)
 	}
-//line pgxdb_test.ego:25
+//line pgxdb_test.ego:26
 	t.Cleanup(func() {
 		pool.Exec(context.Background(), "DROP TABLE pgxdb_articles")
 	})
-//line pgxdb_test.ego:26
+//line pgxdb_test.ego:27
 	return pgxdb.New(pool)
 }
 
@@ -52,14 +53,14 @@ func TestInTx(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line pgxdb_test.ego:38
+//line pgxdb_test.ego:39
 		var all []string
 		for rows.Next() {
 			var s string
 			if err := rows.Scan(&s); err != nil {
 				panic(err)
 			}
-//line pgxdb_test.ego:42
+//line pgxdb_test.ego:43
 			all = append(all, s)
 		}
 		return strings.Join(all, " ")
@@ -69,7 +70,7 @@ func TestInTx(t *testing.T) {
 	if err := tr.InTx(ctx, func(ctx context.Context) error { return insert(ctx, "a") }); err != nil {
 		panic(err)
 	}
-//line pgxdb_test.ego:49
+//line pgxdb_test.ego:50
 	if err := tr.InTx(ctx, func(ctx context.Context) error { insert(ctx, "b"); return failed }); !errors.Is(err, failed) {
 		t.Errorf("failure: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestInTx(t *testing.T) {
 	}); err != nil {
 		panic(err)
 	} // nested: one transaction
-//line pgxdb_test.ego:53
+//line pgxdb_test.ego:54
 	err := tr.InTx(ctx, func(ctx context.Context) error {
 		insert(ctx, "d")
 		return tr.InTx(ctx, func(_ context.Context) error { return failed }) // the inner failure rolls back the outer insert
@@ -95,9 +96,50 @@ func TestInTx(t *testing.T) {
 	}
 }
 
-func TestOpenFailsAtBoot(t *testing.T) {
-	_, _, err := pgxdb.Open(context.Background(), db.Config{URL: "postgres://nobody@127.0.0.1:1/none?connect_timeout=1"})
-	if err == nil || !strings.HasPrefix(err.Error(), "pgxdb: the database doesn't answer") {
-		t.Errorf("Open = %v", err)
+// TestOpen doesn't connect: the app checks the database before serving.
+func TestOpen(t *testing.T) {
+	ctx := context.Background()
+	pool, closePool, err := pgxdb.Open(ctx, db.Config{URL: "postgres://nobody@127.0.0.1:1/none?connect_timeout=1"})
+	if err != nil {
+		panic(err)
+	}
+//line pgxdb_test.ego:74
+	defer closePool()
+	if err := pool.Ping(ctx); err == nil {
+		t.Error("Ping succeeded")
+	}
+	if _, _, err := pgxdb.Open(ctx, db.Config{URL: "mysql://x"}); err == nil {
+		t.Error("Open accepted a MySQL URL")
+	}
+}
+
+// TestIsolate runs the app's transactions in the test's, which leaves
+// nothing behind.
+func TestIsolate(t *testing.T) {
+	tr := open(t)
+	t.Run("test", func(t *testing.T) {
+		ctx := webtest.Isolate(t, tr)
+		if err := tr.InTx(ctx, func(ctx context.Context) error {
+			_, err := tr.Conn(ctx).Exec(ctx, "INSERT INTO pgxdb_articles VALUES ('isolated')")
+			return err
+		}); err != nil {
+			panic(err)
+		}
+		var n int
+		if err := tr.Conn(ctx).QueryRow(ctx, "SELECT count(*) FROM pgxdb_articles").Scan(&n); err != nil {
+			panic(err)
+		}
+		if n != 1 {
+			t.Errorf("%d rows inside the test", n)
+		}
+	})
+//line pgxdb_test.ego:99
+	var n int
+	if err := tr.Pool.QueryRow(context.Background(), "SELECT count(*) FROM pgxdb_articles").Scan(&n); err != nil {
+		panic(err)
+	}
+//line pgxdb_test.ego:101
+	if n != 0 {
+		t.Errorf("%d rows after the test", n)
 	}
 }

@@ -3,6 +3,8 @@
 package app
 
 import (
+	"database/sql"
+
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/db"
@@ -18,8 +20,8 @@ import (
 // Autoconfigured hands goncini the app's services of each kind it uses, and
 // each part of goncini its config section. goncini generate will write it.
 //
-//line autoconfigured.ego:16
-var Autoconfigured = layer.Set(routes, problems, commands, httpConfig, logConfig, dbConfig)
+//line autoconfigured.ego:18
+var Autoconfigured = layer.Set(routes, problems, commands, checks, httpConfig, logConfig, dbConfig)
 
 func routes(a *articles.Articles) []routing.Routes { return []routing.Routes{a} }
 
@@ -28,6 +30,8 @@ func problems() []httpkernel.ErrorMapper { return []httpkernel.ErrorMapper{artic
 func commands(slug *articles.SlugCommand, m db.Migrator) []console.Command {
 	return append(db.Commands(m), slug)
 }
+
+func checks(pool *sql.DB) []goncini.Check { return []goncini.Check{pool.PingContext} }
 
 func httpConfig(c config.Config) goncini.HTTP { return c.HTTP }
 

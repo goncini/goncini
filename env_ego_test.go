@@ -71,8 +71,11 @@ func TestLoadEnvName(t *testing.T) {
 		{map[string]string{".env": "APP_ENV=prod\n", ".env.local": "APP_ENV=staging\n"}, "", "staging"},
 		{map[string]string{".env": "APP_ENV=prod\n", ".env.local": "APP_ENV=staging\n"}, "test", "test"},
 		{map[string]string{".env.prod": "APP_ENV=dev\n"}, "prod", "prod"},
+		{map[string]string{".env": "APP_ENV=prod\n"}, "empty", "prod"}, // an empty APP_ENV is unset
 	} {
-		if tt.process != "" {
+		if tt.process == "empty" {
+			t.Setenv("APP_ENV", "")
+		} else if tt.process != "" {
 			t.Setenv("APP_ENV", tt.process)
 		} else {
 			t.Setenv("APP_ENV", "")
@@ -82,7 +85,7 @@ func TestLoadEnvName(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line env_test.ego:67
+//line env_test.ego:70
 		if env.Name != tt.want {
 			t.Errorf("%v with APP_ENV=%q: %s, want %s", tt.files, tt.process, env.Name, tt.want)
 		}
@@ -103,7 +106,7 @@ SPACES = around
 	if err != nil {
 		panic(err)
 	}
-//line env_test.ego:84
+//line env_test.ego:87
 	for name, want := range map[string]string{
 		"PLAIN":    "a value",
 		"EXPORTED": "1",

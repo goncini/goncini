@@ -31,7 +31,7 @@ type Transactor struct {
 	DB *gorm.DB
 }
 
-var _ db.Transactor = (*Transactor)(nil)
+var _ db.Isolator = (*Transactor)(nil)
 
 // New returns the Transactor of gdb.
 func New(gdb *gorm.DB) *Transactor {
@@ -50,6 +50,16 @@ func (t *Transactor) Conn(ctx context.Context) *gorm.DB {
 		return tx
 	}
 	return t.DB.WithContext(ctx)
+}
+
+// Isolate begins a transaction, and returns a context with it and the
+// function that rolls it back, as db.Isolator says.
+func (t *Transactor) Isolate(ctx context.Context) (context.Context, func() error, error) {
+	tx := t.DB.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return nil, nil, fmt.Errorf("gormdb: beginning a transaction: %w", tx.Error)
+	}
+	return context.WithValue(ctx, txKey{t.DB}, tx), func() error { return tx.Rollback().Error }, nil
 }
 
 // InTx runs fn in a transaction of DB, as db.Transactor says.
@@ -97,7 +107,7 @@ func (m autoMigrator) Status(ctx context.Context, out io.Writer) error {
 		} else {
 			state = "missing"
 		}
-//line gormdb.ego:91
+//line gormdb.ego:101
 		fmt.Fprintf(tw, "%T\t%s\n", model, state)
 	}
 	return tw.Flush()

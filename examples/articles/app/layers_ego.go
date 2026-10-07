@@ -20,7 +20,7 @@ import (
 func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App, error) {
 	http := httpConfig(cfg)
 	config2 := dbConfig(cfg)
-	db2, cleanup, err := db.Open(ctx, config2)
+	db2, cleanup, err := db.Open(config2)
 	if err != nil {
 		return nil, fmt.Errorf("db.Open: %w", err)
 	}
@@ -48,7 +48,8 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
 	v5 := commands(slugCommand, migrator2)
-	app := goncini.NewApp(kernel, server, router, v5, logger)
+	v6 := checks(db2)
+	app := goncini.NewApp(kernel, server, router, v5, v6, logger)
 	return app, nil
 }
 
@@ -56,7 +57,7 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func() time.Time) (*goncini.App, error) {
 	http := httpConfig(cfg)
 	config2 := dbConfig(cfg)
-	db2, cleanup, err := db.Open(ctx, config2)
+	db2, cleanup, err := db.Open(config2)
 	if err != nil {
 		return nil, fmt.Errorf("db.Open: %w", err)
 	}
@@ -83,6 +84,7 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
 	v4 := commands(slugCommand, migrator2)
-	app := goncini.NewApp(kernel, server, router, v4, logger)
+	v5 := checks(db2)
+	app := goncini.NewApp(kernel, server, router, v4, v5, logger)
 	return app, nil
 }

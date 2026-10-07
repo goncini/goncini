@@ -13,6 +13,7 @@ import (
 
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/gormdb"
+	"github.com/goncini/goncini/webtest"
 )
 
 type Article struct {
@@ -21,7 +22,7 @@ type Article struct {
 
 // open opens GORM on a pool that goncini's db.Open opened, as an app does.
 func open(t *testing.T) *gormdb.Transactor {
-	pool, closePool := must db.Open(context.Background(), db.Config{Driver: "sqlite", URL: ":memory:", MaxOpenConns: 1})
+	pool, closePool := must db.Open(db.Config{Driver: "sqlite", URL: ":memory:", MaxOpenConns: 1})
 	t.Cleanup(() => { closePool() })
 	gdb := must gorm.Open(sqlite.Dialector{Conn: pool}, &gorm.Config{Logger: logger.Discard})
 	return gormdb.New(gdb)
@@ -80,5 +81,25 @@ func TestInTx(t *testing.T) {
 	}
 	if got := strings.Join(slugs, " "); got != "a c" {
 		t.Errorf("slugs: %q, want %q", got, "a c")
+	}
+}
+
+func TestIsolate(t *testing.T) {
+	tr := open(t)
+	must tr.DB.AutoMigrate(&Article{})
+	count := func(ctx context.Context) int64 {
+		var n int64
+		tr.Conn(ctx).Model(&Article{}).Count(&n)
+		return n
+	}
+	t.Run("test", (t *testing.T) => {
+		ctx := webtest.Isolate(t, tr)
+		must tr.InTx(ctx, ctx => tr.Conn(ctx).Create(&Article{Slug: "isolated"}).Error)
+		if n := count(ctx); n != 1 {
+			t.Errorf("%d rows inside the test", n)
+		}
+	})
+	if n := count(context.Background()); n != 0 {
+		t.Errorf("%d rows after the test", n)
 	}
 }

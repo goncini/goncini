@@ -48,7 +48,7 @@ What effect-go provides and doesn't, per its maintainer session:
 | Security | M1: password hashing, a token authenticator, the current user in `ctx`. M2: voters, and firewalls per route group. | M1, M2 |
 | Doctrine ORM, Migrations, DoctrineBridge | No ORM of goncini's own: `db` on `database/sql`, with adapters (`pgxdb`, `gormdb`, `goosedb`, `migratedb`) behind `db.Transactor` and `db.Migrator`, and the `db:migrate` commands. ent, bun and Atlas follow the same pattern later. | M1 |
 | Runtime, Stopwatch, Monolog | `scope.Main`, effect-go's spans, and `slog` records carrying trace IDs. | M1 |
-| WebTestCase, KernelBrowser | `webtest`: an in-process client on the test graph, with `testing/synctest` for time. | M1 |
+| WebTestCase, KernelBrowser, DAMADoctrineTestBundle | `webtest`: an in-process client on the test graph, checks of problems and violations, tests in rolled-back transactions, `testing/synctest` for time. | M1 |
 | NelmioApiDocBundle, API Platform | OpenAPI 3.1 generated from handler types; a docs page in dev; pagination and filtering helpers; responses checked against the contract in tests. | M2 |
 | RateLimiter, CORS | Middleware. | M2 |
 | EventDispatcher | Typed events (generics), with subscribers collected by autoconfiguration. | M3 |
@@ -174,7 +174,7 @@ func dbConfig(c Config) db.Config                                       { return
 
 ### 3.4 Order of work (components first)
 
-> **Status (2026-10-07):** steps 1 to 5 are built: [`httpkernel`](../httpkernel), [`routing`](../routing) with requirements, [`validator`](../validator), config as code, [`console`](../console) and `goncini.Main`; of step 6, [`db`](../db) and its adapters. They are used by [examples/articles](../examples/articles) in the [layout](layout.md). Exporting spans is left for when an app needs it: the kernel's spans go to the global tracer provider, and log records carry their trace IDs. [CHANGELOG.md](../CHANGELOG.md) says what they do, what building them found, and where they differ from this plan.
+> **Status (2026-10-07):** steps 1 to 5 are built: [`httpkernel`](../httpkernel), [`routing`](../routing) with requirements, [`validator`](../validator), config as code, [`console`](../console) and `goncini.Main`; of step 6, [`db`](../db) and its adapters, and [`webtest`](../webtest). They are used by [examples/articles](../examples/articles) in the [layout](layout.md). Exporting spans is left for when an app needs it: the kernel's spans go to the global tracer provider, and log records carry their trace IDs. [CHANGELOG.md](../CHANGELOG.md) says what they do, what building them found, and where they differ from this plan.
 
 Each step is a package that works in any `net/http` app, the way Laravel uses Symfony's HttpFoundation. effect-go matters most from step 4.
 

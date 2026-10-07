@@ -24,7 +24,7 @@
 //
 // Framework is goncini's providers. The app provides its own services, the
 // services of each kind goncini uses ([]routing.Routes,
-// []httpkernel.ErrorMapper, []console.Command), and the config sections
+// []httpkernel.ErrorMapper, []console.Command, []Check), and the config sections
 // that goncini's providers take (HTTP and Log), whose zero values are
 // sensible defaults. It replaces any of goncini's providers by passing its
 // own to layer.Build: an httpkernel.Renderer for an error format of its

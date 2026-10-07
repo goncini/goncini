@@ -30,7 +30,7 @@ conduit/
 │   ├── commands.ego        # the feature's console commands, if any
 │   └── controller_test.ego # API tests through webtest, on the kernel booted with APP_ENV=test
 ├── users/
-└── migrations/             # 0001_create_articles.sql: embedded, run by `conduit db:migrate`
+└── migrations/             # 00001_create_articles.sql: embedded, run by `conduit db:migrate`
 ```
 
 Each `.ego` file sits next to the `_ego.go` file generated from it, and both are committed.

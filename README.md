@@ -22,8 +22,8 @@ its ecosystem, and [effect-go](https://github.com/effect-go/effect-go).
 Status: early. [`httpkernel`](httpkernel), [`routing`](routing),
 [`validator`](validator), config as code, the [`console`](console),
 `goncini.Main` and [`db`](db), with adapters for pgx, GORM, goose and
-golang-migrate, are implemented ([CHANGELOG.md](CHANGELOG.md)); `security`
-and the rest of `webtest` come next. The plan is in
+golang-migrate, and [`webtest`](webtest) are implemented
+([CHANGELOG.md](CHANGELOG.md)); `security` comes next. The plan is in
 [docs/assessment.md](docs/assessment.md), and the layout of an app in
 [docs/layout.md](docs/layout.md).
 

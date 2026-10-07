@@ -21,7 +21,7 @@ var migrations = fstest.MapFS{
 
 func TestMigrator(t *testing.T) {
 	ctx := context.Background()
-	pool, closePool := must db.Open(ctx, db.Config{Driver: "sqlite", URL: ":memory:", MaxOpenConns: 1})
+	pool, closePool := must db.Open(db.Config{Driver: "sqlite", URL: ":memory:", MaxOpenConns: 1})
 	defer closePool()
 	m := must goosedb.New(pool, goose.DialectSQLite3, migrations)
 

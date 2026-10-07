@@ -2,6 +2,7 @@ package articles
 
 import (
 	"strings"
+	"time"
 
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
@@ -70,7 +71,9 @@ func (in *CreateInput) Validate() error {
 }
 
 effect (a *Articles) Create(in CreateInput) (httpkernel.Created[Article], ArticleError) {
-	art := Article{Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: a.now()}
+	// The store keeps times to the microsecond: so does the response.
+	created := a.now().Truncate(time.Microsecond)
+	art := Article{Slug: slugify(in.Body.Title), Title: in.Body.Title, Body: in.Body.Body, Tags: in.Body.Tags, CreatedAt: created}
 	added := check a.store.Add(art) as Unavailable
 	if !added {
 		fail Duplicate{Slug: art.Slug}

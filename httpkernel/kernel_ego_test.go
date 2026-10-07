@@ -413,18 +413,28 @@ type signup struct {
 	}
 }
 
+// Validate checks what is the app's own rule. It runs after the kernel's
+// Validator, so it never sees an empty username.
 func (s *signup) Validate() error {
-	if s.Body.Username == "" {
-		return httpkernel.Invalid(httpkernel.Violation{Pointer: "#/username", Detail: "can't be blank"})
+	switch s.Body.Username {
+	case "":
+//line kernel_test.ego:416
+		panic("the kernel's Validator should have rejected an empty username")
+	case "admin":
+//line kernel_test.ego:417
+		return httpkernel.Invalid(httpkernel.Violation{Pointer: "#/username", Detail: "is reserved"})
+	default:
+//line kernel_test.ego:418
+		return nil
 	}
-	return nil
 }
 
-type reserved struct{}
+// required is a Validator with a rule for any input, as tags give them.
+type required struct{}
 
-func (reserved) Validate(ctx context.Context, v any) error {
-	if s, ok := v.(*signup); ok && s.Body.Username == "admin" {
-		return httpkernel.Invalid(httpkernel.Violation{Pointer: "#/username", Detail: "is reserved"})
+func (required) Validate(ctx context.Context, v any) error {
+	if s, ok := v.(*signup); ok && s.Body.Username == "" {
+		return httpkernel.Invalid(httpkernel.Violation{Pointer: "#/username", Detail: "is required"})
 	}
 	return nil
 }
@@ -434,7 +444,7 @@ func TestKernelValidation(t *testing.T) {
 		Handler: httpkernel.Endpoint(func(ctx context.Context, in signup) (string, error) {
 			return "welcome " + in.Body.Username, nil
 		}),
-		Validator: reserved{},
+		Validator: required{},
 	}
 	k.Logger, _ = logged()
 	tests := []struct {
@@ -443,7 +453,7 @@ func TestKernelValidation(t *testing.T) {
 		errors []httpkernel.Violation
 	}{
 		{`{"username":"ada"}`, http.StatusOK, nil},
-		{`{"username":""}`, http.StatusUnprocessableEntity, []httpkernel.Violation{{Pointer: "#/username", Detail: "can't be blank"}}},
+		{`{"username":""}`, http.StatusUnprocessableEntity, []httpkernel.Violation{{Pointer: "#/username", Detail: "is required"}}},
 		{`{"username":"admin"}`, http.StatusUnprocessableEntity, []httpkernel.Violation{{Pointer: "#/username", Detail: "is reserved"}}},
 	}
 	for _, tt := range tests {

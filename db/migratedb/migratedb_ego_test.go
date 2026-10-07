@@ -25,7 +25,7 @@ var migrations = fstest.MapFS{
 
 func TestMigrator(t *testing.T) {
 	ctx := context.Background()
-	pool, closePool, err := db.Open(ctx, db.Config{Driver: "sqlite", URL: ":memory:", MaxOpenConns: 1})
+	pool, closePool, err := db.Open(db.Config{Driver: "sqlite", URL: ":memory:", MaxOpenConns: 1})
 	if err != nil {
 		panic(err)
 	}

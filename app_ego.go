@@ -3,6 +3,7 @@
 package goncini
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"time"
@@ -19,7 +20,7 @@ import (
 // HTTP configures how an app serves HTTP. Each field's zero value is the
 // default it names.
 //
-//line app.ego:16
+//line app.ego:17
 type HTTP struct {
 	// Addr is the TCP address to listen on; empty means ":8080".
 	Addr string
@@ -61,15 +62,24 @@ type Log struct {
 	JSON bool
 }
 
-// App is what Main runs: an app's server and router, and its commands. An
-// app's Build returns it.
+// App is what Main runs: an app's server and router, its commands, and the
+// checks it runs before serving. An app's Build returns it.
 type App struct {
 	Kernel   *httpkernel.Kernel
 	Server   *httpkernel.Server
 	Router   *routing.Router
 	Commands []console.Command
+	Checks   []Check
 	Logger   *slog.Logger
 }
+
+// Check reports whether a service that the app needs is ready, such as its
+// database: serve runs the app's checks before it listens, and fails with
+// the first one that fails. Building the app doesn't connect to anything,
+// so that the commands that don't need the database work without it.
+//
+//	func checks(pool *sql.DB) []goncini.Check { return []goncini.Check{pool.PingContext} }
+type Check func(ctx context.Context) error
 
 // Framework is goncini's providers, for an app's layer.Build. An app
 // replaces one by passing its own to layer.Build, next to Framework:
@@ -125,7 +135,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:118
+//line app.ego:128
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -133,7 +143,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:122
+//line app.ego:132
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
@@ -173,7 +183,7 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 
 // NewApp returns the app made of these parts.
 //
-//line app.ego:154
-func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, logger *slog.Logger) *App {
-	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Logger: logger}
+//line app.ego:164
+func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, logger *slog.Logger) *App {
+	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Logger: logger}
 }

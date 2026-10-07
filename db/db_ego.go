@@ -8,7 +8,8 @@
 // own add pgx's native pool (pgxdb), GORM's transactions (gormdb), and
 // migrations with goose (goosedb) or golang-migrate (migratedb).
 //
-// An app provides Open and NewSQL, with its Config section:
+// An app provides Open and NewSQL, with its Config section, and checks the
+// database before serving (see goncini.Check):
 //
 //	var Services = layer.Set(db.Open, db.NewSQL, articles.NewStore, …)
 //
@@ -32,7 +33,7 @@ import (
 // Config configures a database/sql connection pool. Each field's zero value
 // is database/sql's default.
 //
-//line db.ego:32
+//line db.ego:33
 type Config struct {
 	// Driver is the name of the database/sql driver, such as "pgx" or
 	// "sqlite"; the app imports the driver's package.
@@ -50,11 +51,12 @@ type Config struct {
 	ConnMaxIdleTime time.Duration
 }
 
-// Open opens the pool that c configures and checks that the database
-// answers, so that an app whose database is down fails at boot. The
-// returned function closes the pool: as a provider, Open's pool is closed
-// with the app's scope.
-func Open(ctx context.Context, c Config) (*sql.DB, func() error, error) {
+// Open opens the pool that c configures, and returns the function that
+// closes it: as a provider, Open's pool is closed with the app's scope.
+// Like sql.Open, it doesn't connect, so that commands that don't need the
+// database work without it; the app checks it before serving with
+// pool.PingContext, as a goncini.Check.
+func Open(c Config) (*sql.DB, func() error, error) {
 	if c.Driver == "" {
 		return nil, nil, errors.New("db: Config.Driver is empty: name the database/sql driver, such as pgx or sqlite")
 	}
@@ -68,10 +70,6 @@ func Open(ctx context.Context, c Config) (*sql.DB, func() error, error) {
 	}
 	pool.SetConnMaxLifetime(c.ConnMaxLifetime)
 	pool.SetConnMaxIdleTime(c.ConnMaxIdleTime)
-	if err := pool.PingContext(ctx); err != nil {
-		pool.Close()
-		return nil, nil, fmt.Errorf("db: the %s database doesn't answer: %w", c.Driver, err)
-	}
 	return pool, pool.Close, nil
 }
 
@@ -85,9 +83,18 @@ type Transactor interface {
 	InTx(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
-// Querier is what database/sql's pools and transactions have in common: the
+// Isolator is a Transactor that can run a test in a transaction, for
+// webtest.Isolate: Isolate begins a transaction and returns a context with
+// it, in which the Transactor's InTx and connections use it, and the
+// function that rolls it back.
+type Isolator interface {
+	Transactor
+	Isolate(ctx context.Context) (context.Context, func() error, error)
+}
+
+// Conn is what database/sql's pools and transactions have in common: the
 // DBTX interface that sqlc's generated code takes.
-type Querier interface {
+type Conn interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
@@ -116,7 +123,7 @@ type txKey struct{ db *sql.DB }
 // the pool.
 //
 //	queries := sqlcgen.New(s.sql.Conn(ctx))
-func (s *SQL) Conn(ctx context.Context) Querier {
+func (s *SQL) Conn(ctx context.Context) Conn {
 	if tx, ok := ctx.Value(txKey{s.DB}).(*sql.Tx); ok {
 		return tx
 	}
@@ -127,6 +134,16 @@ func (s *SQL) Conn(ctx context.Context) Querier {
 func (s *SQL) Tx(ctx context.Context) (*sql.Tx, bool) {
 	tx, ok := ctx.Value(txKey{s.DB}).(*sql.Tx)
 	return tx, ok
+}
+
+// Isolate begins a transaction, and returns a context with it and the
+// function that rolls it back, as Isolator says.
+func (s *SQL) Isolate(ctx context.Context) (context.Context, func() error, error) {
+	tx, err := s.DB.BeginTx(ctx, s.TxOptions)
+	if err != nil {
+		return nil, nil, fmt.Errorf("db: beginning a transaction: %w", err)
+	}
+	return context.WithValue(ctx, txKey{s.DB}, tx), tx.Rollback, nil
 }
 
 // InTx runs fn in a transaction of the pool, as Transactor says.

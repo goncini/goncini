@@ -9,6 +9,7 @@ import (
 
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/pgxdb"
+	"github.com/goncini/goncini/webtest"
 )
 
 // open opens a pool on the database of PGXDB_TEST_URL, with an empty
@@ -66,9 +67,38 @@ func TestInTx(t *testing.T) {
 	}
 }
 
-func TestOpenFailsAtBoot(t *testing.T) {
-	_, _, err := pgxdb.Open(context.Background(), db.Config{URL: "postgres://nobody@127.0.0.1:1/none?connect_timeout=1"})
-	if err == nil || !strings.HasPrefix(err.Error(), "pgxdb: the database doesn't answer") {
-		t.Errorf("Open = %v", err)
+// TestOpen doesn't connect: the app checks the database before serving.
+func TestOpen(t *testing.T) {
+	ctx := context.Background()
+	pool, closePool := must pgxdb.Open(ctx, db.Config{URL: "postgres://nobody@127.0.0.1:1/none?connect_timeout=1"})
+	defer closePool()
+	if err := pool.Ping(ctx); err == nil {
+		t.Error("Ping succeeded")
+	}
+	if _, _, err := pgxdb.Open(ctx, db.Config{URL: "mysql://x"}); err == nil {
+		t.Error("Open accepted a MySQL URL")
+	}
+}
+
+// TestIsolate runs the app's transactions in the test's, which leaves
+// nothing behind.
+func TestIsolate(t *testing.T) {
+	tr := open(t)
+	t.Run("test", (t *testing.T) => {
+		ctx := webtest.Isolate(t, tr)
+		must tr.InTx(ctx, func(ctx context.Context) error {
+			_, err := tr.Conn(ctx).Exec(ctx, "INSERT INTO pgxdb_articles VALUES ('isolated')")
+			return err
+		})
+		var n int
+		must tr.Conn(ctx).QueryRow(ctx, "SELECT count(*) FROM pgxdb_articles").Scan(&n)
+		if n != 1 {
+			t.Errorf("%d rows inside the test", n)
+		}
+	})
+	var n int
+	must tr.Pool.QueryRow(context.Background(), "SELECT count(*) FROM pgxdb_articles").Scan(&n)
+	if n != 0 {
+		t.Errorf("%d rows after the test", n)
 	}
 }

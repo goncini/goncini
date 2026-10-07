@@ -2,9 +2,6 @@ package articles_test
 
 import (
 	"context"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -14,78 +11,70 @@ import (
 	"github.com/goncini/goncini/webtest"
 
 	"github.com/goncini/goncini/examples/articles/app"
+	"github.com/goncini/goncini/examples/articles/articles"
 	"github.com/goncini/goncini/examples/articles/config"
 )
 
 // boot builds the app as main does, in the test environment, with a clock
-// that ticks a minute at each call, and migrates its database: a new one
+// that ticks a minute at each call, finer than the store keeps, and migrates its database: a new one
 // in memory.
 func boot(t *testing.T) *goncini.App {
-	now := time.Date(2026, 10, 4, 9, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 10, 4, 9, 0, 0, 123456789, time.UTC)
 	clock := func() time.Time { now = now.Add(time.Minute); return now }
 	a := webtest.Boot(t, config.Load, (ctx context.Context, s *scope.Scope, cfg config.Config) => app.BuildTest(ctx, s, cfg, clock))
 	webtest.Run(t, a, "db:migrate")
 	return a
 }
 
-// serve sends a request to the app, with a JSON body if there is one.
-func serve(a *goncini.App, method, target, body string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(method, target, strings.NewReader(body))
-	if body != "" {
-		r.Header.Set("Content-Type", "application/json")
+func TestArticlesAPI(t *testing.T) {
+	c := webtest.NewClient(t, boot(t).Kernel)
+
+	var hello articles.Article
+	c.Post("/articles", `{"title":"Hello, World!","body":"First","tags":["go"]}`).Status(201).
+		HasHeader("Location", "/articles/hello-world").JSON(&hello)
+	if hello.Slug != "hello-world" || hello.CreatedAt.IsZero() {
+		t.Errorf("created %+v", hello)
 	}
-	rec := httptest.NewRecorder()
-	a.Kernel.ServeHTTP(rec, r)
-	return rec
+	c.Post("/articles", `{"title":"Second post","body":"Again"}`).Status(201).Contains(`"tags":[]`)
+	c.Post("/articles", `{"title":"hello world","body":"Same slug"}`).Problem(409).HasDetail("an article hello-world already exists")
+
+	var got articles.Article
+	c.Get("/articles/hello-world").Status(200).JSON(&got)
+	if !got.CreatedAt.Equal(hello.CreatedAt) || got.Title != "Hello, World!" {
+		t.Errorf("got %+v, want %+v", got, hello)
+	}
+	c.Get("/articles/nope").Problem(404).HasDetail("no article nope")
+
+	var list articles.ListOutput
+	c.Get("/articles").Status(200).JSON(&list)
+	if list.Count != 2 || list.Articles[0].Slug != "second-post" {
+		t.Errorf("list %+v", list)
+	}
+	c.Get("/articles?tag=go").Status(200).Contains(`"count":1`)
+	c.Get("/articles?limit=1").Status(200).Contains(`{"articles":[{"slug":"second-post"`)
+	c.Delete("/articles/hello-world").Problem(405).HasDetail("DELETE isn't allowed on /articles/hello-world")
 }
 
-func TestArticlesAPI(t *testing.T) {
-	a := boot(t)
-	tests := []struct {
-		method, target, body string
-		status               int
-		want                 string // a substring of the response body
-	}{
-		{"POST", "/articles", `{"title":"Hello, World!","body":"First","tags":["go"]}`, 201, `"slug":"hello-world"`},
-		{"POST", "/articles", `{"title":"Second post","body":"Again"}`, 201, `"tags":[]`},
-		{"POST", "/articles", `{"title":"hello world","body":"Same slug"}`, 409, `"detail":"an article hello-world already exists"`},
-		{"POST", "/articles", `{"title":" ","body":""}`, 422, `"errors":[{"detail":"can't be blank","pointer":"#/title"},{"detail":"can't be blank","pointer":"#/body"}]`},
-		{"POST", "/articles", `{"title":"!?","body":"x"}`, 422, `"errors":[{"detail":"needs a letter or a digit","pointer":"#/title"}]`},
-		{"POST", "/articles", `{"title":1}`, 422, `"pointer":"#/title"`},
-		{"GET", "/articles/hello-world", "", 200, `"title":"Hello, World!"`},
-		{"GET", "/articles/nope", "", 404, `"detail":"no article nope"`},
-		{"GET", "/articles", "", 200, `"count":2`},
-		{"GET", "/articles?tag=go", "", 200, `"count":1`},
-		{"GET", "/articles?limit=1", "", 200, `{"articles":[{"slug":"second-post"`},
-		{"GET", "/articles?limit=0", "", 422, `"detail":"must be at least 1","parameter":"limit"`},
-		{"POST", "/articles", `{"title":"Tags","body":"x","tags":["go",""]}`, 422, `"errors":[{"detail":"is required","pointer":"#/tags/1"}]`},
-		{"GET", "/articles?limit=all", "", 400, `"detail":"must be an integer","parameter":"limit"`},
-		{"DELETE", "/articles/hello-world", "", 405, `"detail":"DELETE isn't allowed on /articles/hello-world"`},
-	}
-	for _, tt := range tests {
-		rec := serve(a, tt.method, tt.target, tt.body)
-		if rec.Code != tt.status || !strings.Contains(rec.Body.String(), tt.want) {
-			t.Errorf("%s %s: %d %s\nwant %d with %s", tt.method, tt.target, rec.Code, rec.Body, tt.status, tt.want)
-		}
-	}
+func TestValidation(t *testing.T) {
+	c := webtest.NewClient(t, boot(t).Kernel)
+	c.Post("/articles", `{"title":" ","body":""}`).Problem(422).
+		Violation("#/title", "can't be blank").
+		Violation("#/body", "can't be blank")
+	c.Post("/articles", `{"title":"!?","body":"x"}`).Problem(422).Violation("#/title", "needs a letter or a digit")
+	c.Post("/articles", `{"title":"Tags","body":"x","tags":["go",""]}`).Problem(422).Violation("#/tags/1", "is required")
+	c.Post("/articles", `{"title":1}`).Problem(422)
+	c.Get("/articles?limit=0").Problem(422).Violation("limit", "must be at least 1")
+	c.Get("/articles?limit=all").Problem(400).Violation("limit", "must be an integer")
 }
 
 func TestCreatedLocation(t *testing.T) {
-	a := boot(t)
+	c := webtest.NewClient(t, boot(t).Kernel)
 	for title, want := range map[string]string{
 		"Go 1.27":    "/articles/go-1-27",
 		"Café crème": "/articles/caf%C3%A9-cr%C3%A8me",
 	} {
-		rec := serve(a, http.MethodPost, "/articles", fmt.Sprintf(`{"title":%q,"body":"News"}`, title))
-		loc := rec.Header().Get("Location")
-		if loc != want {
-			t.Errorf("%s: Location = %q, want %q", title, loc, want)
-			continue
-		}
-		rec = serve(a, http.MethodGet, loc, "")
-		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), fmt.Sprintf(`"title":%q`, title)) {
-			t.Errorf("GET %s: %d %s", loc, rec.Code, rec.Body)
-		}
+		loc := c.Post("/articles", map[string]string{"title": title, "body": "News"}).Status(201).HasHeader("Location", want).Header.Get("Location")
+		c.Get(loc).Status(200).Contains(`"title":"` + title + `"`)
 	}
 }
 

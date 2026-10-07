@@ -77,7 +77,7 @@ var driverLog = &fake{}
 func init() { sql.Register("fake", driverLog) }
 
 func open(t *testing.T) *db.SQL {
-	pool, closePool, err := db.Open(context.Background(), db.Config{Driver: "fake", URL: "up", MaxOpenConns: 1})
+	pool, closePool, err := db.Open(db.Config{Driver: "fake", URL: "up", MaxOpenConns: 1})
 	if err != nil {
 		panic(err)
 	}
@@ -92,15 +92,24 @@ func open(t *testing.T) *db.SQL {
 	return db.NewSQL(pool)
 }
 
-func TestOpenFailsAtBoot(t *testing.T) {
+func TestOpen(t *testing.T) {
 	for c, want := range map[db.Config]string{
-		{}:                            "db: Config.Driver is empty",
-		{Driver: "nope"}:              `db: sql: unknown driver "nope"`,
-		{Driver: "fake", URL: "down"}: "db: the fake database doesn't answer: connection refused",
+		{}:               "db: Config.Driver is empty",
+		{Driver: "nope"}: `db: sql: unknown driver "nope"`,
 	} {
-		if _, _, err := db.Open(context.Background(), c); err == nil || !strings.HasPrefix(err.Error(), want) {
+		if _, _, err := db.Open(c); err == nil || !strings.HasPrefix(err.Error(), want) {
 			t.Errorf("Open(%+v) = %v, want %s", c, err, want)
 		}
+	}
+	// Open doesn't connect: the app checks the database before serving.
+	pool, closePool, err := db.Open(db.Config{Driver: "fake", URL: "down"})
+	if err != nil {
+		panic(err)
+	}
+//line db_test.ego:95
+	defer closePool()
+	if err := pool.PingContext(context.Background()); err == nil || err.Error() != "connection refused" {
+		t.Errorf("PingContext = %v", err)
 	}
 }
 
@@ -172,8 +181,31 @@ func TestCommands(t *testing.T) {
 			panic(err)
 		}
 	}
-//line db_test.ego:160
+//line db_test.ego:165
 	if got := strings.Join(m.calls, " "); got != "up status down" {
 		t.Errorf("calls: %s", got)
+	}
+}
+
+func TestIsolate(t *testing.T) {
+	s := open(t)
+	ctx, rollback, err := s.Isolate(context.Background())
+	if err != nil {
+		panic(err)
+	}
+//line db_test.ego:173
+	if err := s.InTx(ctx, func(ctx context.Context) error {
+		_, err := s.Conn(ctx).ExecContext(ctx, "insert")
+		return err
+	}); err != nil {
+		panic(err)
+	}
+//line db_test.ego:177
+	if err := rollback(); err != nil {
+		panic(err)
+	}
+//line db_test.ego:178
+	if got := driverLog.logged(); got != "begin insert rollback" {
+		t.Errorf("log %q: the test's transaction should take in the app's", got)
 	}
 }

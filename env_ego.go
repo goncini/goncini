@@ -3,6 +3,7 @@
 package goncini
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -16,7 +17,7 @@ import (
 // the secrets that environment variables give it. An app's config reads it,
 // and nothing else reads the environment.
 //
-//line env.ego:15
+//line env.ego:16
 type Env struct {
 	// Name is the environment's name, such as dev, test or prod.
 	Name string
@@ -93,7 +94,7 @@ func (e DotenvSyntax) As(target any) bool {
 // LoadEnv returns the environment named name, with the environment
 // variables of the process over those of the .env files in dir. An empty
 // name means APP_ENV's value, from the process or the .env files, or else
-// dev.
+// dev; an empty APP_ENV counts as unset.
 //
 // The files are read as Symfony reads them, each one overriding the ones
 // before: .env, .env.local, .env.<name> and .env.<name>.local. The test
@@ -104,34 +105,21 @@ func (e DotenvSyntax) As(target any) bool {
 // be quoted: in single quotes it is taken as is, and in double quotes \n,
 // \t, \" and \\ are escapes. Other variables aren't expanded.
 //
-//line env.ego:53
+//line env.ego:54
 func LoadEnv(dir, name string) (*Env, error) {
 	vars := map[string]string{}
 	if err := loadDotenv(filepath.Join(dir, ".env"), vars); err != nil {
 		return nil, err
 	}
-//line env.ego:56
+//line env.ego:57
 	if name == "" {
 		local := map[string]string{}
 		if err := loadDotenv(filepath.Join(dir, ".env.local"), local); err != nil {
 			return nil, err
 		}
-//line env.ego:59
-		if v2, ok2 := os.LookupEnv("APP_ENV"); ok2 {
-			name = v2
-		} else {
-			if v3, ok3 := local["APP_ENV"]; ok3 {
-				name = v3
-			} else {
-				if v4, ok4 := vars["APP_ENV"]; ok4 {
-					name = v4
-				} else {
-					name = "dev"
-				}
-			}
-		}
+//line env.ego:60
+		name = cmp.Or(os.Getenv("APP_ENV"), local["APP_ENV"], vars["APP_ENV"], "dev")
 	}
-//line env.ego:61
 	files := []string{".env.local", ".env." + name, ".env." + name + ".local"}
 	if name == "test" {
 		files = files[1:]
@@ -141,7 +129,7 @@ func LoadEnv(dir, name string) (*Env, error) {
 			return nil, err
 		}
 	}
-//line env.ego:68
+//line env.ego:69
 	for _, kv := range os.Environ() {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			vars[k] = v
@@ -201,7 +189,7 @@ func loadDotenv(path string, vars map[string]string) error {
 	if err != nil {
 		return err
 	}
-//line env.ego:125
+//line env.ego:126
 	for i, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || line[0] == '#' {
@@ -266,7 +254,7 @@ func dotenvValue(s string) (value, reason string) {
 			default:
 				esc = ""
 			}
-//line env.ego:181
+//line env.ego:182
 			if esc == "" {
 				return "", fmt.Sprintf("unknown escape \\%c", s[i])
 			}

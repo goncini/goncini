@@ -15,29 +15,30 @@ import (
 
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/gormdb"
+	"github.com/goncini/goncini/webtest"
 )
 
-//line gormdb_test.ego:18
+//line gormdb_test.ego:19
 type Article struct {
 	Slug string `gorm:"primaryKey"`
 }
 
 // open opens GORM on a pool that goncini's db.Open opened, as an app does.
 func open(t *testing.T) *gormdb.Transactor {
-	pool, closePool, err := db.Open(context.Background(), db.Config{Driver: "sqlite", URL: ":memory:", MaxOpenConns: 1})
+	pool, closePool, err := db.Open(db.Config{Driver: "sqlite", URL: ":memory:", MaxOpenConns: 1})
 	if err != nil {
 		panic(err)
 	}
-//line gormdb_test.ego:25
+//line gormdb_test.ego:26
 	t.Cleanup(func() {
 		closePool()
 	})
-//line gormdb_test.ego:26
+//line gormdb_test.ego:27
 	gdb, err := gorm.Open(sqlite.Dialector{Conn: pool}, &gorm.Config{Logger: logger.Discard})
 	if err != nil {
 		panic(err)
 	}
-//line gormdb_test.ego:27
+//line gormdb_test.ego:28
 	return gormdb.New(gdb)
 }
 
@@ -49,15 +50,15 @@ func TestAutoMigrate(t *testing.T) {
 	if err := m.Status(ctx, &out); err != nil {
 		panic(err)
 	}
-//line gormdb_test.ego:36
+//line gormdb_test.ego:37
 	if err := m.Up(ctx, &out); err != nil {
 		panic(err)
 	}
-//line gormdb_test.ego:37
+//line gormdb_test.ego:38
 	if err := m.Status(ctx, &out); err != nil {
 		panic(err)
 	}
-//line gormdb_test.ego:38
+//line gormdb_test.ego:39
 	want := "MODEL                 TABLE\n*gormdb_test.Article  missing\n" +
 		"migrated the tables of 1 models\n" +
 		"MODEL                 TABLE\n*gormdb_test.Article  exists\n"
@@ -75,14 +76,14 @@ func TestInTx(t *testing.T) {
 	if err := tr.DB.AutoMigrate(&Article{}); err != nil {
 		panic(err)
 	}
-//line gormdb_test.ego:53
+//line gormdb_test.ego:54
 	insert := func(ctx context.Context, slug string) error { return tr.Conn(ctx).Create(&Article{Slug: slug}).Error }
 	failed := errors.New("failed")
 
 	if err := tr.InTx(ctx, func(ctx context.Context) error { return insert(ctx, "a") }); err != nil {
 		panic(err)
 	}
-//line gormdb_test.ego:57
+//line gormdb_test.ego:58
 	if err := tr.InTx(ctx, func(ctx context.Context) error { insert(ctx, "b"); return failed }); !errors.Is(err, failed) {
 		t.Errorf("failure: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestInTx(t *testing.T) {
 	}); err != nil {
 		panic(err)
 	}
-//line gormdb_test.ego:61
+//line gormdb_test.ego:62
 	err := tr.InTx(ctx, func(ctx context.Context) error {
 		insert(ctx, "d")
 		return tr.InTx(ctx, func(_ context.Context) error { return failed })
@@ -114,5 +115,31 @@ func TestInTx(t *testing.T) {
 	}
 	if got := strings.Join(slugs, " "); got != "a c" {
 		t.Errorf("slugs: %q, want %q", got, "a c")
+	}
+}
+
+func TestIsolate(t *testing.T) {
+	tr := open(t)
+	if err := tr.DB.AutoMigrate(&Article{}); err != nil {
+		panic(err)
+	}
+//line gormdb_test.ego:90
+	count := func(ctx context.Context) int64 {
+		var n int64
+		tr.Conn(ctx).Model(&Article{}).Count(&n)
+		return n
+	}
+	t.Run("test", func(t *testing.T) {
+		ctx := webtest.Isolate(t, tr)
+		if err := tr.InTx(ctx, func(ctx context.Context) error { return tr.Conn(ctx).Create(&Article{Slug: "isolated"}).Error }); err != nil {
+			panic(err)
+		}
+		if n := count(ctx); n != 1 {
+			t.Errorf("%d rows inside the test", n)
+		}
+	})
+//line gormdb_test.ego:102
+	if n := count(context.Background()); n != 0 {
+		t.Errorf("%d rows after the test", n)
 	}
 }

@@ -1,6 +1,7 @@
 package goncini
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -84,24 +85,27 @@ func ProjectDir() string {
 // Run runs the command of app that args[0] names, with the rest of args,
 // writing its output to out: serve when args is empty. Besides the app's
 // own commands, there are:
-//   - serve, which serves the app over HTTP until ctx is done, then shuts
-//     down gracefully; -addr overrides the address of the config, for a
-//     developer whose port is taken;
+//   - serve, which runs the app's checks, then serves it over HTTP until
+//     ctx is done, and shuts down gracefully; -addr overrides the address
+//     of the config, for a developer whose port is taken;
 //   - debug:router, which lists the routes;
 //   - debug:config, which prints cfg as JSON, with the values of env's
 //     secrets masked, and without its zero values, which are defaults;
 //   - list and help, which describe the commands.
 func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, args []string) error {
 	commands := []console.Command{
-		serveCommand{app.Server},
+		serveCommand{app.Server, app.Checks},
 		console.New("debug:router", "Lists the routes", (ctx context.Context, out io.Writer, args []string) => routing.WriteTable(out, app.Router.List())),
 		console.New("debug:config", "Prints the config, with secrets masked", (ctx context.Context, out io.Writer, args []string) => writeConfig(out, env, cfg)),
 	}
 	return console.Run(ctx, out, append(commands, app.Commands...), "serve", args)
 }
 
-// serveCommand serves the app until ctx is done.
-type serveCommand struct{ server *httpkernel.Server }
+// serveCommand serves the app until ctx is done, once its checks pass.
+type serveCommand struct {
+	server *httpkernel.Server
+	checks []Check
+}
 
 func (serveCommand) Name() string    { return "serve" }
 func (serveCommand) Summary() string { return "Serves the app over HTTP" }
@@ -114,19 +118,34 @@ func (c serveCommand) Run(ctx context.Context, out io.Writer, args []string) err
 	if len(args) > 0 {
 		return console.Usage{Command: "serve", Reason: f"unexpected argument {args[0]:q}"}
 	}
+	for _, check := range c.checks {
+		if err := check(ctx); err != nil {
+			return fmt.Errorf("goncini: the app isn't ready to serve: %w", err)
+		}
+	}
 	return c.server.ListenAndServe(ctx)
 }
 
 // writeConfig writes cfg as indented JSON, without its zero values, which
-// are defaults, and with the values of env's secrets masked.
+// are defaults, and with the values of env's secrets masked in its strings.
 func writeConfig(out io.Writer, env *Env, cfg any) error {
 	durations := json.MarshalToFunc((enc *jsontext.Encoder, d time.Duration) => enc.WriteToken(jsontext.String(d.String())))
-	b := check json.Marshal(cfg, jsontext.WithIndent("  "), json.OmitZeroStructFields(true), json.WithMarshalers(durations)) ""
-	text := string(b)
-	for _, secret := range env.read {
-		quoted := must json.Marshal(secret)
-		text = strings.ReplaceAll(text, string(quoted[1:len(quoted)-1]), "******")
+	b := check json.Marshal(cfg, json.OmitZeroStructFields(true), json.WithMarshalers(durations)) ""
+	dec := jsontext.NewDecoder(bytes.NewReader(b))
+	enc := jsontext.NewEncoder(out, jsontext.WithIndent("  "))
+	for {
+		tok, err := dec.ReadToken()
+		if err == io.EOF {
+			return nil
+		}
+		check err ""
+		if tok.Kind() == '"' {
+			s := tok.String()
+			for _, secret := range env.read {
+				s = strings.ReplaceAll(s, secret, "******")
+			}
+			tok = jsontext.String(s)
+		}
+		check enc.WriteToken(tok) ""
 	}
-	_, err := fmt.Fprintln(out, text)
-	return err
 }

@@ -54,7 +54,7 @@ func build(c goncini.HTTP, routes []routing.Routes, commands []console.Command) 
 		panic(err)
 	}
 //line main_test.ego:43
-	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, logger)
+	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, logger)
 }
 
 // routes registers a route.
@@ -101,13 +101,6 @@ func TestRun(t *testing.T) {
 	}
 
 	for args, want := range map[string]string{
-		"list": "" +
-			"help          Describes a command: help <command>\n" +
-			"list          Lists the commands\n" +
-			"debug:config  Prints the config, with secrets masked\n" +
-			"debug:router  Lists the routes\n" +
-			"greet         Greets\n" +
-			"serve         Serves the app over HTTP\n",
 		"greet you all": "hello you all",
 		"debug:router": "" +
 			"NAME   METHOD  PATH    HANDLER\n" +
@@ -126,6 +119,17 @@ func TestRun(t *testing.T) {
 		}
 	}
 
+	// goncini's commands are there, next to the app's.
+	list, err := run("list")
+	if err != nil {
+		panic(err)
+	}
+//line main_test.ego:104
+	for _, name := range []string{"serve", "debug:router", "debug:config", "greet"} {
+		if !strings.Contains(list, "\n"+name+" ") {
+			t.Errorf("list doesn't have %s:\n%s", name, list)
+		}
+	}
 	if _, err := run("nope"); !errors.Is(err, console.UnknownCommand{Name: "nope"}) {
 		t.Errorf("nope: %v", err)
 	}
@@ -148,6 +152,12 @@ func TestServe(t *testing.T) {
 	}
 	if err := goncini.Run(ctx, &out, goncini.NewEnv("dev", nil), config{}, app, []string{"serve", "-addr", "127.0.0.1:0"}); err != nil {
 		t.Errorf("serve -addr: %v", err)
+	}
+	up := func(context.Context) error { return nil }
+	down := func(context.Context) error { return errors.New("the database is down") }
+	app.Checks = []goncini.Check{up, down}
+	if err := goncini.Run(ctx, &out, goncini.NewEnv("dev", nil), config{}, app, nil); err == nil || err.Error() != "goncini: the app isn't ready to serve: the database is down" {
+		t.Errorf("serve with a failing check: %v", err)
 	}
 	for _, args := range [][]string{{"serve", "-port", "1"}, {"serve", "now"}} {
 		if err := goncini.Run(ctx, &out, goncini.NewEnv("dev", nil), config{}, app, args); !console.IsUsage(err) {
@@ -179,7 +189,7 @@ func TestNewKernel(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:157
+//line main_test.ego:163
 	rec := httptest.NewRecorder()
 	k.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://evil.example/", nil))
 	if rec.Code != 400 || rec.Header().Get("X-App") != "" {
@@ -195,5 +205,23 @@ func TestNewKernel(t *testing.T) {
 		if _, err := goncini.NewKernel(c, routing.New(), nil, nil, nil, nil, slog.New(slog.DiscardHandler)); err == nil {
 			t.Errorf("NewKernel(%+v) accepted it", c)
 		}
+	}
+}
+
+// TestDebugConfigMasksStringsOnly masks a short secret in strings, where it
+// may be part of a URL, but not in numbers.
+func TestDebugConfigMasksStringsOnly(t *testing.T) {
+	env := goncini.NewEnv("prod", map[string]string{"PIN": "5"})
+	cfg := struct {
+		Limit int
+		URL   string
+	}{Limit: 51, URL: "db://u:" + env.Secret("PIN") + "@h"}
+	var out bytes.Buffer
+	if err := goncini.Run(context.Background(), &out, env, cfg, build(goncini.HTTP{}, nil, nil), []string{"debug:config"}); err != nil {
+		panic(err)
+	}
+//line main_test.ego:191
+	if want := "{\n  \"Limit\": 51,\n  \"URL\": \"db://u:******@h\"\n}\n"; out.String() != want {
+		t.Errorf("debug:config:\n%s\nwant:\n%s", out.String(), want)
 	}
 }

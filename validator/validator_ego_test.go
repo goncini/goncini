@@ -5,17 +5,14 @@ package validator_test
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/validator"
 )
 
-//line validator_test.ego:16
+//line validator_test.ego:13
 type author struct {
 	Name  string `json:"name" validate:"required"`
 	Email string `json:"email" validate:"omitempty,email"`
@@ -58,7 +55,7 @@ func TestValidate(t *testing.T) {
 		{Pointer: "#/author/email", Detail: "must be an email address"},
 		{Pointer: "#/links/home", Detail: "must be a URL"},
 		{Pointer: "#/a~1b~0c", Detail: "must be one of x, y"},
-		{Pointer: "#/Ignored", Detail: "must have exactly 3 characters"},
+		{Detail: "Ignored must have exactly 3 characters"},
 		{Parameter: "limit", Detail: "must be at least 1"},
 		{Parameter: "slug", Detail: "must have letters and digits only"},
 		{Header: "X-Version", Detail: "must be one of 1, 2"},
@@ -92,39 +89,4 @@ func TestBadTag(t *testing.T) {
 		}
 	}()
 	validator.New().Validate(context.Background(), input{})
-}
-
-// TestBehindAKernel checks the tags first, then the input's Validate method.
-func TestBehindAKernel(t *testing.T) {
-	endpoint := httpkernel.Endpoint(func(ctx context.Context, in signupInput) (httpkernel.NoContent, error) {
-		return httpkernel.NoContent{}, nil
-	})
-	k := &httpkernel.Kernel{Handler: endpoint, Validator: validator.New()}
-	for body, want := range map[string]string{
-		`{"password":"short","confirm":"other"}`:                `"errors":[{"detail":"must have at least 8 characters","pointer":"#/password"}]`,
-		`{"password":"long enough","confirm":"something else"}`: `"errors":[{"detail":"doesn't match the password","pointer":"#/confirm"}]`,
-		`{"password":"long enough","confirm":"long enough"}`:    ``,
-	} {
-		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
-		r.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		k.ServeHTTP(rec, r)
-		if want == "" && rec.Code != 204 || want != "" && (rec.Code != 422 || !strings.Contains(rec.Body.String(), want)) {
-			t.Errorf("%s: %d %s", body, rec.Code, rec.Body)
-		}
-	}
-}
-
-type signupInput struct {
-	Body struct {
-		Password string `json:"password" validate:"min=8"`
-		Confirm  string `json:"confirm"`
-	}
-}
-
-func (in *signupInput) Validate() error {
-	if in.Body.Confirm != in.Body.Password {
-		return httpkernel.Invalid(httpkernel.Violation{Pointer: "#/confirm", Detail: "doesn't match the password"})
-	}
-	return nil
 }

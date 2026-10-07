@@ -100,8 +100,14 @@ Running an app, in the [layout](docs/layout.md) of goncini apps:
   `debug:router`, `debug:config`, which masks secrets, `list` and
   `help <command>`. A mistake in the command line, such as an unknown
   command or flag, is printed plainly and exits with status 2.
-- **`webtest.Boot`** builds an app for a test, in the test environment, and
-  closes its scope when the test ends.
+- **`webtest`:** `Boot` builds an app for a test, in the test environment,
+  and closes its scope when the test ends; `Run` runs one of its commands.
+  A `Client` sends requests in process and checks the responses, problems
+  and violations included:
+  `c.Post("/articles", body).Problem(422).Violation("#/title", "is required")`.
+  `Isolate` runs a test in a database transaction that is rolled back, which
+  the app's own transactions join, for databases that outlive a test, such
+  as PostgreSQL. Everything works inside a `testing/synctest` bubble.
 - **`httpkernel.TrustHosts`** answers 400 to requests for other hosts, so
   that `Host` and `BaseURL` can't return one the client made up.
 - `examples/articles` is now its own module, laid out as `goncini new` will
@@ -112,10 +118,13 @@ Running an app, in the [layout](docs/layout.md) of goncini apps:
 Databases, whatever library an app queries them with:
 
 - **`db`** (standard library only): `Open` opens a `database/sql` pool from
-  the `db.Config` section, checks it at boot, and closes it with the app.
+  the `db.Config` section, without connecting, and closes it with the app.
   `SQL.InTx` runs a function in a transaction that `SQL.Conn` finds in its
-  `ctx`, joining an outer one; `Conn` is sqlc's `DBTX`. `Migrator` is behind
-  `db:migrate`, `db:migrate:status` and `db:rollback`.
+  `ctx`, joining an outer one; `db.Conn` is sqlc's `DBTX`. `Migrator` is
+  behind `db:migrate`, `db:migrate:status` and `db:rollback`.
+- **Checks:** an app's `[]goncini.Check`, such as `pool.PingContext`, run
+  before `serve` listens. Nothing connects while the app is built, so
+  `help`, `list` and `debug:*` work without the database.
 - **Adapters,** each a module of its own so that goncini doesn't require
   their libraries:
   - `pgxdb`: pgx's native pool, with transactions in `ctx` and sqlc's pgx
@@ -124,8 +133,8 @@ Databases, whatever library an app queries them with:
     `AutoMigrate` behind `db:migrate`;
   - `goosedb` and `migratedb`: goose and golang-migrate migrations, from
     embedded files.
-- **`webtest.Run`** runs a command in a test, such as `db:migrate` on a new
-  in-memory database.
+- **`db.Isolator`**, which `SQL` and the pgx and GORM adapters implement, is
+  what `webtest.Isolate` uses.
 - `examples/articles` keeps its articles in SQLite, with goose migrations;
   its tests each get a database of their own.
 
