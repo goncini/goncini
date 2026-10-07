@@ -193,6 +193,7 @@ type Route struct {
 	pattern      string
 	handler      http.Handler
 	served       http.Handler // handler, in the middleware
+	middleware   []func(http.Handler) http.Handler
 	source       string
 	namePrefix   string
 	segments     []segment
@@ -223,7 +224,7 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 	} else {
 		pattern = muxPath
 	}
-//line router.ego:211
+//line router.ego:212
 	if f, ok := h.(http.HandlerFunc); h == nil || ok && f == nil {
 		panic(fmt.Sprintf("routing: nil handler for %s (%s)", pattern, source))
 	}
@@ -238,6 +239,7 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 		pattern:    pattern,
 		handler:    h,
 		served:     served,
+		middleware: r.middleware,
 		source:     source,
 		namePrefix: r.namePrefix,
 		segments:   segments(muxPath),
@@ -269,7 +271,7 @@ func mustBeRoutable(p, source string) {
 		if err != nil {
 			text = s
 		}
-//line router.ego:253
+//line router.ego:255
 		if text == "." || text == ".." {
 			panic(fmt.Sprintf("routing: path %q has a %q segment (%s), which clients resolve away", p, text, source))
 		}

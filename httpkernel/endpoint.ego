@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"reflect"
-	"runtime"
 	"strings"
 )
 
@@ -89,11 +88,7 @@ func (e *endpoint[In, Out]) String() string {
 // funcName is the name of a function without its package's import path,
 // and without the -fm suffix of a method value: articles.(*Controller).Show.
 func funcName(fn any) string {
-	f := runtime.FuncForPC(reflect.ValueOf(fn).Pointer())
-	if f == nil {
-		return "unknown"
-	}
-	name := strings.TrimSuffix(f.Name(), "-fm")
+	name := fullFuncName(fn)
 	// Type arguments can hold import paths too: cut before them.
 	head, _, _ := strings.Cut(name, "[")
 	if i := strings.LastIndexByte(head, '/'); i >= 0 {

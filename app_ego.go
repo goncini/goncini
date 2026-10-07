@@ -10,6 +10,7 @@ import (
 
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/validator"
 
@@ -20,7 +21,7 @@ import (
 // HTTP configures how an app serves HTTP. Each field's zero value is the
 // default it names.
 //
-//line app.ego:17
+//line app.ego:18
 type HTTP struct {
 	// Addr is the TCP address to listen on; empty means ":8080".
 	Addr string
@@ -72,6 +73,8 @@ type App struct {
 	Checks   []Check
 	Services []Service
 	Logger   *slog.Logger
+	// OpenAPI is the document of the app's API.
+	OpenAPI *openapi.Document
 }
 
 // Service describes a service of the app, in the order the app builds them,
@@ -100,7 +103,7 @@ type Check func(ctx context.Context) error
 //
 // where NewConduitRenderer returns an httpkernel.Renderer. NewLogHandler,
 // NewMiddleware, NewRenderer and NewValidator are there to be replaced so.
-var Framework = layer.Set(NewLogHandler, NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewKernel, NewServer, NewApp)
+var Framework = layer.Set(NewLogHandler, NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewKernel, NewServer, NewOpenAPI, NewApp)
 
 // NewLogHandler returns where an app's logs go: text or JSON records on
 // stderr, from c.Level up. An app that logs with another library, such as
@@ -153,7 +156,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:146
+//line app.ego:149
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -161,7 +164,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:150
+//line app.ego:153
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
@@ -199,9 +202,25 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 	}
 }
 
-// NewApp returns the app made of these parts.
+// NewOpenAPI returns the OpenAPI document of the routes that kernel
+// serves, with the doc comments and errors of a, and serves it on router
+// as c says.
 //
-//line app.ego:182
-func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger) *App {
-	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger}
+//line app.ego:187
+func NewOpenAPI(c openapi.Config, router *routing.Router, kernel *httpkernel.Kernel, a openapi.Annotations) (*openapi.Document, error) {
+	doc, err := openapi.Generate(router.List(), kernel, c, a)
+	if err != nil {
+		return nil, err
+	}
+//line app.ego:189
+	if err := openapi.Mount(router, doc, c); err != nil {
+		return nil, err
+	}
+//line app.ego:190
+	return doc, nil
+}
+
+// NewApp returns the app made of these parts.
+func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger, doc *openapi.Document) *App {
+	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger, OpenAPI: doc}
 }

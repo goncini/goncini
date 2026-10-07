@@ -87,6 +87,19 @@ var kinds = []kind{
 	{"autoChecks", "goncini.Check", "autoChecks ping the services that can be pinged, such as the database, before serving."},
 }
 
+// sections are the config sections that goncini's providers take.
+var sections = []string{"goncini.HTTP", "goncini.Log", "openapi.Config"}
+
+// hasField reports whether the struct has a field of type t.
+func hasField(st *types.Struct, t types.Type) bool {
+	for i := 0; st != nil && i < st.NumFields(); i++ {
+		if types.Identical(st.Field(i).Type(), t) {
+			return true
+		}
+	}
+	return false
+}
+
 // app is what goncini generate knows of an app.
 type app struct {
 	pkg      *packages.Package
@@ -123,6 +136,10 @@ func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 		}
 		b.WriteString("\t}\n}\n\n")
 	}
+	if ann := a.lookup("openapi.Annotations"); ann != nil && !a.provides(ann) {
+		names = append(names, "autoOpenAPI")
+		fmt.Fprintf(&b, "// autoOpenAPI is what the app's code says of its API: the doc comments of its\n// endpoints and types, and the errors each endpoint can fail with.\nfunc autoOpenAPI() %s {\n\treturn %s\n}\n\n", a.typeString(ann), a.annotations())
+	}
 	if a.config != nil {
 		st, _ := a.config.Underlying().(*types.Struct)
 		for i := 0; st != nil && i < st.NumFields(); i++ {
@@ -133,6 +150,16 @@ func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 			name := "autoConfig" + f.Name()
 			names = append(names, name)
 			fmt.Fprintf(&b, "// %s is the %s section of the config.\nfunc %s(c %s) %s { return c.%s }\n\n", name, f.Name(), name, a.typeString(a.config), a.typeString(f.Type()), f.Name())
+		}
+		// goncini's sections that the config doesn't have get their defaults.
+		for _, section := range sections {
+			t := a.lookup(section)
+			if t == nil || a.provides(t) || hasField(st, t) {
+				continue
+			}
+			name := "autoDefault" + strings.ReplaceAll(exported(section), ".", "")
+			names = append(names, name)
+			fmt.Fprintf(&b, "// %s is the default of %s, which the config doesn't have.\nfunc %s() %s { return %s{} }\n\n", name, section, name, a.typeString(t), a.typeString(t))
 		}
 	}
 	var out bytes.Buffer

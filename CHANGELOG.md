@@ -165,6 +165,29 @@ Symfony's Security component, the light version:
   `WWW-Authenticate` header. For that, `httpkernel.Problem` gained a
   `Header` of response headers, which the kernel's 405 now uses for `Allow`.
 
+### openapi
+
+NelmioApiDocBundle and API Platform's documentation: an OpenAPI 3.1
+document generated from the code, with nothing to annotate.
+
+- **`Generate`** describes the routes whose handlers are endpoints: the
+  parameters and body from the input type, with the rules of its
+  `validate` tags; the successful response from the output type, as
+  json/v2 encodes it (201 for `Created`, 204 for `NoContent`); and a
+  response for each error the endpoint can fail with, rendered by the
+  kernel's mappers and renderer, with an example of each. RealWorld's
+  error bodies come out as `{"errors": …}` because its renderer writes
+  them, with nothing to declare.
+- **Middleware describes itself** by returning a `Describer`: the firewall
+  adds its security scheme, an optional token and the 401 for an invalid
+  one; `security.Required` makes the token required and adds the 401
+  without one.
+- **A goncini app** serves its document at `/openapi.json`, a Swagger UI
+  page where `openapi.Config.DocsPath` says (in dev, for RealWorld), and
+  prints it with `openapi:dump`.
+- `httpkernel.Describe` says what an endpoint takes and returns, and
+  `routing.Info` has the route's middleware.
+
 ### The RealWorld app
 
 [`examples/realworld`](examples/realworld) is the RealWorld "Conduit" API,
@@ -218,6 +241,16 @@ Symfony's autoconfiguration does:
 - the services that are `console.Command`s, and the migrator's commands;
 - the services with `Ping` or `PingContext`, as `Check`s before serving;
 - a provider per field of the config, such as `goncini.HTTP`.
+
+- `autoOpenAPI`: the doc comments of the endpoints and of the types they
+  take and return, and the error cases each endpoint can fail with. It
+  finds them by following the endpoint's calls through the module's
+  packages and goncini's: the cases it builds, such as `fail
+  NoArticle{…}` or `check … as Unavailable`, of the error sets that a
+  mapper maps, or that answer for themselves. `GET /articles/{slug}`
+  documents 404 and 503, not the 403 of the set's `NotAuthor`.
+- a default for each of goncini's config sections that the config
+  doesn't have, such as `openapi.Config`.
 
 A kind that the app provides itself is left to it: RealWorld provides its
 routes, under `/api`. An app is generated from nothing in one run, and

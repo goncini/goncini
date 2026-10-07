@@ -95,6 +95,9 @@ func WriteProblem(w http.ResponseWriter, p Problem) error {
 		}
 		p.Extensions = ext
 	}
+	if rec, ok := w.(ValueRecorder); ok {
+		rec.RecordValue(p)
+	}
 	opts := []json.Options{json.Deterministic(true), jsontext.AllowInvalidUTF8(true)}
 	b, err := json.Marshal(p, opts...)
 	if err != nil {

@@ -62,6 +62,12 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v5 := autoCommands(migrator2)
 	v6 := autoChecks(db2)
 	v7 := autoServices()
-	app := goncini.NewApp(kernel, server, router, v5, v6, v7, logger)
+	config4 := autoConfigOpenAPI(cfg)
+	annotations := autoOpenAPI()
+	document, err := goncini.NewOpenAPI(config4, router, kernel, annotations)
+	if err != nil {
+		return nil, fmt.Errorf("NewOpenAPI: %w", err)
+	}
+	app := goncini.NewApp(kernel, server, router, v5, v6, v7, logger, document)
 	return app, nil
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
 )
 
@@ -90,6 +91,7 @@ func ProjectDir() string {
 //     ctx is done, and shuts down gracefully; -addr overrides the address
 //     of the config, for a developer whose port is taken;
 //   - debug:router, which lists the routes;
+//   - openapi:dump, which prints the app's OpenAPI document;
 //   - debug:container, which lists the app's services, as goncini generate
 //     describes them;
 //   - debug:config, which prints cfg as JSON, with the values of env's
@@ -99,10 +101,18 @@ func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, a
 	commands := []console.Command{
 		serveCommand{app.Server, app.Checks},
 		console.New("debug:router", "Lists the routes", (ctx context.Context, out io.Writer, args []string) => routing.WriteTable(out, app.Router.List())),
+		console.New("openapi:dump", "Prints the OpenAPI document", (ctx context.Context, out io.Writer, args []string) => writeDocument(out, app.OpenAPI)),
 		console.New("debug:config", "Prints the config, with secrets masked", (ctx context.Context, out io.Writer, args []string) => writeConfig(out, env, cfg)),
 		console.New("debug:container", "Lists the app's services", (ctx context.Context, out io.Writer, args []string) => writeServices(out, app.Services)),
 	}
 	return console.Run(ctx, out, append(commands, app.Commands...), "serve", args)
+}
+
+// writeDocument writes doc as indented JSON.
+func writeDocument(out io.Writer, doc *openapi.Document) error {
+	b := check json.Marshal(doc, json.Deterministic(true), jsontext.Multiline(true), jsontext.WithIndent("  ")) ""
+	_, err := fmt.Fprintf(out, "%s\n", b)
+	return err
 }
 
 // serveCommand serves the app until ctx is done, once its checks pass.

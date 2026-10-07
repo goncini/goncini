@@ -4,6 +4,7 @@ package app
 
 import (
 	"database/sql"
+	"reflect"
 
 	"github.com/effect-go/effect-go/layer"
 	"github.com/goncini/goncini"
@@ -12,12 +13,13 @@ import (
 	"github.com/goncini/goncini/examples/articles/articles"
 	"github.com/goncini/goncini/examples/articles/config"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
 )
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoServices, autoConfigHTTP, autoConfigLog, autoConfigDB)
+var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoDefaultOpenapiConfig)
 
 // autoRoutes are the services that have routes, in the order they are provided.
 func autoRoutes(p1 *articles.Articles) []routing.Routes {
@@ -65,7 +67,25 @@ func autoServices() []goncini.Service {
 		{Type: "[]console.Command", Provider: "autoCommands", Needs: []string{"*articles.SlugCommand", "db.Migrator"}},
 		{Type: "[]goncini.Check", Provider: "autoChecks", Needs: []string{"*sql.DB"}},
 		{Type: "[]goncini.Service", Provider: "autoServices", Needs: []string{}},
-		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger"}},
+		{Type: "openapi.Config", Provider: "autoDefaultOpenapiConfig", Needs: []string{}},
+		{Type: "openapi.Annotations", Provider: "autoOpenAPI", Needs: []string{}},
+		{Type: "*openapi.Document", Provider: "goncini.NewOpenAPI", Needs: []string{"openapi.Config", "*routing.Router", "*httpkernel.Kernel", "openapi.Annotations"}},
+		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger", "*openapi.Document"}},
+	}
+}
+
+// autoOpenAPI is what the app's code says of its API: the doc comments of its
+// endpoints and types, and the errors each endpoint can fail with.
+func autoOpenAPI() openapi.Annotations {
+	return openapi.Annotations{
+		Operations: map[string]openapi.OperationDoc{
+			"github.com/goncini/goncini/examples/articles/articles.(*Articles).Create": {Errors: []error{articles.Duplicate{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/articles/articles.(*Articles).List":   {Summary: "Returns the newest articles first, with the tag if one is given.", Errors: []error{articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/articles/articles.(*Articles).Show":   {Errors: []error{articles.NotFound{}, articles.Unavailable{}}},
+		},
+		Types: map[reflect.Type]openapi.TypeDoc{
+			reflect.TypeFor[articles.Article](): {Description: "Article is what the API serves."},
+		},
 	}
 }
 
@@ -77,3 +97,6 @@ func autoConfigLog(c config.Config) goncini.Log { return c.Log }
 
 // autoConfigDB is the DB section of the config.
 func autoConfigDB(c config.Config) db.Config { return c.DB }
+
+// autoDefaultOpenapiConfig is the default of openapi.Config, which the config doesn't have.
+func autoDefaultOpenapiConfig() openapi.Config { return openapi.Config{} }

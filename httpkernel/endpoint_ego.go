@@ -7,7 +7,6 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"reflect"
-	"runtime"
 	"strings"
 )
 
@@ -40,7 +39,7 @@ import (
 // The handler has a String method naming h, which route listings show:
 // articles.(*Controller).Show.
 //
-//line endpoint.ego:40
+//line endpoint.ego:39
 func Endpoint[In, Out any](h func(context.Context, In) (Out, error)) http.Handler {
 	return &endpoint[In, Out]{h: h, b: newBinder(reflect.TypeFor[In]())}
 }
@@ -64,7 +63,7 @@ func (e *endpoint[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if st != nil {
 		k = st.kernel
 	}
-//line endpoint.ego:60
+//line endpoint.ego:59
 	var in In
 	if err := e.b.bind(w, r, reflect.ValueOf(&in).Elem(), k.bodyLimit()); err != nil {
 		WriteError(w, r, err)
@@ -97,11 +96,7 @@ func (e *endpoint[In, Out]) String() string {
 // funcName is the name of a function without its package's import path,
 // and without the -fm suffix of a method value: articles.(*Controller).Show.
 func funcName(fn any) string {
-	f := runtime.FuncForPC(reflect.ValueOf(fn).Pointer())
-	if f == nil {
-		return "unknown"
-	}
-	name := strings.TrimSuffix(f.Name(), "-fm")
+	name := fullFuncName(fn)
 	// Type arguments can hold import paths too: cut before them.
 	head, _, _ := strings.Cut(name, "[")
 	if i := strings.LastIndexByte(head, '/'); i >= 0 {

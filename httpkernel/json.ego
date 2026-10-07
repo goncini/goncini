@@ -21,6 +21,9 @@ func WriteJSON(w http.ResponseWriter, status int, v any) error {
 // write encodes v, then writes it with the status and media type. Map keys
 // are sorted, so equal values give equal bodies, and equal ETags.
 func write(w http.ResponseWriter, status int, mediaType string, v any) error {
+	if rec, ok := w.(ValueRecorder); ok {
+		rec.RecordValue(v)
+	}
 	b, err := json.Marshal(v, json.Deterministic(true))
 	if err != nil {
 		return err

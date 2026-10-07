@@ -108,6 +108,9 @@ func WriteProblem(w http.ResponseWriter, p Problem) error {
 		}
 		p.Extensions = ext
 	}
+	if rec, ok := w.(ValueRecorder); ok {
+		rec.RecordValue(p)
+	}
 	opts := []json.Options{json.Deterministic(true), jsontext.AllowInvalidUTF8(true)}
 	b, err := json.Marshal(p, opts...)
 	if err != nil {
@@ -158,14 +161,14 @@ func ProblemFor(err error) Problem {
 	if p, ok := errors.AsType[Problem](err); ok {
 		return p
 	} else if e, ok := errors.AsType[ProblemError](err); ok {
-//line problem.ego:147
+//line problem.ego:150
 		return e.Problem()
 	} else if e, ok := errors.AsType[BodyError](err); ok {
-//line problem.ego:148
+//line problem.ego:151
 		return bodyProblem(e)
 	} else {
 
-//line problem.ego:150
+//line problem.ego:153
 		if errors.Is(err, context.DeadlineExceeded) {
 			return Problem{Status: http.StatusGatewayTimeout, Detail: "the request took too long"}
 		}

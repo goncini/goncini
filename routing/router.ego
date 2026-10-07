@@ -183,6 +183,7 @@ type Route struct {
 	pattern      string
 	handler      http.Handler
 	served       http.Handler // handler, in the middleware
+	middleware   []func(http.Handler) http.Handler
 	source       string
 	namePrefix   string
 	segments     []segment
@@ -222,6 +223,7 @@ func (r *Router) add(method, path string, h http.Handler) *Route {
 		pattern:    pattern,
 		handler:    h,
 		served:     served,
+		middleware: r.middleware,
 		source:     source,
 		namePrefix: r.namePrefix,
 		segments:   segments(muxPath),

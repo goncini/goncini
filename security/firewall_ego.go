@@ -8,15 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/openapi"
 )
 
 // AuthError is everything authentication fails with. Each case is a 401
 // problem with a WWW-Authenticate header, for the scheme of the firewall.
 //
-//line firewall.ego:15
+//line firewall.ego:17
 type AuthError interface {
 	error
 	isAuthError()
@@ -61,7 +63,7 @@ func (e InvalidToken) As(target any) bool {
 
 // Problem is the response to e.
 //
-//line firewall.ego:28
+//line firewall.ego:30
 func (e Unauthenticated) Problem() httpkernel.Problem {
 	return httpkernel.Problem{
 		Status: http.StatusUnauthorized,
@@ -120,20 +122,47 @@ type stateKey struct{}
 
 // Middleware authenticates requests, as Firewall says.
 func (f *Firewall[U]) Middleware(next http.Handler) http.Handler {
-	scheme := cmp.Or(f.Config.Scheme, "Bearer")
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		st := &state{scheme: scheme}
-		header := r.Header.Get("Authorization")
-		if header != "" {
-			user, err := f.authenticate(r.Context(), scheme, header)
-			if err != nil {
-				httpkernel.WriteError(w, r, err)
-				return
-			}
-			st.user = user
+	return &firewalled[U]{f: f, scheme: cmp.Or(f.Config.Scheme, "Bearer"), next: next}
+}
+
+// firewalled is a handler behind a firewall.
+type firewalled[U any] struct {
+	f      *Firewall[U]
+	scheme string
+	next   http.Handler
+}
+
+func (h *firewalled[U]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	st := &state{scheme: h.scheme}
+	header := r.Header.Get("Authorization")
+	if header != "" {
+		user, err := h.f.authenticate(r.Context(), h.scheme, header)
+		if err != nil {
+			httpkernel.WriteError(w, r, err)
+			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), stateKey{}, st)))
-	})
+		st.user = user
+	}
+	h.next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), stateKey{}, st)))
+}
+
+// DescribeOperation says that the operation takes a token, which it may
+// do without, and answers 401 to an invalid one. The scheme is named as
+// the Authorization header's: Bearer, an HTTP scheme, or another, such as
+// Token, as an API key in the header.
+func (h *firewalled[U]) DescribeOperation(op *openapi.Op) {
+	scheme := &openapi.SecurityScheme{Type: "http", Scheme: "bearer", BearerFormat: "JWT"}
+	if !strings.EqualFold(h.scheme, "Bearer") {
+		scheme = &openapi.SecurityScheme{
+			Type:        "apiKey",
+			In:          "header",
+			Name:        "Authorization",
+			Description: fmt.Sprintf("The Authorization header, with the %s scheme: Authorization: %s eyJhbGciOiJIUzI1NiJ9…", h.scheme, h.scheme),
+		}
+	}
+	op.SecurityScheme(h.scheme, scheme)
+	op.Security = append(op.Security, openapi.SecurityRequirement{}, openapi.SecurityRequirement{h.scheme: {}})
+	op.Errors = append(op.Errors, InvalidToken{Scheme: h.scheme, Reason: "it has expired"})
 }
 
 // authenticate returns the user of an Authorization header.
@@ -151,12 +180,12 @@ func (f *Firewall[U]) authenticate(ctx context.Context, scheme, header string) (
 	if err != nil {
 		return *new(U), err
 	}
-//line firewall.ego:115
+//line firewall.ego:144
 	user, ok, err2 := f.Load(ctx, subject)
 	if err2 != nil {
 		return *new(U), err2
 	}
-//line firewall.ego:116
+//line firewall.ego:145
 	if !ok {
 		return zero, InvalidToken{Scheme: scheme, Reason: "its user doesn't exist"}
 	}
@@ -173,7 +202,7 @@ func User[U any](ctx context.Context) (U, bool) {
 		v = st.user
 	}
 	u, ok := v.(U)
-//line firewall.ego:128
+//line firewall.ego:157
 	return u, ok
 }
 
@@ -198,24 +227,44 @@ func CurrentUser[U any](ctx context.Context) (U, error) {
 //
 //	r.With(security.Required).Post("/articles", httpkernel.Endpoint(a.Create))
 //
-//line firewall.ego:147
+//line firewall.ego:176
 func Required(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		st, _ := r.Context().Value(stateKey{}).(*state)
-		var v any
+	return required{next}
+}
+
+// required is a handler that needs a user.
+type required struct {
+	next http.Handler
+}
+
+func (h required) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	st, _ := r.Context().Value(stateKey{}).(*state)
+	var v any
+	if st != nil {
+		v = st.user
+	}
+	if v == nil {
+//line firewall.ego:188
+		var v2 string
 		if st != nil {
-			v = st.user
+			v2 = st.scheme
 		}
-		if v == nil {
-//line firewall.ego:151
-			var v2 string
-			if st != nil {
-				v2 = st.scheme
-			}
-			httpkernel.WriteError(w, r, Unauthenticated{Scheme: v2})
-//line firewall.ego:152
-			return
+		httpkernel.WriteError(w, r, Unauthenticated{Scheme: v2})
+//line firewall.ego:189
+		return
+	}
+	h.next.ServeHTTP(w, r)
+}
+
+// DescribeOperation says that the operation needs a token, and answers 401
+// without one: it drops the empty requirement that a firewall adds.
+func (required) DescribeOperation(op *openapi.Op) {
+	op.Security = slices.DeleteFunc(op.Security, func(r openapi.SecurityRequirement) bool { return len(r) == 0 })
+	var scheme string
+	if len(op.Security) > 0 {
+		for name := range op.Security[0] {
+			scheme = name
 		}
-		next.ServeHTTP(w, r)
-	})
+	}
+	op.Errors = append(op.Errors, Unauthenticated{Scheme: scheme})
 }

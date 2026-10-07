@@ -15,14 +15,17 @@ type Info struct {
 	Path    string       // with the prefixes of its groups: /api/articles/{slug}
 	Pattern string       // what the ServeMux matches: GET /api/articles/{slug}
 	Handler http.Handler // as registered, without the middleware
-	Source  string       // where it was registered, as file:line
+	// Middleware is the route's middleware, from its groups' With, the
+	// first one outermost.
+	Middleware []func(http.Handler) http.Handler
+	Source     string // where it was registered, as file:line
 	// Requirements are the regular expressions that wildcards' values must
 	// match, by wildcard name.
 	Requirements map[string]string
 }
 
 func (r *Route) info() Info {
-	info := Info{Name: r.name, Method: r.method, Path: r.path, Pattern: r.pattern, Handler: r.handler, Source: r.source}
+	info := Info{Name: r.name, Method: r.method, Path: r.path, Pattern: r.pattern, Handler: r.handler, Middleware: r.middleware, Source: r.source}
 	for _, q := range r.requirements {
 		if info.Requirements == nil {
 			info.Requirements = map[string]string{}

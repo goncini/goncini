@@ -26,6 +26,9 @@ func WriteJSON(w http.ResponseWriter, status int, v any) error {
 // write encodes v, then writes it with the status and media type. Map keys
 // are sorted, so equal values give equal bodies, and equal ETags.
 func write(w http.ResponseWriter, status int, mediaType string, v any) error {
+	if rec, ok := w.(ValueRecorder); ok {
+		rec.RecordValue(v)
+	}
 	b, err := json.Marshal(v, json.Deterministic(true))
 	if err != nil {
 		return err
@@ -164,7 +167,7 @@ func describeType(t reflect.Type) string {
 // expectedKind is the kind of JSON value that decodes into t, or
 // KindInvalid if it depends.
 //
-//line json.ego:149
+//line json.ego:152
 func expectedKind(t reflect.Type) jsontext.Kind {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
@@ -197,7 +200,7 @@ func expectedKind(t reflect.Type) jsontext.Kind {
 // sameKind reports whether two kinds are the same, counting true and false
 // as one.
 //
-//line json.ego:170
+//line json.ego:173
 func sameKind(a, b jsontext.Kind) bool {
 	if a == 'f' {
 		a = 't'
@@ -233,7 +236,7 @@ func describeKind(k jsontext.Kind) string {
 // shorten cuts a value quoted back to the client to at most 40 bytes, at
 // the start of a character.
 //
-//line json.ego:195
+//line json.ego:198
 func shorten(s string) string {
 	if len(s) <= 40 {
 		return s

@@ -85,7 +85,8 @@ func TestRoutes(t *testing.T) {
 		"NAME            METHOD  PATH              HANDLER\n" +
 		"article_list    GET     /articles         articles.(*Articles).List\n" +
 		"article_show    GET     /articles/{slug}  articles.(*Articles).Show\n" +
-		"article_create  POST    /articles         articles.(*Articles).Create\n"
+		"article_create  POST    /articles         articles.(*Articles).Create\n" +
+		"openapi         GET     /openapi.json     openapi.Handler\n"
 	if b.String() != want {
 		t.Errorf("routes:\n%s\nwant:\n%s", b.String(), want)
 	}

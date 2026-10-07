@@ -5,4 +5,5 @@ import "log/slog"
 func dev(c *Config) {
 	c.HTTP.Debug = true
 	c.Log.Level = slog.LevelDebug
+	c.OpenAPI.DocsPath = "/docs"
 }

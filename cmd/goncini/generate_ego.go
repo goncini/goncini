@@ -125,6 +125,19 @@ var kinds = []kind{
 	{"autoChecks", "goncini.Check", "autoChecks ping the services that can be pinged, such as the database, before serving."},
 }
 
+// sections are the config sections that goncini's providers take.
+var sections = []string{"goncini.HTTP", "goncini.Log", "openapi.Config"}
+
+// hasField reports whether the struct has a field of type t.
+func hasField(st *types.Struct, t types.Type) bool {
+	for i := 0; st != nil && i < st.NumFields(); i++ {
+		if types.Identical(st.Field(i).Type(), t) {
+			return true
+		}
+	}
+	return false
+}
+
 // app is what goncini generate knows of an app.
 type app struct {
 	pkg      *packages.Package
@@ -141,7 +154,7 @@ func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 	if err2 != nil {
 		return nil, err2
 	}
-//line generate.ego:103
+//line generate.ego:116
 	var b strings.Builder
 	var names []string
 	for _, k := range kinds {
@@ -165,6 +178,10 @@ func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 		}
 		b.WriteString("\t}\n}\n\n")
 	}
+	if ann := a.lookup("openapi.Annotations"); ann != nil && !a.provides(ann) {
+		names = append(names, "autoOpenAPI")
+		fmt.Fprintf(&b, "// autoOpenAPI is what the app's code says of its API: the doc comments of its\n// endpoints and types, and the errors each endpoint can fail with.\nfunc autoOpenAPI() %s {\n\treturn %s\n}\n\n", a.typeString(ann), a.annotations())
+	}
 	if a.config != nil {
 		st, _ := a.config.Underlying().(*types.Struct)
 		for i := 0; st != nil && i < st.NumFields(); i++ {
@@ -175,6 +192,16 @@ func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 			name := "autoConfig" + f.Name()
 			names = append(names, name)
 			fmt.Fprintf(&b, "// %s is the %s section of the config.\nfunc %s(c %s) %s { return c.%s }\n\n", name, f.Name(), name, a.typeString(a.config), a.typeString(f.Type()), f.Name())
+		}
+		// goncini's sections that the config doesn't have get their defaults.
+		for _, section := range sections {
+			t := a.lookup(section)
+			if t == nil || a.provides(t) || hasField(st, t) {
+				continue
+			}
+			name := "autoDefault" + strings.ReplaceAll(exported(section), ".", "")
+			names = append(names, name)
+			fmt.Fprintf(&b, "// %s is the default of %s, which the config doesn't have.\nfunc %s() %s { return %s{} }\n\n", name, section, name, a.typeString(t), a.typeString(t))
 		}
 	}
 	var out bytes.Buffer
@@ -202,7 +229,7 @@ func load(root, appDir string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:160
+//line generate.ego:187
 	var errs []error
 	packages.Visit(pkgs, nil, func(p *packages.Package) {
 		for _, e := range p.Errors {
@@ -212,12 +239,12 @@ func load(root, appDir string) (*app, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-//line generate.ego:167
+//line generate.ego:194
 	dir, err := filepath.Abs(filepath.Join(root, appDir))
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:168
+//line generate.ego:195
 	a := &app{all: pkgs, imports: map[string]string{}}
 	for _, p := range pkgs {
 		if len(p.GoFiles) > 0 && filepath.Dir(p.GoFiles[0]) == dir {
@@ -230,7 +257,7 @@ func load(root, appDir string) (*app, error) {
 	if err := a.findProviders(); err != nil {
 		return nil, err
 	}
-//line generate.ego:178
+//line generate.ego:205
 	return a, nil
 }
 
@@ -302,7 +329,7 @@ func isFunc(info *types.Info, x ast.Expr, path, name string) bool {
 
 // ident is the name in x, an identifier or a selector, or nil.
 //
-//line generate.ego:242
+//line generate.ego:269
 func ident(x ast.Expr) *ast.Ident {
 	switch x := x.(type) {
 	case *ast.Ident:
@@ -393,7 +420,7 @@ func (a *app) lookup(name string) types.Type {
 	} else {
 		path = gonciniPath + "/" + pkgName
 	}
-//line generate.ego:327
+//line generate.ego:354
 	var found types.Type
 	packages.Visit(a.all, nil, func(p *packages.Package) {
 		if found == nil && p.PkgPath == path {
@@ -416,14 +443,14 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 	switch k.name {
 	case "autoProblems":
 
-//line generate.ego:348
+//line generate.ego:375
 		for _, v := range a.mappers(elem) {
 			items = append(items, a.qualify(v.Pkg())+"."+v.Name())
 		}
 
 	case "autoChecks":
 
-//line generate.ego:353
+//line generate.ego:380
 		for _, t := range a.provided {
 			if m := pinger(t); m != "" {
 				add(t, "$."+m)
@@ -432,7 +459,7 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 
 	default:
 
-//line generate.ego:360
+//line generate.ego:387
 		iface, _ := elem.Underlying().(*types.Interface)
 		for _, t := range a.provided {
 			if iface != nil && types.Implements(t, iface) && !types.IsInterface(t) {
@@ -455,7 +482,7 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 			return params, v2
 		}
 	}
-//line generate.ego:376
+//line generate.ego:403
 	return params, list
 }
 
@@ -568,7 +595,7 @@ func describe(root, appDir string) ([]service, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:485
+//line generate.ego:512
 	if len(pkgs) != 1 || len(pkgs[0].Errors) > 0 {
 		return nil, nil
 	}
@@ -596,7 +623,7 @@ func describe(root, appDir string) ([]service, error) {
 		}
 		return v
 	}
-//line generate.ego:504
+//line generate.ego:531
 	var services []service
 	for _, stmt := range build.Body.List {
 		assign, ok := stmt.(*ast.AssignStmt)

@@ -4,6 +4,7 @@ package app
 
 import (
 	"database/sql"
+	"reflect"
 
 	"github.com/effect-go/effect-go/layer"
 	"github.com/goncini/goncini"
@@ -14,12 +15,13 @@ import (
 	"github.com/goncini/goncini/examples/realworld/config"
 	"github.com/goncini/goncini/examples/realworld/users"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/security"
 )
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoServices, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity)
+var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI)
 
 // autoProblems are the error mappers that the app's packages declare.
 func autoProblems() []httpkernel.ErrorMapper {
@@ -67,7 +69,51 @@ func autoServices() []goncini.Service {
 		{Type: "[]console.Command", Provider: "autoCommands", Needs: []string{"db.Migrator"}},
 		{Type: "[]goncini.Check", Provider: "autoChecks", Needs: []string{"*sql.DB"}},
 		{Type: "[]goncini.Service", Provider: "autoServices", Needs: []string{}},
-		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger"}},
+		{Type: "openapi.Config", Provider: "autoConfigOpenAPI", Needs: []string{"config.Config"}},
+		{Type: "openapi.Annotations", Provider: "autoOpenAPI", Needs: []string{}},
+		{Type: "*openapi.Document", Provider: "goncini.NewOpenAPI", Needs: []string{"openapi.Config", "*routing.Router", "*httpkernel.Kernel", "openapi.Annotations"}},
+		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger", "*openapi.Document"}},
+	}
+}
+
+// autoOpenAPI is what the app's code says of its API: the doc comments of its
+// endpoints and types, and the errors each endpoint can fail with.
+func autoOpenAPI() openapi.Annotations {
+	return openapi.Annotations{
+		Operations: map[string]openapi.OperationDoc{
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).AddComment":    {Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Comments":      {Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Create":        {Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Delete":        {Errors: []error{articles.NoArticle{}, articles.NotAuthor{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).DeleteComment": {Errors: []error{articles.NoArticle{}, articles.NoComment{}, articles.NotCommentAuthor{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Favorite":      {Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Feed":          {Errors: []error{articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).List":          {Errors: []error{articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Show":          {Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Tags":          {Errors: []error{articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Unfavorite":    {Errors: []error{articles.NoArticle{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/articles.(*Articles).Update":        {Errors: []error{articles.NoArticle{}, articles.NotAuthor{}, articles.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Current":             {Errors: []error{users.Unavailable{}, security.Unauthenticated{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Follow":              {Errors: []error{users.NoProfile{}, users.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Login":               {Errors: []error{users.BadCredentials{}, users.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Profile":             {Errors: []error{users.NoProfile{}, users.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Register":            {Errors: []error{users.Taken{}, users.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Unfollow":            {Errors: []error{users.NoProfile{}, users.Unavailable{}}},
+			"github.com/goncini/goncini/examples/realworld/users.(*Users).Update":              {Errors: []error{users.Taken{}, users.Unavailable{}, security.Unauthenticated{}}},
+		},
+		Types: map[reflect.Type]openapi.TypeDoc{
+			reflect.TypeFor[articles.Article]():      {Description: "Article is an article, as a viewer sees it.", Fields: map[string]string{"Body": "left out of lists"}},
+			reflect.TypeFor[articles.ArticleBody]():  {Description: "ArticleBody is an article, as the API sends it."},
+			reflect.TypeFor[articles.ArticlesBody](): {Description: "ArticlesBody is a page of articles, with how many there are in all."},
+			reflect.TypeFor[articles.Comment]():      {Description: "Comment is a comment on an article, as a viewer sees it."},
+			reflect.TypeFor[articles.CommentBody]():  {Description: "CommentBody is a comment, as the API sends it."},
+			reflect.TypeFor[articles.CommentsBody](): {Description: "CommentsBody is the comments of an article."},
+			reflect.TypeFor[articles.Page]():         {Description: "Page is where a page of articles starts, and its size."},
+			reflect.TypeFor[articles.TagsBody]():     {Description: "TagsBody is every tag."},
+			reflect.TypeFor[users.Profile]():         {Description: "Profile is a user as others see them."},
+			reflect.TypeFor[users.ProfileBody]():     {Description: "ProfileBody is a profile, as the API sends it."},
+			reflect.TypeFor[users.UserBody]():        {Description: "UserBody is the user that a user sees, with a token."},
+		},
 	}
 }
 
@@ -82,3 +128,6 @@ func autoConfigDB(c config.Config) db.Config { return c.DB }
 
 // autoConfigSecurity is the Security section of the config.
 func autoConfigSecurity(c config.Config) security.Config { return c.Security }
+
+// autoConfigOpenAPI is the OpenAPI section of the config.
+func autoConfigOpenAPI(c config.Config) openapi.Config { return c.OpenAPI }

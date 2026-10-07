@@ -1,0 +1,568 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Notes",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/notes": {
+      "get": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "NotesList",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ]
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "X-Key",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Note"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "Problem": {
+                    "summary": "400 Bad Request: invalid request parameters",
+                    "value": {
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "invalid request parameters",
+                      "errors": [
+                        {
+                          "detail": "is invalid",
+                          "parameter": "limit"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "Problem": {
+                    "summary": "422 Unprocessable Entity: the request has invalid values",
+                    "value": {
+                      "title": "Unprocessable Entity",
+                      "status": 422,
+                      "detail": "the request has invalid values",
+                      "errors": [
+                        {
+                          "detail": "is invalid",
+                          "parameter": "limit"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "note_create",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "note": {
+                    "type": "object",
+                    "properties": {
+                      "bio": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-zA-Z]+$"
+                        },
+                        "maxItems": 5
+                      },
+                      "title": {
+                        "type": "string",
+                        "description": "Title is the note's.",
+                        "maxLength": 120
+                      }
+                    },
+                    "required": [
+                      "title"
+                    ]
+                  }
+                },
+                "required": [
+                  "note"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "BodyMalformed": {
+                    "summary": "malformed JSON at byte 1",
+                    "value": {
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "malformed JSON at byte 1: invalid character"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request Entity Too Large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "BodyTooLarge": {
+                    "summary": "the request body is larger than 1048576 bytes",
+                    "value": {
+                      "title": "Request Entity Too Large",
+                      "status": 413,
+                      "detail": "the request body is larger than 1048576 bytes"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "BodyMediaType": {
+                    "summary": "unsupported Content-Type \"text/plain\": send application/json",
+                    "value": {
+                      "title": "Unsupported Media Type",
+                      "status": 415,
+                      "detail": "unsupported Content-Type \"text/plain\": send application/json"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "BodyInvalid": {
+                    "summary": "invalid JSON value at \"/note/title\"",
+                    "value": {
+                      "title": "Unprocessable Entity",
+                      "status": 422,
+                      "detail": "the request body has an invalid value",
+                      "errors": [
+                        {
+                          "detail": "invalid value",
+                          "pointer": "#/note/title"
+                        }
+                      ]
+                    }
+                  },
+                  "Problem": {
+                    "summary": "422 Unprocessable Entity: the request has invalid values",
+                    "value": {
+                      "title": "Unprocessable Entity",
+                      "status": 422,
+                      "detail": "the request has invalid values",
+                      "errors": [
+                        {
+                          "detail": "is invalid",
+                          "pointer": "#/note/title"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "Locked",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "Problem": {
+                    "summary": "423 Locked",
+                    "value": {
+                      "title": "Locked",
+                      "status": 423
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notes/{id}": {
+      "get": {
+        "tags": [
+          "Notes"
+        ],
+        "summary": "Returns a note.",
+        "description": "Anyone can read it.",
+        "operationId": "note_show",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "Problem": {
+                    "summary": "400 Bad Request: invalid request parameters",
+                    "value": {
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "invalid request parameters",
+                      "errors": [
+                        {
+                          "detail": "is invalid",
+                          "parameter": "id"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "NoNote": {
+                    "summary": "no note 0",
+                    "value": {
+                      "title": "Not Found",
+                      "status": 404,
+                      "detail": "no note 0"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "Unavailable": {
+                    "summary": "the notes are unavailable",
+                    "value": {
+                      "title": "Service Unavailable",
+                      "status": 503
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "note_delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "Problem": {
+                    "summary": "400 Bad Request: invalid request parameters",
+                    "value": {
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "invalid request parameters",
+                      "errors": [
+                        {
+                          "detail": "is invalid",
+                          "parameter": "id"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Note": {
+        "type": "object",
+        "description": "Note is a note.",
+        "properties": {
+          "bio": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Bio is the author's."
+          },
+          "draft": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Note"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "tags",
+          "bio"
+        ]
+      },
+      "NoteBody": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "$ref": "#/components/schemas/Note"
+          }
+        },
+        "required": [
+          "note"
+        ]
+      },
+      "Problem": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Violation"
+            }
+          },
+          "instance": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": {}
+      },
+      "Violation": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string"
+          },
+          "header": {
+            "type": "string"
+          },
+          "parameter": {
+            "type": "string"
+          },
+          "pointer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Notes"
+    }
+  ]
+}

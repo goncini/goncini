@@ -8,6 +8,7 @@ import (
 
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/validator"
 )
@@ -65,6 +66,8 @@ type App struct {
 	Checks   []Check
 	Services []Service
 	Logger   *slog.Logger
+	// OpenAPI is the document of the app's API.
+	OpenAPI *openapi.Document
 }
 
 // Service describes a service of the app, in the order the app builds them,
@@ -93,7 +96,7 @@ type Check func(ctx context.Context) error
 //
 // where NewConduitRenderer returns an httpkernel.Renderer. NewLogHandler,
 // NewMiddleware, NewRenderer and NewValidator are there to be replaced so.
-var Framework = layer.Set(NewLogHandler, NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewKernel, NewServer, NewApp)
+var Framework = layer.Set(NewLogHandler, NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewKernel, NewServer, NewOpenAPI, NewApp)
 
 // NewLogHandler returns where an app's logs go: text or JSON records on
 // stderr, from c.Level up. An app that logs with another library, such as
@@ -178,7 +181,16 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 	}
 }
 
+// NewOpenAPI returns the OpenAPI document of the routes that kernel
+// serves, with the doc comments and errors of a, and serves it on router
+// as c says.
+func NewOpenAPI(c openapi.Config, router *routing.Router, kernel *httpkernel.Kernel, a openapi.Annotations) (*openapi.Document, error) {
+	doc := check openapi.Generate(router.List(), kernel, c, a) ""
+	check openapi.Mount(router, doc, c) ""
+	return doc, nil
+}
+
 // NewApp returns the app made of these parts.
-func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger) *App {
-	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger}
+func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger, doc *openapi.Document) *App {
+	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger, OpenAPI: doc}
 }

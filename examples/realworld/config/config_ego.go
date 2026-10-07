@@ -7,17 +7,19 @@ package config
 import (
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/security"
 )
 
 // Config is the API's config, one section per part of the app.
 //
-//line config.ego:12
+//line config.ego:13
 type Config struct {
 	HTTP     goncini.HTTP
 	Log      goncini.Log
 	DB       db.Config
 	Security security.Config
+	OpenAPI  openapi.Config
 }
 
 // Load returns the config of env: what every environment shares, then what
@@ -26,6 +28,7 @@ func Load(env *goncini.Env) Config {
 	c := Config{
 		DB:       db.Config{Driver: "sqlite", URL: env.Secret("DATABASE_URL")},
 		Security: security.Config{Secret: env.Secret("APP_SECRET"), Scheme: "Token"},
+		OpenAPI:  openapi.Config{Title: "RealWorld Conduit API", Version: "2.0.0"},
 	}
 	switch env.Name {
 	case "dev":

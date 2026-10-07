@@ -208,6 +208,13 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 3. **A generated client works.** A client generated from our document by oapi-codegen compiles, and a test drives every RealWorld operation through it against the app, decoding each typed response.
 4. **No annotations.** The RealWorld app gets its document without writing any OpenAPI by hand beyond a title, a version and doc comments.
 
+**Decisions taken on the user's behalf:**
+
+- The errors an endpoint can fail with are found in its code by `goncini generate`, following its calls, rather than declared: effect-go erases the error set from the compiled signature, and the error set alone would claim a 403 on reads.
+- The document is served at `/openapi.json` in every environment, since clients and gateways read it; the Swagger UI page, loaded from a CDN, is off unless `DocsPath` is set, as RealWorld does in dev.
+- The docs page is Swagger UI, as NelmioApiDocBundle's is.
+- Error bodies are described by the Go type that the renderer writes, which the renderer tells a `httpkernel.ValueRecorder`, so a custom error format needs no declaration.
+
 **Order of work:**
 
 1. `openapi`: JSON Schemas from Go types, operations from endpoints and route middleware, the error responses from error sets, `/openapi.json`, a docs page in dev, `openapi:dump`.

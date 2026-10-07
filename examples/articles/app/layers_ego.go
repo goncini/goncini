@@ -51,7 +51,13 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v5 := autoCommands(slugCommand, migrator2)
 	v6 := autoChecks(db2)
 	v7 := autoServices()
-	app := goncini.NewApp(kernel, server, router, v5, v6, v7, logger)
+	config3 := autoDefaultOpenapiConfig()
+	annotations := autoOpenAPI()
+	document, err := goncini.NewOpenAPI(config3, router, kernel, annotations)
+	if err != nil {
+		return nil, fmt.Errorf("NewOpenAPI: %w", err)
+	}
+	app := goncini.NewApp(kernel, server, router, v5, v6, v7, logger, document)
 	return app, nil
 }
 
@@ -89,6 +95,12 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	v4 := autoCommands(slugCommand, migrator2)
 	v5 := autoChecks(db2)
 	v6 := autoServices()
-	app := goncini.NewApp(kernel, server, router, v4, v5, v6, logger)
+	config3 := autoDefaultOpenapiConfig()
+	annotations := autoOpenAPI()
+	document, err := goncini.NewOpenAPI(config3, router, kernel, annotations)
+	if err != nil {
+		return nil, fmt.Errorf("NewOpenAPI: %w", err)
+	}
+	app := goncini.NewApp(kernel, server, router, v4, v5, v6, logger, document)
 	return app, nil
 }

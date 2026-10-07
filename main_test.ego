@@ -17,6 +17,7 @@ import (
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
 )
 
@@ -43,7 +44,8 @@ func build(c goncini.HTTP, routes []routing.Routes, commands []console.Command) 
 	router := goncini.NewRouter(routes)
 	kernel := must goncini.NewKernel(c, router, nil, nil, goncini.NewRenderer(), goncini.NewValidator(), logger)
 	services := []goncini.Service{{Type: "*routing.Router", Provider: "goncini.NewRouter", Needs: []string{"[]routing.Routes"}}}
-	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, services, logger)
+	doc := must goncini.NewOpenAPI(openapi.Config{Title: "Hello"}, router, kernel, openapi.Annotations{})
+	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, services, logger, doc)
 }
 
 // routes registers a route.
@@ -89,8 +91,18 @@ func TestRun(t *testing.T) {
 			"SERVICE          PROVIDER           NEEDS\n" +
 			"*routing.Router  goncini.NewRouter  []routing.Routes\n",
 		"debug:router": "" +
-			"NAME   METHOD  PATH    HANDLER\n" +
-			"hello  GET     /hello  http.HandlerFunc\n",
+			"NAME     METHOD  PATH           HANDLER\n" +
+			"hello    GET     /hello         http.HandlerFunc\n" +
+			"openapi  GET     /openapi.json  openapi.Handler\n",
+		"openapi:dump": "" +
+			"{\n" +
+			"  \"openapi\": \"3.1.0\",\n" +
+			"  \"info\": {\n" +
+			"    \"title\": \"Hello\",\n" +
+			"    \"version\": \"0.0.0\"\n" +
+			"  },\n" +
+			"  \"paths\": {}\n" +
+			"}\n",
 		"debug:config": "" +
 			"{\n" +
 			"  \"HTTP\": {\n" +
