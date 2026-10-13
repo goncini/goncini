@@ -1,0 +1,80 @@
+package db
+
+import (
+	"context"
+	"database/sql"
+	"strings"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+)
+
+// Instrumentation is the instrumentation scope of the queries' spans.
+const Instrumentation = "github.com/goncini/goncini/db"
+
+// traced is a Conn that makes a span of each statement, named after its
+// operation, such as SELECT, with its text: what the profiler shows of a
+// request's queries. Its spans cost next to nothing when no span is
+// recorded.
+type traced struct {
+	conn Conn
+	pool *sql.DB // whose driver names the database system
+}
+
+// start starts the span of query, if ctx's span is recorded: a query
+// outside any trace makes none, and its span is nil.
+func (t traced) start(ctx context.Context, query string) (context.Context, trace.Span) {
+	parent := trace.SpanFromContext(ctx)
+	if !parent.IsRecording() {
+		return ctx, nil
+	}
+	op, _, _ := strings.Cut(strings.TrimSpace(query), " ")
+	system := match DialectOf(t.pool) {
+		SQLite     => "sqlite"
+		PostgreSQL => "postgresql"
+		_          => "other_sql"
+	}
+	return parent.TracerProvider().Tracer(Instrumentation).Start(ctx, strings.ToUpper(op), trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attribute.String("db.system.name", system), attribute.String("db.query.text", query)))
+}
+
+// end ends a query's span, if it has one, with its error.
+func end(span trace.Span, err error) {
+	if span == nil {
+		return
+	}
+	if err != nil && err != sql.ErrNoRows {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	span.End()
+}
+
+func (t traced) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	qctx, span := t.start(ctx, query)
+	res, err := t.conn.ExecContext(qctx, query, args...)
+	end(span, err)
+	return res, err
+}
+
+func (t traced) PrepareContext(ctx context.Context, query string) (*sql.Stmt, error) {
+	qctx, span := t.start(ctx, query)
+	stmt, err := t.conn.PrepareContext(qctx, query)
+	end(span, err)
+	return stmt, err
+}
+
+func (t traced) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	qctx, span := t.start(ctx, query)
+	rows, err := t.conn.QueryContext(qctx, query, args...)
+	end(span, err)
+	return rows, err
+}
+
+func (t traced) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	qctx, span := t.start(ctx, query)
+	row := t.conn.QueryRowContext(qctx, query, args...)
+	end(span, row.Err())
+	return row
+}

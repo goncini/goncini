@@ -140,7 +140,7 @@ var kinds = []kind{
 }
 
 // sections are the config sections that goncini's providers take.
-var sections = []string{"goncini.HTTP", "goncini.Log", "openapi.Config", "messenger.Config", "scheduler.Config", "cache.Config", "translation.Config"}
+var sections = []string{"goncini.HTTP", "goncini.Log", "openapi.Config", "messenger.Config", "scheduler.Config", "cache.Config", "translation.Config", "profiler.Config"}
 
 // hasField reports whether the struct has a field of type t.
 func hasField(st *types.Struct, t types.Type) bool {

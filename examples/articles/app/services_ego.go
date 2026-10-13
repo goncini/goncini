@@ -14,6 +14,7 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/goosedb"
 	"github.com/goncini/goncini/log/zaplog"
+	"github.com/goncini/goncini/profiler"
 	"github.com/goncini/goncini/security"
 	"github.com/goncini/goncini/translation"
 
@@ -27,9 +28,9 @@ import (
 
 // Services is the app's own services.
 //
-//line services.ego:25
+//line services.ego:26
 var Services = layer.Set(zaplog.NewLogger, db.Open, db.NewSQL, migrator, articles.NewStore, articles.NewArticles, articles.NewSlugCommand, translation.New, translations.All,
-	articles.NewWorkflows, access, editors.NewFirewall, clock)
+	articles.NewWorkflows, access, editors.NewFirewall, clock, profiler.Layer)
 
 // access decides what users may do: roles only, here.
 func access() *security.Access { return &security.Access{} }

@@ -13,6 +13,9 @@ import (
 	"sync"
 	"testing"
 
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/db"
 )
@@ -20,7 +23,7 @@ import (
 // fake is a database/sql driver that logs what happens to its
 // transactions, and fails to connect when the URL says "down".
 //
-//line db_test.ego:20
+//line db_test.ego:23
 type fake struct {
 	mu  sync.Mutex
 	log []string
@@ -81,11 +84,11 @@ func open(t *testing.T) *db.SQL {
 	if err != nil {
 		panic(err)
 	}
-//line db_test.ego:77
+//line db_test.ego:80
 	t.Cleanup(func() {
 		closePool()
 	})
-//line db_test.ego:78
+//line db_test.ego:81
 	driverLog.mu.Lock()
 	driverLog.log = nil
 	driverLog.mu.Unlock()
@@ -106,7 +109,7 @@ func TestOpen(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line db_test.ego:95
+//line db_test.ego:98
 	defer closePool()
 	if err := pool.PingContext(context.Background()); err == nil || err.Error() != "connection refused" {
 		t.Errorf("PingContext = %v", err)
@@ -153,8 +156,29 @@ func TestInTx(t *testing.T) {
 	if _, ok := s.Tx(ctx); ok {
 		t.Error("a transaction outside InTx")
 	}
-	if s.Conn(ctx) != s.DB {
-		t.Error("Conn outside InTx isn't the pool")
+	driverLog.log = nil
+	exec(ctx, "insert")
+	if driverLog.logged() != "insert" {
+		t.Errorf("outside InTx: log %q", driverLog.logged())
+	}
+}
+
+// TestQuerySpans checks that each statement in a recorded span is a span
+// of its own, with its text and its error.
+func TestQuerySpans(t *testing.T) {
+	s := open(t)
+	rec := tracetest.NewSpanRecorder()
+	ctx, parent := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)).Tracer("test").Start(context.Background(), "request")
+	s.Conn(ctx).ExecContext(ctx, "insert into t")
+	s.Conn(ctx).QueryContext(ctx, "select")
+	parent.End()
+	s.Conn(context.Background()).ExecContext(context.Background(), "insert outside") // no span
+	var got []string
+	for _, span := range rec.Ended() {
+		got = append(got, span.Name()+": "+span.Status().Description)
+	}
+	if strings.Join(got, ", ") != "INSERT: , SELECT: no rows, request: " {
+		t.Errorf("spans %v", got)
 	}
 }
 
@@ -181,7 +205,7 @@ func TestCommands(t *testing.T) {
 			panic(err)
 		}
 	}
-//line db_test.ego:165
+//line db_test.ego:189
 	if got := strings.Join(m.calls, " "); got != "up status down" {
 		t.Errorf("calls: %s", got)
 	}
@@ -193,18 +217,18 @@ func TestIsolate(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line db_test.ego:173
+//line db_test.ego:197
 	if err := s.InTx(ctx, func(ctx context.Context) error {
 		_, err := s.Conn(ctx).ExecContext(ctx, "insert")
 		return err
 	}); err != nil {
 		panic(err)
 	}
-//line db_test.ego:177
+//line db_test.ego:201
 	if err := rollback(); err != nil {
 		panic(err)
 	}
-//line db_test.ego:178
+//line db_test.ego:202
 	if got := driverLog.logged(); got != "begin insert rollback" {
 		t.Errorf("log %q: the test's transaction should take in the app's", got)
 	}
@@ -215,7 +239,7 @@ func TestQueries(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line db_test.ego:185
+//line db_test.ego:209
 	defer pool.Close()
 	ctx := context.Background()
 	scan := func(row db.Scanner) (string, error) {
@@ -227,27 +251,27 @@ func TestQueries(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line db_test.ego:193
+//line db_test.ego:217
 	none, err := db.All(ctx, pool, scan, "")
 	if err != nil {
 		panic(err)
 	}
-//line db_test.ego:194
+//line db_test.ego:218
 	first, ok, err := db.One(ctx, pool, scan, "x y")
 	if err != nil {
 		panic(err)
 	}
-//line db_test.ego:195
+//line db_test.ego:219
 	_, missing, err := db.One(ctx, pool, scan, "")
 	if err != nil {
 		panic(err)
 	}
-//line db_test.ego:196
+//line db_test.ego:220
 	value, err := db.Value[string](ctx, pool, "v")
 	if err != nil {
 		panic(err)
 	}
-//line db_test.ego:197
+//line db_test.ego:221
 	if strings.Join(all, " ") != "a b c" || none == nil || len(none) != 0 || first != "x" || !ok || missing || value != "v" {
 		t.Errorf("All %q, %q; One %q %v, %v; Value %q", all, none, first, ok, missing, value)
 	}

@@ -120,14 +120,14 @@ func NewSQL(pool *sql.DB) *SQL {
 type txKey struct{ db *sql.DB }
 
 // Conn returns what to query with: the transaction that ctx is in, or else
-// the pool.
+// the pool, making a span of each statement.
 //
 //	queries := sqlcgen.New(s.sql.Conn(ctx))
 func (s *SQL) Conn(ctx context.Context) Conn {
 	if tx, ok := ctx.Value(txKey{s.DB}).(*sql.Tx); ok {
-		return tx
+		return traced{tx, s.DB}
 	}
-	return s.DB
+	return traced{s.DB, s.DB}
 }
 
 // Tx returns the transaction that ctx is in, if any.

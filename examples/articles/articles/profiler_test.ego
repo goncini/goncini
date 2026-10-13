@@ -1,0 +1,58 @@
+package articles_test
+
+import (
+	"log/slog"
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/webtest"
+
+	"github.com/goncini/goncini/examples/articles/app"
+	"github.com/goncini/goncini/examples/articles/config"
+)
+
+// TestProfiler is M5's first gate, in the process: with the profiler on,
+// as in dev, each request's profile keeps its route, status and duration,
+// the endpoint's spans and the store's queries, and its logs; /_profiler
+// lists the profiles, and debug:requests prints them.
+func TestProfiler(t *testing.T) {
+	dir := t.TempDir()
+	load := func(env *goncini.Env) config.Config {
+		c := config.Load(env)
+		c.Profiler.Enabled, c.Profiler.Dir = true, dir
+		c.Log.Level = slog.LevelInfo // the access log, which the profile keeps
+		return c
+	}
+	a := webtest.Boot(t, load, app.Build)
+	webtest.Run(t, a, "db:migrate")
+	c := webtest.NewClient(t, a)
+	c.Post("/articles", `{"title":"Profiled","body":"b"}`).Status(201)
+	c.Get("/articles/nope").Status(404)
+
+	var list struct {
+		Profiles []struct {
+			ID     string `json:"id"`
+			Route  string `json:"route"`
+			Status int    `json:"status"`
+			Micros int64  `json:"micros"`
+		} `json:"profiles"`
+	}
+	c.Get("/_profiler").Status(200).JSON(&list)
+	if len(list.Profiles) != 2 || list.Profiles[0].Status != 404 || list.Profiles[1].Route != "/articles" || list.Profiles[1].Micros <= 0 {
+		t.Fatalf("profiles %+v", list.Profiles)
+	}
+	c.Get("/_profiler/" + list.Profiles[1].ID).Status(200).
+		Contains(`"name":"articles.Articles.Create"`). // the endpoint's span
+		Contains(`"db.query.text":"INSERT INTO articles`).
+		Contains(`"log.message":"request"`) // the access log
+
+	out := webtest.Run(t, a, "debug:requests")
+	if !strings.Contains(out, "201") || !strings.Contains(out, "POST /articles") || strings.Contains(out, "/_profiler") {
+		t.Errorf("debug:requests:\n%s", out)
+	}
+	out = webtest.Run(t, a, "debug:requests", list.Profiles[1].ID)
+	if !strings.Contains(out, "INSERT INTO articles") {
+		t.Errorf("debug:requests %s:\n%s", list.Profiles[1].ID, out)
+	}
+}

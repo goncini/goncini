@@ -16,6 +16,7 @@ import (
 	"github.com/goncini/goncini/examples/articles/editors"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
+	"github.com/goncini/goncini/profiler"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
 	"github.com/goncini/goncini/translation"
@@ -24,11 +25,11 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigEditors, autoDefaultOpenapiConfig, autoDefaultTranslationConfig)
+var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigEditors, autoConfigProfiler, autoDefaultOpenapiConfig, autoDefaultTranslationConfig)
 
 // autoRoutes are the services that have routes, in the order they are provided.
-func autoRoutes(p1 *articles.Articles) []routing.Routes {
-	return []routing.Routes{p1}
+func autoRoutes(p1 *articles.Articles, p2 *profiler.Profiler) []routing.Routes {
+	return []routing.Routes{p1, p2}
 }
 
 // autoProblems are the error mappers that the app's packages declare.
@@ -37,8 +38,8 @@ func autoProblems() []httpkernel.ErrorMapper {
 }
 
 // autoCommands are the services that are console commands, and the commands of the migrator.
-func autoCommands(p1 *articles.SlugCommand, m db.Migrator, tr *translation.Translator, workflows workflow.Registry) []console.Command {
-	return append(append(append(db.Commands(m), translation.Commands(tr)...), workflow.Commands(workflows)...), []console.Command{p1}...)
+func autoCommands(p1 *articles.SlugCommand, p2 *profiler.Requests, m db.Migrator, tr *translation.Translator, workflows workflow.Registry) []console.Command {
+	return append(append(append(db.Commands(m), translation.Commands(tr)...), workflow.Commands(workflows)...), []console.Command{p1, p2}...)
 }
 
 // autoChecks ping the services that can be pinged, such as the database, before serving.
@@ -62,8 +63,8 @@ func autoBackground() []goncini.Background {
 }
 
 // autoSpanProcessors are the services that receive the app's spans, when enabled.
-func autoSpanProcessors() []goncini.SpanProcessor {
-	return []goncini.SpanProcessor{}
+func autoSpanProcessors(p1 *profiler.Profiler) []goncini.SpanProcessor {
+	return []goncini.SpanProcessor{p1}
 }
 
 // autoServices describes the app's services, for debug:container.
@@ -83,7 +84,9 @@ func autoServices() []goncini.Service {
 		{Type: "*event.Dispatcher", Provider: "goncini.NewDispatcher", Needs: []string{"[]event.Subscriber"}},
 		{Type: "workflow.Registry", Provider: "articles.NewWorkflows", Needs: []string{"*security.Access", "*event.Dispatcher"}},
 		{Type: "*articles.Articles", Provider: "articles.NewArticles", Needs: []string{"*articles.Store", "func() time.Time", "workflow.Registry"}},
-		{Type: "[]routing.Routes", Provider: "autoRoutes", Needs: []string{"*articles.Articles"}},
+		{Type: "profiler.Config", Provider: "autoConfigProfiler", Needs: []string{"config.Config"}},
+		{Type: "*profiler.Profiler", Provider: "profiler.New", Needs: []string{"profiler.Config"}},
+		{Type: "[]routing.Routes", Provider: "autoRoutes", Needs: []string{"*articles.Articles", "*profiler.Profiler"}},
 		{Type: "*routing.Router", Provider: "goncini.NewRouter", Needs: []string{"[]routing.Routes"}},
 		{Type: "editors.Config", Provider: "autoConfigEditors", Needs: []string{"config.Config"}},
 		{Type: "*security.Firewall[*editors.Editor]", Provider: "editors.NewFirewall", Needs: []string{"editors.Config"}},
@@ -98,15 +101,16 @@ func autoServices() []goncini.Service {
 		{Type: "*httpkernel.Kernel", Provider: "goncini.NewKernel", Needs: []string{"goncini.HTTP", "*routing.Router", "[]httpkernel.Middleware", "[]httpkernel.ErrorMapper", "httpkernel.Renderer", "httpkernel.Validator", "*event.Dispatcher", "*slog.Logger"}},
 		{Type: "*httpkernel.Server", Provider: "goncini.NewServer", Needs: []string{"goncini.HTTP", "*httpkernel.Kernel", "*slog.Logger"}},
 		{Type: "*articles.SlugCommand", Provider: "articles.NewSlugCommand", Needs: []string{"*articles.Articles"}},
+		{Type: "*profiler.Requests", Provider: "profiler.NewCommand", Needs: []string{"*profiler.Profiler"}},
 		{Type: "db.Migrator", Provider: "migrator", Needs: []string{"*sql.DB"}},
-		{Type: "[]console.Command", Provider: "autoCommands", Needs: []string{"*articles.SlugCommand", "db.Migrator", "*translation.Translator", "workflow.Registry"}},
+		{Type: "[]console.Command", Provider: "autoCommands", Needs: []string{"*articles.SlugCommand", "*profiler.Requests", "db.Migrator", "*translation.Translator", "workflow.Registry"}},
 		{Type: "[]goncini.Check", Provider: "autoChecks", Needs: []string{"*sql.DB"}},
 		{Type: "[]goncini.Service", Provider: "autoServices", Needs: []string{}},
 		{Type: "openapi.Config", Provider: "autoDefaultOpenapiConfig", Needs: []string{}},
 		{Type: "openapi.Annotations", Provider: "autoOpenAPI", Needs: []string{}},
 		{Type: "*openapi.Document", Provider: "goncini.NewOpenAPI", Needs: []string{"openapi.Config", "*routing.Router", "*httpkernel.Kernel", "openapi.Annotations"}},
 		{Type: "[]goncini.Background", Provider: "autoBackground", Needs: []string{}},
-		{Type: "[]goncini.SpanProcessor", Provider: "autoSpanProcessors", Needs: []string{}},
+		{Type: "[]goncini.SpanProcessor", Provider: "autoSpanProcessors", Needs: []string{"*profiler.Profiler"}},
 		{Type: "*goncini.Tracing", Provider: "goncini.NewTracing", Needs: []string{"[]goncini.SpanProcessor"}},
 		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger", "*openapi.Document", "*event.Dispatcher", "[]goncini.Background", "*goncini.Tracing"}},
 	}
@@ -143,6 +147,9 @@ func autoConfigDB(c config.Config) db.Config { return c.DB }
 
 // autoConfigEditors is the Editors section of the config.
 func autoConfigEditors(c config.Config) editors.Config { return c.Editors }
+
+// autoConfigProfiler is the Profiler section of the config.
+func autoConfigProfiler(c config.Config) profiler.Config { return c.Profiler }
 
 // autoDefaultOpenapiConfig is the default of openapi.Config, which the config doesn't have.
 func autoDefaultOpenapiConfig() openapi.Config { return openapi.Config{} }

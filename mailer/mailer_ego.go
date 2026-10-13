@@ -184,8 +184,10 @@ func newSMTP(u *url.URL) (*SMTPTransport, error) {
 
 func (t *SMTPTransport) Send(ctx context.Context, from string, to []string, raw []byte) error {
 	if err := t.send(ctx, from, to, raw); err != nil {
-		if ctx.Err() != nil {
-			err = context.Cause(ctx) // the deadline, rather than a read's error
+		if deadline, ok := ctx.Deadline(); ctx.Err() != nil || ok && !time.Now().Before(deadline) {
+			// The context's end, rather than the read it interrupted, whose
+			// deadline can come first.
+			err = cmp.Or(context.Cause(ctx), context.DeadlineExceeded)
 		}
 		return fmt.Errorf("mailer: SMTP %s: %w", t.Addr, err)
 	}
@@ -199,7 +201,7 @@ func (t *SMTPTransport) send(ctx context.Context, from string, to []string, raw 
 	if err2 != nil {
 		return err2
 	}
-//line mailer.ego:186
+//line mailer.ego:188
 	conn.SetDeadline(time.Now().Add(cmp.Or(t.Timeout, 30*time.Second)))
 	if deadline, ok := ctx.Deadline(); ok && deadline.Before(time.Now().Add(cmp.Or(t.Timeout, 30*time.Second))) {
 		conn.SetDeadline(deadline)
@@ -219,36 +221,36 @@ func (t *SMTPTransport) send(ctx context.Context, from string, to []string, raw 
 			return err3
 		}
 	}
-//line mailer.ego:203
+//line mailer.ego:205
 	if t.Username != "" {
 		if err4 := c.Auth(smtp.PlainAuth("", t.Username, t.Password, host)); err4 != nil {
 			return err4
 		}
 	}
-//line mailer.ego:206
+//line mailer.ego:208
 	if err5 := c.Mail(from); err5 != nil {
 		return err5
 	}
-//line mailer.ego:207
+//line mailer.ego:209
 	for _, rcpt := range to {
 		if err6 := c.Rcpt(rcpt); err6 != nil {
 			return err6
 		}
 	}
-//line mailer.ego:210
+//line mailer.ego:212
 	w, err7 := c.Data()
 	if err7 != nil {
 		return err7
 	}
-//line mailer.ego:211
+//line mailer.ego:213
 	if _, err8 := w.Write(raw); err8 != nil {
 		return err8
 	}
-//line mailer.ego:212
+//line mailer.ego:214
 	if err9 := w.Close(); err9 != nil {
 		return err9
 	}
-//line mailer.ego:213
+//line mailer.ego:215
 	c.Quit() // the server accepted the email: a failure to say goodbye isn't the email's
 	return nil
 }
@@ -265,7 +267,7 @@ func (t *LogTransport) Send(ctx context.Context, from string, to []string, raw [
 		v = slog.Default()
 	}
 	(v).InfoContext(ctx, "an email, not sent", slog.String("from", from), slog.Any("to", to), slog.String("header", head))
-//line mailer.ego:225
+//line mailer.ego:227
 	return nil
 }
 

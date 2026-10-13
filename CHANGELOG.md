@@ -322,6 +322,31 @@ runs in one instance of an app: the one that takes the tick's lock.
 next runs. Lock stores now prune expired locks, which keys used once, as
 ticks are, would leave.
 
+### profiler and tracing (M5)
+
+Symfony's WebProfilerBundle, built from spans:
+
+- **Tracing:**
+  - `goncini.SpanProcessor` is a kind that `goncini generate` collects: an
+    OpenTelemetry span processor that says whether it is enabled;
+  - `NewTracing` makes a tracer provider of the enabled ones, the global one
+    until the app stops, with W3C trace context as the propagator. When no
+    processor wants spans, there is none, and spans cost next to nothing;
+  - the app's logger adds each record to its span, as a `log` event;
+  - `db.SQL.Conn` makes a span of each statement, with its text, under the
+    caller's span.
+- **The profiler:** `profiler.Layer`, with `profiler.Config.Enabled` in dev:
+  - it makes a profile of each trace whose root span ends in the process: a
+    request, or a message's handling;
+  - it keeps the last 200 profiles as JSON files in `var/profiler`;
+  - `/_profiler` lists them, and `/_profiler/{id}` shows one. These are plain
+    handlers, which the OpenAPI document leaves out;
+  - `debug:requests` prints them, and `debug:requests <id>` prints one's
+    spans, queries and logs, from another terminal.
+
+Worth knowing: spans get the records that are logged, at the log's level.
+Query spans follow the tracer provider of their parent span.
+
 ### workflow (M4)
 
 Symfony's Workflow, as state machines: a `Definition` has places, an

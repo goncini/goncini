@@ -319,6 +319,12 @@ changes.
   checking the transition's guard, a security attribute, and saves its new
   state with the function it is given.
 
+## Profiling
+
+With `profiler.Layer` in `Services` and `c.Profiler.Enabled = true` in
+`config/dev.ego`, each request's spans, queries and logs are kept:
+`/_profiler` lists them, and `go run . debug:requests [id]` prints them.
+
 ## Wiring
 
 `app/inject.go` builds the app with effect-go's `layer`: providers are

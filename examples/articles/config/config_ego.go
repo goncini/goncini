@@ -7,18 +7,21 @@ package config
 import (
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/profiler"
 
 	"github.com/goncini/goncini/examples/articles/editors"
 )
 
 // Config is the articles API's config, one section per part of the app.
 //
-//line config.ego:13
+//line config.ego:14
 type Config struct {
 	HTTP    goncini.HTTP
 	Log     goncini.Log
 	DB      db.Config
 	Editors editors.Config
+	// Profiler keeps what each request did, in dev.
+	Profiler profiler.Config
 }
 
 // Load returns the config of env: what every environment shares, then what

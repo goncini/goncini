@@ -171,8 +171,10 @@ func newSMTP(u *url.URL) (*SMTPTransport, error) {
 
 func (t *SMTPTransport) Send(ctx context.Context, from string, to []string, raw []byte) error {
 	if err := t.send(ctx, from, to, raw); err != nil {
-		if ctx.Err() != nil {
-			err = context.Cause(ctx) // the deadline, rather than a read's error
+		if deadline, ok := ctx.Deadline(); ctx.Err() != nil || ok && !time.Now().Before(deadline) {
+			// The context's end, rather than the read it interrupted, whose
+			// deadline can come first.
+			err = cmp.Or(context.Cause(ctx), context.DeadlineExceeded)
 		}
 		return fmt.Errorf("mailer: SMTP %s: %w", t.Addr, err)
 	}

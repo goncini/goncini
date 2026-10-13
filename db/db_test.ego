@@ -11,6 +11,9 @@ import (
 	"sync"
 	"testing"
 
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/db"
 )
@@ -136,8 +139,29 @@ func TestInTx(t *testing.T) {
 	if _, ok := s.Tx(ctx); ok {
 		t.Error("a transaction outside InTx")
 	}
-	if s.Conn(ctx) != s.DB {
-		t.Error("Conn outside InTx isn't the pool")
+	driverLog.log = nil
+	exec(ctx, "insert")
+	if driverLog.logged() != "insert" {
+		t.Errorf("outside InTx: log %q", driverLog.logged())
+	}
+}
+
+// TestQuerySpans checks that each statement in a recorded span is a span
+// of its own, with its text and its error.
+func TestQuerySpans(t *testing.T) {
+	s := open(t)
+	rec := tracetest.NewSpanRecorder()
+	ctx, parent := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)).Tracer("test").Start(context.Background(), "request")
+	s.Conn(ctx).ExecContext(ctx, "insert into t")
+	s.Conn(ctx).QueryContext(ctx, "select")
+	parent.End()
+	s.Conn(context.Background()).ExecContext(context.Background(), "insert outside") // no span
+	var got []string
+	for _, span := range rec.Ended() {
+		got = append(got, span.Name()+": "+span.Status().Description)
+	}
+	if strings.Join(got, ", ") != "INSERT: , SELECT: no rows, request: " {
+		t.Errorf("spans %v", got)
 	}
 }
 
