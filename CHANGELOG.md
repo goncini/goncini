@@ -396,7 +396,9 @@ Symfony's `symfony new`, for an API:
 Symfony's MakerBundle, as the tool's `make:*` commands, run in the app's
 module: each writes `.ego` files in goncini's layout, adds their services to
 `app/services.ego`, and runs `goncini generate`, so that what it writes is
-wired, and its tests pass, at once.
+wired, and its tests pass, at once. If what it wrote doesn't compile, it
+puts the app back as it was. It refuses names that would clash with the
+app's, the feature's or its own, and prints the files it wrote.
 
 - `make:feature notes` writes the `notes` package: a `Note`, its error set
   and its problems, a store, endpoints to list, show, create and delete
@@ -404,10 +406,12 @@ wired, and its tests pass, at once.
   names the type when the singular isn't the name without its `s`.
 - `make:endpoint [-method POST] [-path /notes/{id}/archive] notes Archive`
   adds an endpoint, its input with the path's parameters, its output, and
-  its route, to a feature's controller.
+  its route, named as the feature's others, to a feature's controller. An
+  `{id}` is a `uid.UUID` with its requirement when the controller uses
+  them.
 - `make:message notes NoteAdded` writes a message and its handler, routed to
   the `async` queue. An app with no bus gets `messenger.SQL`.
-- `make:command [-summary text] notes:prune` writes a console command.
+- `make:command -summary text notes:prune` writes a console command.
 - `make:migration add_note_tags` writes the next goose migration.
 
 Worth knowing:
@@ -416,6 +420,13 @@ Worth knowing:
   macOS's `/var`.
 - The makers edit `app/services.ego` as text: they add to a
   `var Services = layer.Set(…)`, and say what to add when it isn't one.
+  `make:message` adds `messenger.SQL` unless the file mentions a bus.
+- A new app gets goncini's AGENTS.md. `goncini new` checks the module path,
+  names the app after it without its major version, and removes what it
+  wrote if it fails.
+- `goncini new` requires the version it was built from, which goncini's
+  modules share; a build from a checkout, or a replaced one, requires the
+  latest.
 - A feature's queries take `?` parameters, as SQLite, a new app's database,
   does; an app on PostgreSQL writes `$1`.
 

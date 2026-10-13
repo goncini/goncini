@@ -3,37 +3,35 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
-	"os"
-	"path/filepath"
+	"path"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
 )
 
-// servicesFile is the file of the app's Services.
+// servicesFile is the file of the app's Services, from the module's root.
 //
-//line wiring.ego:13
-func servicesFile(root string) string {
-	return filepath.Join(root, "app", "services.ego")
-}
+//line wiring.ego:15
+const servicesFile = "app/services.ego"
 
 const servicesSet = "var Services = layer.Set("
 
 // addServices adds providers, such as notes.NewStore, to the app's
 // Services, on a line of their own, and imports their package.
-func addServices(root, importPath string, providers ...string) error {
-	file := servicesFile(root)
-	content, err := os.ReadFile(file)
+func addServices(c *change, importPath string, providers ...string) error {
+	src, err := c.read(servicesFile)
 	if err != nil {
 		return err
 	}
-//line wiring.ego:24
-	src := string(content)
+//line wiring.ego:23
 	start := strings.Index(src, servicesSet)
 	end := closingParen(src, start+len(servicesSet))
 	if start < 0 || end < 0 {
-		return fmt.Errorf("%s has no %s…): add %s to the app's services", file, servicesSet, strings.Join(providers, ", "))
+		return fmt.Errorf("%s has no %s…): add %s to the app's services", servicesFile, servicesSet, strings.Join(providers, ", "))
 	}
 	start += len(servicesSet)
 	list := strings.TrimSuffix(strings.TrimRight(src[start:end], " \t\n"), ",")
@@ -42,12 +40,8 @@ func addServices(root, importPath string, providers ...string) error {
 		added += ",\n"
 	}
 	src = src[:start] + list + added + src[end:]
-	src = addImport(src, importPath)
-	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
-		return err
-	}
-//line wiring.ego:39
-	return egoFmt(root, file)
+	c.edit(servicesFile, addImport(src, importPath))
+	return nil
 }
 
 // closingParen returns the index of the parenthesis that closes the one
@@ -69,6 +63,24 @@ func closingParen(src string, from int) int {
 		}
 	}
 	return -1
+}
+
+var importLine = regexp.MustCompile(`(?m)^\s*(?:(\w+)\s+)?"([^"]+)"`)
+
+// importNames returns the names that src's import block declares: their
+// packages' last elements, or their aliases.
+func importNames(src string) []string {
+	start := strings.Index(src, "import (\n")
+	if start < 0 {
+		return nil
+	}
+	block := src[start:]
+	block = block[:strings.Index(block, "\n)")+1]
+	var names []string
+	for _, m := range importLine.FindAllStringSubmatch(block, -1) {
+		names = append(names, cmp.Or(m[1], path.Base(m[2])))
+	}
+	return names
 }
 
 // addImport adds an import of path to src's import block, unless it has
@@ -102,12 +114,15 @@ func egoFmt(root string, files ...string) error {
 	return run(root, "go", append([]string{"tool", "ego", "fmt", "-w"}, files...)...)
 }
 
+// initialisms are the words that Go names write in capitals.
+var initialisms = []string{"api", "csv", "html", "http", "id", "json", "sql", "url", "uuid", "xml"}
+
 // camel turns a name into an exported Go one: prune-old becomes PruneOld,
-// and id ID.
+// and import-csv ImportCSV.
 func camel(name string) string {
 	var b strings.Builder
 	for _, w := range strings.FieldsFunc(name, func(r rune) bool { return r == '-' || r == '_' || r == ':' }) {
-		if w == "id" || w == "url" {
+		if slices.Contains(initialisms, w) {
 			b.WriteString(strings.ToUpper(w))
 			continue
 		}
@@ -136,12 +151,13 @@ func kebab(name string) string {
 }
 
 // singular returns the singular of an English plural, as far as simple
-// rules go: notes gives note, and categories category.
+// rules go: notes gives note, and categories category; status and news
+// stay as they are.
 func singular(name string) string {
 	switch {
 	case strings.HasSuffix(name, "ies"):
 		return strings.TrimSuffix(name, "ies") + "y"
-	case strings.HasSuffix(name, "s") && !strings.HasSuffix(name, "ss"):
+	case strings.HasSuffix(name, "s") && !strings.HasSuffix(name, "ss") && !strings.HasSuffix(name, "us") && !strings.HasSuffix(name, "is") && !strings.HasSuffix(name, "ews"):
 		return strings.TrimSuffix(name, "s")
 	}
 	return name

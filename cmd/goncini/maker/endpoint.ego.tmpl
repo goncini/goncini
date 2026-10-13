@@ -1,6 +1,6 @@
 
 type <%.Name%>Input struct {<%range .Params%>
-	<%.Field%> string `path:"<%.Name%>"`<%end%><%if .Body%>
+	<%.Field%> <%.Type%> `path:"<%.Name%>"`<%end%><%if .Body%>
 	Body struct{}<%end%>
 }
 

@@ -11,10 +11,10 @@ type <%.Type%> struct{}
 
 func New<%.Type%>() *<%.Type%> { return &<%.Type%>{} }
 
-func (*<%.Type%>) Name() string    { return "<%.Command%>" }
-func (*<%.Type%>) Summary() string { return "<%.Summary%>" }
+func (*<%.Type%>) Name() string    { return <%printf "%q" .Command%> }
+func (*<%.Type%>) Summary() string { return <%printf "%q" .Summary%> }
 
 func (c *<%.Type%>) Run(ctx context.Context, out io.Writer, args []string) error {
-	_, err := fmt.Fprintln(out, "<%.Command%>: done")
+	_, err := fmt.Fprintln(out, <%printf "%q" .Command%>, "done")
 	return err
 }

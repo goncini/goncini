@@ -3,12 +3,14 @@
 //	go run github.com/goncini/goncini/cmd/goncini@latest new example.com/acme
 //
 // In an app, the makers write .ego files in its layout, add their services
-// to app/services.ego, and wire them with goncini generate:
+// to app/services.ego, and wire them with goncini generate; if what they
+// wrote doesn't compile, they put the app back as it was:
 //
 //	go tool goncini make:feature notes          # a feature: store, endpoints, test, migration
-//	go tool goncini make:endpoint -method POST notes Archive
+//	go tool goncini make:feature people Person  # when the type isn't the singular without its s
+//	go tool goncini make:endpoint -method POST -path '/notes/{id}/archive' notes Archive
 //	go tool goncini make:message notes NoteAdded
-//	go tool goncini make:command notes:prune
+//	go tool goncini make:command -summary "Prunes the old notes" notes:prune
 //	go tool goncini make:migration add_note_tags
 //
 // goncini generate writes an app's
@@ -29,7 +31,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"strings"
 )
 
 const usage = `usage: goncini new [-replace dir] module [dir]
@@ -37,7 +38,7 @@ const usage = `usage: goncini new [-replace dir] module [dir]
        goncini make:feature name [Type]
        goncini make:endpoint [-method GET] [-path /feature/name] feature Name
        goncini make:message feature Name
-       goncini make:command [-summary text] feature:name
+       goncini make:command -summary text feature:name
        goncini make:migration name`
 
 func main() {
@@ -56,6 +57,7 @@ func main() {
 		}
 	}
 	var err error
+	var files []string // that a maker wrote
 	switch cmd {
 	case "new":
 		replace := fs.String("replace", "", "a goncini checkout for the app to require, instead of a released version")
@@ -72,32 +74,28 @@ func main() {
 		err = generate(".", *app, *checkOnly)
 	case "make:feature":
 		args(1, 2)
-		err = makeFeature(".", fs.Arg(0), fs.Arg(1))
+		files, err = makeFeature(".", fs.Arg(0), fs.Arg(1))
 	case "make:endpoint":
 		method := fs.String("method", "GET", "the endpoint's HTTP method")
 		at := fs.String("path", "", "the endpoint's path; /feature/name by default")
 		args(2, 2)
-		err = makeEndpoint(".", fs.Arg(0), fs.Arg(1), *method, *at)
+		files, err = makeEndpoint(".", fs.Arg(0), fs.Arg(1), *method, *at)
 	case "make:message":
 		args(2, 2)
-		err = makeMessage(".", fs.Arg(0), fs.Arg(1))
+		files, err = makeMessage(".", fs.Arg(0), fs.Arg(1))
 	case "make:command":
-		summary := fs.String("summary", "", "what the command does, in a line")
+		summary := fs.String("summary", "", "what the command does, in a line, for the list")
 		args(1, 1)
-		err = makeCommand(".", fs.Arg(0), *summary)
+		files, err = makeCommand(".", fs.Arg(0), *summary)
 	case "make:migration":
 		args(1, 1)
-		var file string
-		if file, err = makeMigration(".", fs.Arg(0)); err == nil {
-			fmt.Println("wrote", file)
-		}
+		files, err = makeMigration(".", fs.Arg(0))
 	default:
 		fs.Usage()
 		os.Exit(2)
 	}
-	// What a maker writes is wired at once.
-	if err == nil && strings.HasPrefix(cmd, "make:") && cmd != "make:migration" {
-		err = generate(".", "app", false)
+	for _, f := range files {
+		fmt.Println("wrote", f)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "goncini %s: %v\n", cmd, err)

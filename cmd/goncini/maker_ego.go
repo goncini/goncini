@@ -6,13 +6,14 @@ import (
 	"bytes"
 	"cmp"
 	"embed"
-	"errors"
 	"fmt"
 	"go/token"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"text/template"
 )
@@ -20,7 +21,7 @@ import (
 // makers is the templates of what goncini make:* writes.
 //
 //go:embed maker
-//line maker.ego:21
+//line maker.ego:22
 var makers embed.FS
 
 // featureData is what make:feature's templates are given.
@@ -36,29 +37,35 @@ type featureData struct {
 	Route   string // its routes' names' prefix: note
 }
 
-// makeFeature writes a feature in root/name: a type, its error set, a
-// store, the endpoints that list, show, create and delete its values, a
-// test, and its table's migration; and adds its services to the app's. typ
-// names the type, the singular of name if it is empty.
-func makeFeature(root, name, typ string) error {
-	if !token.IsIdentifier(name) || token.IsKeyword(name) || strings.ToLower(name) != name {
-		return fmt.Errorf("%q isn't a package name: lower-case letters and digits", name)
-	}
-	module, err := modulePath(root)
-	if err != nil {
-		return err
-	}
-//line maker.ego:45
-	dir := filepath.Join(root, name)
-	if _, err := os.Stat(dir); err == nil {
-		return fmt.Errorf("%s exists", dir)
+var (
+	// packageName is what a feature's name can be: a package name, as Go
+	// wants them, short and without underscores.
+	packageName = regexp.MustCompile(`^[a-z][a-z0-9]*$`)
+	// appPackages are the app's packages that aren't features.
+	appPackages = []string{"main", "app", "config", "migrations"}
+	// featureNames are the names that make:feature's templates declare,
+	// which the type and the controller can't take.
+	featureNames = []string{"Store", "Problem", "Problems", "NotFound", "Unavailable", "ListInput", "IDInput", "CreateInput"}
+	// templateNames are the names that the variable of the type can't
+	// take: the templates' packages, variables and receivers.
+	templateNames = []string{"time", "db", "uid", "http", "httpkernel", "listing", "routing", "list", "count", "ok", "deleted", "in", "s", "n", "res", "row", "created", "conn", "id", "store", "now", "r"}
+)
+
+// newFeature returns the names of a feature of the module, whose type typ
+// is, or else the singular of name.
+func newFeature(module, name, typ string) (featureData, error) {
+	if !packageName.MatchString(name) || token.IsKeyword(name) || slices.Contains(appPackages, name) {
+		return featureData{}, fmt.Errorf("%q can't name a feature: lower-case letters and digits, not a keyword, nor one of %s", name, strings.Join(appPackages, ", "))
 	}
 	d := featureData{Module: module, Package: name, Type: cmp.Or(typ, camel(singular(name))), Plural: camel(name), Table: name, Path: "/" + name}
 	if !token.IsExported(d.Type) || !token.IsIdentifier(d.Type) {
-		return fmt.Errorf("%q isn't an exported type name", d.Type)
+		return featureData{}, fmt.Errorf("%q isn't an exported type name", d.Type)
 	}
 	if d.Plural == d.Type {
 		d.Plural += "Controller"
+	}
+	if slices.Contains(featureNames, d.Type) || slices.Contains(featureNames, d.Plural) {
+		return featureData{}, fmt.Errorf("the feature declares %s already: name its type, as in make:feature %s Item", d.Type, name)
 	}
 	d.Route = snake(d.Type)
 	d.Recv = strings.ToLower(d.Plural[:1])
@@ -66,8 +73,35 @@ func makeFeature(root, name, typ string) error {
 		d.Recv = strings.ToLower(d.Plural[:2])
 	}
 	d.Var = strings.ToLower(d.Type[:1]) + d.Type[1:]
-	if token.IsKeyword(d.Var) || d.Var == d.Recv || strings.Contains(" list count ok deleted in s n res row created conn id store now r ", " "+d.Var+" ") {
+	if token.IsKeyword(d.Var) || d.Var == d.Recv || slices.Contains(templateNames, d.Var) {
 		d.Var = "item"
+	}
+	return d, nil
+}
+
+// makeFeature writes a feature in root/name: a type, its error set, a
+// store, the endpoints that list, show, create and delete its values, a
+// test, and its table's migration; and adds its services to the app's. typ
+// names the type, the singular of name if it is empty.
+func makeFeature(root, name, typ string) ([]string, error) {
+	module, err := modulePath(root)
+	if err != nil {
+		return nil, err
+	}
+//line maker.ego:85
+	d, err := newFeature(module, name, typ)
+	if err != nil {
+		return nil, err
+	}
+//line maker.ego:86
+	c := newChange(root)
+	services, err := c.read(servicesFile)
+	if err != nil {
+		return nil, err
+	}
+//line maker.ego:88
+	if slices.Contains(importNames(services), name) {
+		return nil, fmt.Errorf("%s imports a package named %s already", servicesFile, name)
 	}
 	files := map[string]string{
 		"feature.ego.tmpl":      name + ".ego",
@@ -78,24 +112,25 @@ func makeFeature(root, name, typ string) error {
 	for tmpl, file := range files {
 		code, err := render("maker/feature/"+tmpl, d)
 		if err != nil {
-			return err
+			return nil, err
 		}
-//line maker.ego:73
-		if err := create(filepath.Join(dir, file), code); err != nil {
-			return err
-		}
+//line maker.ego:99
+		c.create(path.Join(name, file), code)
 	}
-//line maker.ego:75
 	sql, err := render("maker/feature/migration.sql.tmpl", d)
 	if err != nil {
-		return err
+		return nil, err
 	}
-//line maker.ego:76
-	if _, err := writeMigration(root, "create_"+name, sql); err != nil {
-		return err
+//line maker.ego:102
+	if err := addMigration(c, "create_"+name, sql); err != nil {
+		return nil, err
 	}
-//line maker.ego:77
-	return addServices(root, module+"/"+name, name+".NewStore", name+".New"+d.Plural)
+//line maker.ego:103
+	if err := addServices(c, module+"/"+name, name+".NewStore", name+".New"+d.Plural); err != nil {
+		return nil, err
+	}
+//line maker.ego:104
+	return c.apply()
 }
 
 // endpointData is what make:endpoint's template is given.
@@ -108,67 +143,84 @@ type endpointData struct {
 }
 
 // param is a path parameter, and the input's field that gets it.
-type param struct{ Name, Field string }
+type param struct{ Name, Field, Type string }
 
 var (
 	routesFunc = regexp.MustCompile(`func \((\w+) \*(\w+)\) Routes\((\w+) \*routing\.Router\) \{\n`)
+	routeName  = regexp.MustCompile(`\.Name\("([a-z0-9]+)_`)
 	errorSet   = regexp.MustCompile(`(?m)^error (\w+) \{`)
 	pathParam  = regexp.MustCompile(`\{(\w+)`)
 	verbs      = map[string]string{"GET": "Get", "POST": "Post", "PUT": "Put", "PATCH": "Patch", "DELETE": "Delete"}
 )
 
 // makeEndpoint adds an endpoint to a feature's controller, with its input
-// and output types, and its route, at path, by default /feature/name.
-func makeEndpoint(root, feature, name, method, path string) error {
+// and output types, and its route, at path, by default /feature/name. An id
+// parameter is a uid.UUID when the controller uses them.
+func makeEndpoint(root, feature, name, method, at string) ([]string, error) {
 	if !token.IsExported(name) || !token.IsIdentifier(name) {
-		return fmt.Errorf("%q isn't an exported method name", name)
+		return nil, fmt.Errorf("%q isn't an exported method name", name)
 	}
 	method = strings.ToUpper(method)
 	verb, ok := verbs[method]
 	if !ok {
-		return fmt.Errorf("%s isn't one of GET, POST, PUT, PATCH and DELETE", method)
+		return nil, fmt.Errorf("%s isn't one of GET, POST, PUT, PATCH and DELETE", method)
 	}
-	file := filepath.Join(root, feature, "controller.ego")
-	content, err := os.ReadFile(file)
+	if err := isFeature(root, feature); err != nil {
+		return nil, err
+	}
+//line maker.ego:140
+	if err := undeclared(root, feature, name, name+"Input", name+"Output"); err != nil {
+		return nil, err
+	}
+//line maker.ego:141
+	c := newChange(root)
+	file := path.Join(feature, "controller.ego")
+	src, err := c.read(file)
 	if err != nil {
-		return err
+		return nil, err
 	}
-//line maker.ego:112
-	src := string(content)
+//line maker.ego:144
 	m := routesFunc.FindStringSubmatchIndex(src)
 	if m == nil {
-		return fmt.Errorf("%s has no Routes(r *routing.Router) method", file)
+		return nil, fmt.Errorf("%s has no Routes(r *routing.Router) method", file)
 	}
 	end := strings.Index(src[m[1]:], "\n}\n")
 	if end < 0 {
-		return fmt.Errorf("%s: Routes has no end", file)
+		return nil, fmt.Errorf("%s: Routes has no end", file)
 	}
 	end += m[1] + 1
-	d := endpointData{Name: name, Method: method, Path: cmp.Or(path, "/"+feature+"/"+kebab(name)), Recv: src[m[2]:m[3]], Controller: src[m[4]:m[5]], Error: "error"}
+	d := endpointData{Name: name, Method: method, Path: cmp.Or(at, "/"+feature+"/"+kebab(name)), Recv: src[m[2]:m[3]], Controller: src[m[4]:m[5]], Error: "error"}
 	d.Body = method == "POST" || method == "PUT" || method == "PATCH"
+	usesUID := strings.Contains(src, `"github.com/goncini/goncini/uid"`)
+	route := fmt.Sprintf("\t%s.%s(%q, httpkernel.Endpoint(%s.%s))", src[m[6]:m[7]], verb, d.Path, d.Recv, name)
+	prefix := snake(singular(feature))
+	if r := routeName.FindStringSubmatch(src[m[1]:end]); r != nil {
+		prefix = r[1] // as the feature's other routes
+	}
+	route += fmt.Sprintf(".Name(%q)", prefix+"_"+snake(name))
 	for _, p := range pathParam.FindAllStringSubmatch(d.Path, -1) {
-		d.Params = append(d.Params, param{Name: p[1], Field: camel(p[1])})
+		pr := param{Name: p[1], Field: camel(p[1]), Type: "string"}
+		if pr.Name == "id" && usesUID && !strings.Contains(d.Path, "{id<") {
+			pr.Type = "uid.UUID"
+			route += `.Require("id", routing.UUID)`
+		}
+		d.Params = append(d.Params, pr)
 	}
 	sets, err := featureErrorSets(filepath.Join(root, feature))
 	if err != nil {
-		return err
+		return nil, err
 	}
-//line maker.ego:128
+//line maker.ego:171
 	if len(sets) > 0 {
 		d.Error = sets[0]
 	}
-	route := fmt.Sprintf("\t%s.%s(%q, httpkernel.Endpoint(%s.%s)).Name(%q)\n", src[m[6]:m[7]], verb, d.Path, d.Recv, name, snake(singular(feature))+"_"+snake(name)) // as make:feature names its routes
 	code, err := render("maker/endpoint.ego.tmpl", d)
 	if err != nil {
-		return err
+		return nil, err
 	}
-//line maker.ego:133
-	src = src[:end] + route + src[end:] + string(code)
-	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
-		return err
-	}
-//line maker.ego:135
-	return egoFmt(root, file)
+//line maker.ego:175
+	c.edit(file, src[:end]+route+"\n"+src[end:]+string(code))
+	return c.apply()
 }
 
 // featureErrorSets returns the names of the error sets of a feature's
@@ -178,14 +230,14 @@ func featureErrorSets(dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:142
+//line maker.ego:183
 	var sets []string
 	for _, f := range files {
 		src, err := os.ReadFile(f)
 		if err != nil {
 			return nil, err
 		}
-//line maker.ego:145
+//line maker.ego:186
 		for _, m := range errorSet.FindAllSubmatch(src, -1) {
 			sets = append(sets, string(m[1]))
 		}
@@ -196,37 +248,46 @@ func featureErrorSets(dir string) ([]string, error) {
 // makeMessage writes a message of a feature, and its handler, which a
 // worker runs; and adds the handler to the app's services, with a bus whose
 // queues are in the app's database if the app has no bus.
-func makeMessage(root, feature, name string) error {
+func makeMessage(root, feature, name string) ([]string, error) {
 	if !token.IsExported(name) || !token.IsIdentifier(name) {
-		return fmt.Errorf("%q isn't an exported type name", name)
+		return nil, fmt.Errorf("%q isn't an exported type name", name)
 	}
+	if err := isFeature(root, feature); err != nil {
+		return nil, err
+	}
+//line maker.ego:201
+	if err := undeclared(root, feature, name, name+"Handler", "New"+name+"Handler"); err != nil {
+		return nil, err
+	}
+//line maker.ego:202
 	module, err := modulePath(root)
 	if err != nil {
-		return err
+		return nil, err
 	}
-//line maker.ego:160
+//line maker.ego:203
+	c := newChange(root)
 	code, err := render("maker/message.ego.tmpl", featureData{Package: feature, Type: name})
 	if err != nil {
-		return err
+		return nil, err
 	}
-//line maker.ego:161
-	if err := create(filepath.Join(root, feature, snake(name)+".ego"), code); err != nil {
-		return err
+//line maker.ego:205
+	c.create(path.Join(feature, snake(name)+".ego"), code)
+	if err := addServices(c, module+"/"+feature, feature+".New"+name+"Handler"); err != nil {
+		return nil, err
 	}
-//line maker.ego:162
-	if err := addServices(root, module+"/"+feature, feature+".New"+name+"Handler"); err != nil {
-		return err
-	}
-//line maker.ego:163
-	services, err := os.ReadFile(servicesFile(root))
+//line maker.ego:207
+	services, err := c.read(servicesFile)
 	if err != nil {
-		return err
+		return nil, err
 	}
-//line maker.ego:164
-	if !regexp.MustCompile(`messenger\.(SQL|Memory|NewBus)\b`).Match(services) {
-		return addServices(root, "github.com/goncini/goncini/messenger", "messenger.SQL")
+//line maker.ego:208
+	if !regexp.MustCompile(`messenger\.(SQL|Memory|NewBus)\b`).MatchString(services) {
+		if err := addServices(c, "github.com/goncini/goncini/messenger", "messenger.SQL"); err != nil {
+			return nil, err
+		}
 	}
-	return nil
+//line maker.ego:211
+	return c.apply()
 }
 
 // commandData is what make:command's template is given.
@@ -234,55 +295,74 @@ type commandData struct {
 	Package, Type, Command, Summary string
 }
 
+var commandName = regexp.MustCompile(`^[a-z0-9][a-z0-9:-]*$`)
+
 // makeCommand writes a console command of a feature, such as notes:prune
 // in notes, and adds it to the app's services.
-func makeCommand(root, command, summary string) error {
-	feature, sub, ok := strings.Cut(command, ":")
-	if !ok || feature == "" || sub == "" {
-		return fmt.Errorf("%q isn't feature:name", command)
+func makeCommand(root, command, summary string) ([]string, error) {
+	feature, sub, _ := strings.Cut(command, ":")
+	if !commandName.MatchString(sub) {
+		return nil, fmt.Errorf("%q isn't feature:name, in lower case", command)
 	}
+	if summary == "" {
+		return nil, fmt.Errorf("say what %s does, in a line, with -summary", command)
+	}
+	if err := isFeature(root, feature); err != nil {
+		return nil, err
+	}
+//line maker.ego:232
+	d := commandData{Package: feature, Type: camel(sub) + "Command", Command: command, Summary: summary}
+	if err := undeclared(root, feature, d.Type, "New"+d.Type); err != nil {
+		return nil, err
+	}
+//line maker.ego:234
 	module, err := modulePath(root)
 	if err != nil {
-		return err
+		return nil, err
 	}
-//line maker.ego:183
-	d := commandData{Package: feature, Type: camel(sub) + "Command", Command: command, Summary: cmp.Or(summary, "Runs "+command)}
+//line maker.ego:235
+	c := newChange(root)
 	code, err := render("maker/command.ego.tmpl", d)
 	if err != nil {
-		return err
+		return nil, err
 	}
-//line maker.ego:185
-	if err := create(filepath.Join(root, feature, snake(d.Type)+".ego"), code); err != nil {
-		return err
+//line maker.ego:237
+	c.create(path.Join(feature, snake(d.Type)+".ego"), code)
+	if err := addServices(c, module+"/"+feature, feature+".New"+d.Type); err != nil {
+		return nil, err
 	}
-//line maker.ego:186
-	return addServices(root, module+"/"+feature, feature+".New"+d.Type)
+//line maker.ego:239
+	return c.apply()
 }
 
-// makeMigration writes an empty migration, and returns its file.
-func makeMigration(root, name string) (string, error) {
+// makeMigration writes an empty migration.
+func makeMigration(root, name string) ([]string, error) {
+	c := newChange(root)
 	sql, err := render("maker/migration.sql.tmpl", nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-//line maker.ego:192
-	return writeMigration(root, name, sql)
+//line maker.ego:246
+	if err := addMigration(c, name, sql); err != nil {
+		return nil, err
+	}
+//line maker.ego:247
+	return c.apply()
 }
 
 var migrationName = regexp.MustCompile(`^[a-z0-9_]+$`)
 
-// writeMigration writes the next migration in root/migrations, named
-// 0000N_name.sql, and returns its file.
-func writeMigration(root, name string, sql []byte) (string, error) {
+// addMigration adds the next migration in migrations, named
+// 0000N_name.sql, to c.
+func addMigration(c *change, name string, sql []byte) error {
 	if !migrationName.MatchString(name) {
-		return "", fmt.Errorf("%q isn't a migration name: lower-case letters, digits and _", name)
+		return fmt.Errorf("%q isn't a migration name: lower-case letters, digits and _", name)
 	}
-	dir := filepath.Join(root, "migrations")
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(filepath.Join(c.root, "migrations"))
 	if err != nil {
-		return "", err
+		return err
 	}
-//line maker.ego:205
+//line maker.ego:259
 	last := 0
 	for _, e := range entries {
 		var n int
@@ -290,12 +370,43 @@ func writeMigration(root, name string, sql []byte) (string, error) {
 			last = max(last, n)
 		}
 	}
-	file := filepath.Join(dir, fmt.Sprintf("%05d_%s.sql", last+1, name))
-	if err := create(file, sql); err != nil {
-		return "", err
+	c.create(fmt.Sprintf("migrations/%05d_%s.sql", last+1, name), sql)
+	return nil
+}
+
+// isFeature checks that feature is a feature's name, and that the app has
+// it: a maker doesn't make a package of a typo.
+func isFeature(root, feature string) error {
+	if !packageName.MatchString(feature) || slices.Contains(appPackages, feature) {
+		return fmt.Errorf("%q isn't a feature's name", feature)
 	}
-//line maker.ego:214
-	return file, nil
+	if info, err := os.Stat(filepath.Join(root, feature)); err != nil || !info.IsDir() {
+		return fmt.Errorf("the app has no feature %s: make:feature makes one", feature)
+	}
+	return nil
+}
+
+// undeclared checks that a feature's files don't declare any of names.
+func undeclared(root, feature string, names ...string) error {
+	files, err := filepath.Glob(filepath.Join(root, feature, "*.ego"))
+	if err != nil {
+		return err
+	}
+//line maker.ego:285
+	for _, name := range names {
+		decl := regexp.MustCompile(`(?m)^(?:type|func|effect|var|const)\s+(?:\([^)]*\)\s*)?` + name + `\b`)
+		for _, f := range files {
+			src, err := os.ReadFile(f)
+			if err != nil {
+				return err
+			}
+//line maker.ego:289
+			if decl.Match(src) {
+				return fmt.Errorf("%s declares %s already", filepath.Join(feature, filepath.Base(f)), name)
+			}
+		}
+	}
+	return nil
 }
 
 // render runs a maker's template with d.
@@ -304,33 +415,18 @@ func render(name string, d any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:220
+//line maker.ego:300
 	t, err := template.New(name).Delims("<%", "%>").Parse(string(src))
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:221
+//line maker.ego:301
 	var out bytes.Buffer
 	if err := t.Execute(&out, d); err != nil {
 		return nil, err
 	}
-//line maker.ego:223
+//line maker.ego:303
 	return out.Bytes(), nil
-}
-
-// create writes a new file, and fails if it exists.
-func create(file string, content []byte) error {
-	if err2 := os.MkdirAll(filepath.Dir(file), 0o755); err2 != nil {
-		return err2
-	}
-//line maker.ego:229
-	f, err3 := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err3 != nil {
-		return err3
-	}
-//line maker.ego:230
-	_, err := f.Write(content)
-	return errors.Join(err, f.Close())
 }
 
 var modulePattern = regexp.MustCompile(`(?m)^module\s+(\S+)`)
@@ -341,7 +437,7 @@ func modulePath(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-//line maker.ego:239
+//line maker.ego:311
 	m := modulePattern.FindSubmatch(mod)
 	if m == nil {
 		return "", fmt.Errorf("%s has no module line", filepath.Join(root, "go.mod"))

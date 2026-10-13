@@ -2,8 +2,8 @@
 
 goncini is a framework for JSON APIs in Go, after Symfony, on `net/http`
 and effect-go. Apps are written in effect-go's `.ego` dialect. This file
-is what you need to work on a goncini app; `examples/realworld` is a
-complete one.
+is what you need to work on a goncini app; `examples/realworld`, in
+goncini's repository, is a complete one.
 
 ## Commands
 
@@ -20,13 +20,15 @@ go run . scheduler:run       # runs the scheduled tasks, until stopped
 ```
 
 The makers write `.ego` files in the app's layout, add their services to
-`app/services.ego`, and run `goncini generate`:
+`app/services.ego`, and run `goncini generate`; what doesn't compile is
+undone:
 
 ```bash
 go tool goncini make:feature notes                     # store, endpoints, error set, test, migration
-go tool goncini make:endpoint -method POST notes Archive
+go tool goncini make:feature people Person             # when the type isn't the name without its s
+go tool goncini make:endpoint -method POST -path '/notes/{id}/archive' notes Archive
 go tool goncini make:message notes NoteAdded           # and its handler
-go tool goncini make:command notes:prune
+go tool goncini make:command -summary "Prunes the old notes" notes:prune
 go tool goncini make:migration add_note_tags
 ```
 

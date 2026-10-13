@@ -12,6 +12,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"text/template"
+
+	modpath "golang.org/x/mod/module"
 )
 
 // skeleton is the files of a new app, as templates: file.tmpl becomes
@@ -47,15 +49,44 @@ var deps = []string{
 // requires its dependencies, and generates its wiring: its tests pass, and
 // it serves, as it is. replace, if not empty, is a goncini checkout that
 // the app requires instead of a released version.
-func newApp(module, dir, replace string) error {
-	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
+func newApp(module, dir, replace string) (err error) {
+	check modpath.CheckPath(module) ""
+	entries, err := os.ReadDir(dir)
+	if err == nil && len(entries) > 0 {
 		return fmt.Errorf("%s isn't empty", dir)
 	}
+	existed := err == nil
 	if replace != "" {
 		abs := check filepath.Abs(replace) ""
+		if _, err := os.Stat(filepath.Join(abs, "go.mod")); err != nil {
+			return fmt.Errorf("%s isn't a goncini checkout", replace)
+		}
 		replace = filepath.ToSlash(abs)
 	}
-	data := skeletonData{Module: module, Name: path.Base(module), Replace: replace}
+	defer func() { // a failure leaves dir as it was
+		if err != nil {
+			if existed {
+				empty(dir)
+			} else {
+				os.RemoveAll(dir)
+			}
+		}
+	}()
+	prefix, _, _ := modpath.SplitPathVersion(module) // example.com/acme of example.com/acme/v2
+	data := skeletonData{Module: module, Name: path.Base(prefix), Replace: replace}
+	return writeApp(dir, data)
+}
+
+// empty removes what dir holds.
+func empty(dir string) {
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		os.RemoveAll(filepath.Join(dir, e.Name()))
+	}
+}
+
+// writeApp writes the app that data describes in dir.
+func writeApp(dir string, data skeletonData) error {
 	// app/inject.go is Go that imports the app's packages, which are .ego
 	// until they are generated: it comes after the first tidy.
 	injector := (rel string) => rel == "app/inject.go"
@@ -68,7 +99,7 @@ func newApp(module, dir, replace string) error {
 	}
 	depsFile := filepath.Join(dir, "deps.go")
 	check os.WriteFile(depsFile, []byte("//go:build tools\n\npackage main\n\nimport (\n"+imports.String()+")\n"), 0o644) ""
-	if replace != "" {
+	if data.Replace != "" {
 		check run(dir, "go", "mod", "edit", "-require=github.com/goncini/goncini@v0.0.0", "-require=github.com/goncini/goncini/db/goosedb@v0.0.0") ""
 	} else {
 		v := version()
@@ -107,12 +138,14 @@ func write(dir string, data skeletonData, skip func(rel string) bool) error {
 }
 
 // version is the version of goncini that this tool was built from, which
-// a new app requires: latest when it isn't known, as in a checkout.
+// a new app requires, goncini's modules being tagged together: latest when
+// it isn't one that go get finds, as a checkout's or a replaced module's.
 func version() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return info.Main.Version
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Replace != nil || info.Main.Version == "" || info.Main.Version == "(devel)" || strings.Contains(info.Main.Version, "+") {
+		return "latest"
 	}
-	return "latest"
+	return info.Main.Version
 }
 
 // run runs a command in dir, and fails with its output.

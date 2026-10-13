@@ -1,0 +1,121 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"maps"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+)
+
+// change is what a maker writes in an app: new files, and new contents of
+// existing ones. It is applied whole, or not at all.
+type change struct {
+	root    string
+	created map[string][]byte // by path, relative to root
+	edited  map[string]string
+}
+
+func newChange(root string) *change {
+	return &change{root: root, created: map[string][]byte{}, edited: map[string]string{}}
+}
+
+// create adds a new file, which apply refuses to overwrite.
+func (c *change) create(rel string, content []byte) {
+	c.created[filepath.FromSlash(rel)] = content
+}
+
+// read returns a file of the app as the change leaves it, with Unix line
+// endings.
+func (c *change) read(rel string) (string, error) {
+	rel = filepath.FromSlash(rel)
+	if src, ok := c.edited[rel]; ok {
+		return src, nil
+	}
+	b := check os.ReadFile(filepath.Join(c.root, rel)) ""
+	return strings.ReplaceAll(string(b), "\r\n", "\n"), nil
+}
+
+// edit sets a file's new content.
+func (c *change) edit(rel, content string) {
+	c.edited[filepath.FromSlash(rel)] = content
+}
+
+// apply writes the change, formats it, and wires it with goncini generate;
+// if any of that fails, it puts the app back as it was. It returns the
+// files it wrote, created then edited.
+func (c *change) apply() (files []string, err error) {
+	created := slices.Sorted(maps.Keys(c.created))
+	edited := slices.Sorted(maps.Keys(c.edited))
+	for _, rel := range created {
+		if _, err := os.Stat(filepath.Join(c.root, rel)); err == nil {
+			return nil, fmt.Errorf("%s exists", rel)
+		}
+	}
+	originals := map[string][]byte{}
+	for _, rel := range edited {
+		originals[rel] = check os.ReadFile(filepath.Join(c.root, rel)) ""
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, c.undo(created, originals))
+		}
+	}()
+	var egoFiles []string
+	dirs := map[string]bool{}
+	for _, rel := range created {
+		path := filepath.Join(c.root, rel)
+		check os.MkdirAll(filepath.Dir(path), 0o755) ""
+		check os.WriteFile(path, c.created[rel], 0o644) ""
+	}
+	for _, rel := range edited {
+		check os.WriteFile(filepath.Join(c.root, rel), []byte(c.edited[rel]), 0o644) ""
+	}
+	for _, rel := range append(created, edited...) {
+		if strings.HasSuffix(rel, ".ego") {
+			egoFiles = append(egoFiles, rel)
+			dirs[filepath.Dir(rel)] = true
+		}
+	}
+	if len(egoFiles) == 0 {
+		return append(created, edited...), nil
+	}
+	check egoFmt(c.root, egoFiles...) ""
+	// The packages written, but the app's, first: their errors are the ones
+	// to show, not that the app can't import them.
+	for _, dir := range slices.Sorted(maps.Keys(dirs)) {
+		if dir == "app" {
+			continue
+		}
+		if out, err := egoGenerate(c.root, "./"+filepath.ToSlash(dir)); err != nil {
+			return nil, fmt.Errorf("%s doesn't compile: %v\n%s", dir, err, out)
+		}
+	}
+	check generate(c.root, "app", false) ""
+	return append(created, edited...), nil
+}
+
+// undo removes the files created, and the code generated from them, and
+// puts back the files edited; then the app is generated again, as it was.
+func (c *change) undo(created []string, originals map[string][]byte) error {
+	var errs []error
+	for _, rel := range created {
+		path := filepath.Join(c.root, rel)
+		os.Remove(path)
+		if base, ok := strings.CutSuffix(path, "_test.ego"); ok {
+			os.Remove(base + "_ego_test.go")
+		} else if base, ok := strings.CutSuffix(path, ".ego"); ok {
+			os.Remove(base + "_ego.go")
+		}
+		os.Remove(filepath.Dir(path)) // if the change made it, and it is empty
+	}
+	for rel, b := range originals {
+		errs = append(errs, os.WriteFile(filepath.Join(c.root, rel), b, 0o644))
+	}
+	if err := generate(c.root, "app", false); err != nil {
+		errs = append(errs, fmt.Errorf("the app is put back, but generating it fails: %w", err))
+	}
+	return errors.Join(errs...)
+}

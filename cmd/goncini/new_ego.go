@@ -14,13 +14,15 @@ import (
 	"runtime/debug"
 	"strings"
 	"text/template"
+
+	modpath "golang.org/x/mod/module"
 )
 
 // skeleton is the files of a new app, as templates: file.tmpl becomes
 // file, and env.tmpl, env.test.tmpl and gitignore.tmpl the dotfiles.
 //
 //go:embed skeleton
-//line new.ego:21
+//line new.ego:23
 var skeleton embed.FS
 
 // skeletonData is what the skeleton's templates are given.
@@ -50,19 +52,51 @@ var deps = []string{
 // requires its dependencies, and generates its wiring: its tests pass, and
 // it serves, as it is. replace, if not empty, is a goncini checkout that
 // the app requires instead of a released version.
-func newApp(module, dir, replace string) error {
-	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
+func newApp(module, dir, replace string) (err error) {
+	if err2 := modpath.CheckPath(module); err2 != nil {
+		return err2
+	}
+//line new.ego:54
+	entries, err := os.ReadDir(dir)
+	if err == nil && len(entries) > 0 {
 		return fmt.Errorf("%s isn't empty", dir)
 	}
+	existed := err == nil
 	if replace != "" {
-		abs, err := filepath.Abs(replace)
-		if err != nil {
-			return err
+		abs, err3 := filepath.Abs(replace)
+		if err3 != nil {
+			return err3
 		}
-//line new.ego:56
+//line new.ego:61
+		if _, err := os.Stat(filepath.Join(abs, "go.mod")); err != nil {
+			return fmt.Errorf("%s isn't a goncini checkout", replace)
+		}
 		replace = filepath.ToSlash(abs)
 	}
-	data := skeletonData{Module: module, Name: path.Base(module), Replace: replace}
+	defer func() { // a failure leaves dir as it was
+		if err != nil {
+			if existed {
+				empty(dir)
+			} else {
+				os.RemoveAll(dir)
+			}
+		}
+	}()
+	prefix, _, _ := modpath.SplitPathVersion(module) // example.com/acme of example.com/acme/v2
+	data := skeletonData{Module: module, Name: path.Base(prefix), Replace: replace}
+	return writeApp(dir, data)
+}
+
+// empty removes what dir holds.
+func empty(dir string) {
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		os.RemoveAll(filepath.Join(dir, e.Name()))
+	}
+}
+
+// writeApp writes the app that data describes in dir.
+func writeApp(dir string, data skeletonData) error {
 	// app/inject.go is Go that imports the app's packages, which are .ego
 	// until they are generated: it comes after the first tidy.
 	injector := func(rel string) bool { return rel == "app/inject.go" }
@@ -71,7 +105,7 @@ func newApp(module, dir, replace string) error {
 	}
 	// Blank imports keep the dependencies while the module is tidied:
 	// tidy doesn't read .ego files, and their Go isn't generated yet.
-//line new.ego:65
+//line new.ego:96
 	var imports strings.Builder
 	for _, d := range deps {
 		imports.WriteString(fmt.Sprintf("\t_ %q\n", d))
@@ -80,39 +114,39 @@ func newApp(module, dir, replace string) error {
 	if err := os.WriteFile(depsFile, []byte("//go:build tools\n\npackage main\n\nimport (\n"+imports.String()+")\n"), 0o644); err != nil {
 		return err
 	}
-//line new.ego:71
-	if replace != "" {
+//line new.ego:102
+	if data.Replace != "" {
 		if err := run(dir, "go", "mod", "edit", "-require=github.com/goncini/goncini@v0.0.0", "-require=github.com/goncini/goncini/db/goosedb@v0.0.0"); err != nil {
 			return err
 		}
 	} else {
-//line new.ego:74
+//line new.ego:105
 		v := version()
 		if err := run(dir, "go", "get", "github.com/goncini/goncini@"+v, "github.com/goncini/goncini/db/goosedb@"+v); err != nil {
 			return err
 		}
 	}
-//line new.ego:77
+//line new.ego:108
 	if err := run(dir, "go", "mod", "tidy"); err != nil {
 		return err
 	}
-//line new.ego:78
+//line new.ego:109
 	if err := write(dir, data, func(rel string) bool { return !injector(rel) }); err != nil {
 		return err
 	}
-//line new.ego:79
+//line new.ego:110
 	if err := run(dir, "go", "tool", "goncini", "generate"); err != nil {
 		return err
 	}
-//line new.ego:80
+//line new.ego:111
 	if err := os.Remove(depsFile); err != nil {
 		return err
 	}
-//line new.ego:81
+//line new.ego:112
 	if err := run(dir, "go", "mod", "tidy"); err != nil {
 		return err
 	}
-//line new.ego:82
+//line new.ego:113
 	return nil
 }
 
@@ -122,7 +156,7 @@ func write(dir string, data skeletonData, skip func(rel string) bool) error {
 		if err != nil {
 			return err
 		}
-//line new.ego:89
+//line new.ego:120
 		if d.IsDir() {
 			return nil
 		}
@@ -137,33 +171,35 @@ func write(dir string, data skeletonData, skip func(rel string) bool) error {
 		if err2 != nil {
 			return err2
 		}
-//line new.ego:100
+//line new.ego:131
 		t, err3 := template.New(rel).Delims("<%", "%>").Parse(string(src))
 		if err3 != nil {
 			return err3
 		}
-//line new.ego:101
+//line new.ego:132
 		var out bytes.Buffer
 		if err4 := t.Execute(&out, data); err4 != nil {
 			return err4
 		}
-//line new.ego:103
+//line new.ego:134
 		target := filepath.Join(dir, filepath.FromSlash(rel))
 		if err5 := os.MkdirAll(filepath.Dir(target), 0o755); err5 != nil {
 			return err5
 		}
-//line new.ego:105
+//line new.ego:136
 		return os.WriteFile(target, out.Bytes(), 0o644)
 	})
 }
 
 // version is the version of goncini that this tool was built from, which
-// a new app requires: latest when it isn't known, as in a checkout.
+// a new app requires, goncini's modules being tagged together: latest when
+// it isn't one that go get finds, as a checkout's or a replaced module's.
 func version() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return info.Main.Version
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Replace != nil || info.Main.Version == "" || info.Main.Version == "(devel)" || strings.Contains(info.Main.Version, "+") {
+		return "latest"
 	}
-	return "latest"
+	return info.Main.Version
 }
 
 // run runs a command in dir, and fails with its output.

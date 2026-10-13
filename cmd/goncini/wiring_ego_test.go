@@ -5,17 +5,18 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-//line wiring_test.ego:9
+//line wiring_test.ego:10
 func TestNames(t *testing.T) {
 	for _, c := range []struct{ in, camel, snake, singular string }{
 		{"notes", "Notes", "notes", "note"},
 		{"categories", "Categories", "categories", "category"},
-		{"address", "Address", "address", "address"},
-		{"prune-old", "PruneOld", "prune_old", "prune-old"},
-		{"id", "ID", "id", "id"},
+		{"status", "Status", "status", "status"},
+		{"news", "News", "news", "news"},
+		{"import-csv", "ImportCSV", "import_csv", "import-csv"},
 		{"NoteAdded", "NoteAdded", "note_added", "NoteAdded"},
 	} {
 		if got := camel(c.in); got != c.camel {
@@ -30,6 +31,68 @@ func TestNames(t *testing.T) {
 	}
 }
 
+func TestNewFeature(t *testing.T) {
+	for _, c := range []struct{ name, typ, want string }{
+		{"notes", "", "Note Notes n note"},
+		{"people", "Person", "Person People p person"},
+		{"news", "", "News NewsController n news"},
+		{"reports", "", "Report Reports re report"}, // r is the router
+		{"times", "", "Time Times t item"},          // time is a package
+		{"ranges", "", "Range Ranges ra item"},      // range is a keyword
+	} {
+		d, err := newFeature("example.com/acme", c.name, c.typ)
+		got := strings.Join([]string{d.Type, d.Plural, d.Recv, d.Var}, " ")
+		if err != nil || got != c.want {
+			t.Errorf("%s: %s, %v; want %s", c.name, got, err, c.want)
+		}
+	}
+	for _, name := range []string{"stores", "problems", "main", "config", "blog_posts", "Notes", "type"} {
+		if _, err := newFeature("example.com/acme", name, ""); err == nil {
+			t.Errorf("%s is a feature", name)
+		}
+	}
+}
+
+func TestAddServices(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{
+			"import (\n\t\"example.com/acme/home\"\n)\n\nvar Services = layer.Set(db.Open, home.NewHome)\n",
+			"import (\n\t\"example.com/acme/home\"\n\t\"example.com/acme/notes\"\n)\n\nvar Services = layer.Set(db.Open, home.NewHome,\n\tnotes.NewStore)\n",
+		},
+		{
+			"import (\n\t\"example.com/acme/home\"\n)\n\nvar Services = layer.Set(\n\tdb.Open,\n\thome.NewHome,\n)\n",
+			"import (\n\t\"example.com/acme/home\"\n\t\"example.com/acme/notes\"\n)\n\nvar Services = layer.Set(\n\tdb.Open,\n\thome.NewHome,\n\tnotes.NewStore,\n)\n",
+		},
+		{
+			"import (\n\t\"example.com/acme/home\"\n)\n\nvar Services = layer.Set(db.Open, layer.Close(open, close), home.NewHome) // the app's\n",
+			"import (\n\t\"example.com/acme/home\"\n\t\"example.com/acme/notes\"\n)\n\nvar Services = layer.Set(db.Open, layer.Close(open, close), home.NewHome,\n\tnotes.NewStore) // the app's\n",
+		},
+	} {
+		root := t.TempDir()
+		if err := os.Mkdir(filepath.Join(root, "app"), 0o755); err != nil {
+			panic(err)
+		}
+//line wiring_test.ego:70
+		if err := os.WriteFile(filepath.Join(root, servicesFile), []byte(strings.ReplaceAll(c.in, "\n", "\r\n")), 0o644); err != nil {
+			panic(err)
+		} // as Windows checks it out
+//line wiring_test.ego:71
+		ch := newChange(root)
+		if err := addServices(ch, "example.com/acme/notes", "notes.NewStore"); err != nil {
+			panic(err)
+		}
+//line wiring_test.ego:73
+		got, err := ch.read(servicesFile)
+		if err != nil {
+			panic(err)
+		}
+//line wiring_test.ego:74
+		if got != c.want {
+			t.Errorf("got\n%s\nwant\n%s", got, c.want)
+		}
+	}
+}
+
 func TestAddImport(t *testing.T) {
 	src := "import (\n\t\"time\"\n\n\t\"github.com/goncini/goncini/db\"\n\n\t\"example.com/acme/home\"\n)\n"
 	got := addImport(src, "github.com/goncini/goncini/messenger")
@@ -39,27 +102,30 @@ func TestAddImport(t *testing.T) {
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
+	if names := strings.Join(importNames("import (\n\t\"database/sql\"\n\t_ \"modernc.org/sqlite\"\n\tsq \"x/squirrel\"\n)\n"), " "); names != "sql _ sq" {
+		t.Errorf("import names %s", names)
+	}
 }
 
-func TestWriteMigration(t *testing.T) {
+func TestMakeMigration(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "migrations"), 0o755); err != nil {
 		panic(err)
 	}
-//line wiring_test.ego:44
+//line wiring_test.ego:97
 	if err := os.WriteFile(filepath.Join(root, "migrations", "00009_old.sql"), nil, 0o644); err != nil {
 		panic(err)
 	}
-//line wiring_test.ego:45
-	file, err := writeMigration(root, "add_tags", []byte("-- +goose Up\n"))
+//line wiring_test.ego:98
+	files, err := makeMigration(root, "add_tags")
 	if err != nil {
 		panic(err)
 	}
-//line wiring_test.ego:46
-	if filepath.Base(file) != "00010_add_tags.sql" {
-		t.Errorf("file %s", file)
+//line wiring_test.ego:99
+	if len(files) != 1 || files[0] != filepath.Join("migrations", "00010_add_tags.sql") {
+		t.Errorf("files %v", files)
 	}
-	if _, err := writeMigration(root, "Add tags", nil); err == nil {
+	if _, err := makeMigration(root, "Add tags"); err == nil {
 		t.Error("a name with a space and a capital is written")
 	}
 }
