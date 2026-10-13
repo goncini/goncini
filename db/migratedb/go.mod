@@ -6,7 +6,7 @@ tool github.com/effect-go/effect-go/cmd/ego
 
 require (
 	github.com/golang-migrate/migrate/v4 v4.20.1
-	github.com/goncini/goncini v0.0.0
+	github.com/goncini/goncini v0.1.0
 )
 
 require (

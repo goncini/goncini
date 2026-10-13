@@ -8,7 +8,7 @@ replace github.com/goncini/goncini => ../..
 
 require (
 	github.com/effect-go/effect-go v0.3.4
-	github.com/goncini/goncini v0.0.0-00010101000000-000000000000
+	github.com/goncini/goncini v0.1.0
 	github.com/redis/go-redis/v9 v9.23.0
 )
 

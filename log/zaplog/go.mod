@@ -7,7 +7,7 @@ tool github.com/effect-go/effect-go/cmd/ego
 replace github.com/goncini/goncini => ../..
 
 require (
-	github.com/goncini/goncini v0.0.0-00010101000000-000000000000
+	github.com/goncini/goncini v0.1.0
 	go.uber.org/zap v1.28.0
 	go.uber.org/zap/exp v0.3.0
 )

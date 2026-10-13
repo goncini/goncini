@@ -7,7 +7,7 @@ tool github.com/effect-go/effect-go/cmd/ego
 replace github.com/goncini/goncini => ../..
 
 require (
-	github.com/goncini/goncini v0.0.0-00010101000000-000000000000
+	github.com/goncini/goncini v0.1.0
 	github.com/rs/zerolog v1.35.1
 	github.com/samber/slog-zerolog/v2 v2.9.2
 )
