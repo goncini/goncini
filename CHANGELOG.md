@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-goncini requires Go 1.27, and effect-go v0.3.2, which pins the library and
+goncini requires Go 1.27, and effect-go v0.3.3, which pins the library and
 the `ego` tool together.
 
 ### httpkernel
@@ -360,7 +360,9 @@ Worth knowing:
 - A relative `profiler.Config.Dir` is the project directory's, so that
   `debug:requests` reads it from anywhere in the project.
 - `/_profiler` has no authentication: enable the profiler in dev only.
-- The tracer provider is OTel's global one, which effect-go's spans use.
+- The tracer provider is also OTel's global one, which the spans that start
+  a trace use, such as a request's and a message handling's; since
+  effect-go v0.3.3, the spans under them follow their parent's provider.
   When the app stops, its processors get 5 seconds to flush, and the
   globals are restored unless another app in the process has set them
   since.
@@ -771,3 +773,6 @@ with their providers and what they need, which `debug:container` lists.
   - v0.3.2:
     - `??` on a map lookup failed in an expression lambda whose parameter
       type is inferred, as in `name => values[name] ?? name`.
+  - v0.3.3, asked for by M5's review:
+    - effect methods' spans went to OTel's global tracer provider, even
+      under a span of another one; they follow their parent span's now.

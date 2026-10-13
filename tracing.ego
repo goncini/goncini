@@ -31,8 +31,9 @@ type Tracing struct {
 }
 
 // NewTracing returns the tracer provider of the enabled processors, and
-// makes it the global one, which goncini's and effect-go's spans use,
-// until the app stops; its resource follows OTEL_SERVICE_NAME and
+// makes it the global one, which the spans that start a trace use, such
+// as a request's, until the app stops (the spans under them follow their
+// parent's provider); its resource follows OTEL_SERVICE_NAME and
 // OTEL_RESOURCE_ATTRIBUTES. It also makes W3C trace context the global
 // propagator, so that incoming and outgoing requests carry their traces.
 // When the app stops, the processors get shutdownTimeout to flush their

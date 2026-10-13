@@ -8,7 +8,7 @@ tool (
 )
 
 require (
-	github.com/effect-go/effect-go v0.3.2
+	github.com/effect-go/effect-go v0.3.3
 	github.com/goncini/goncini v0.0.0
 	github.com/goncini/goncini/db/goosedb v0.0.0
 	github.com/goncini/goncini/examples/maintenance v0.0.0-00010101000000-000000000000
