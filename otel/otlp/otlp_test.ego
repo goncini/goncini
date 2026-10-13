@@ -1,0 +1,84 @@
+package otlp_test
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+
+	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/otel/otlp"
+	"github.com/goncini/goncini/profiler"
+)
+
+// collector is an OTLP/HTTP collector in the process, which keeps the
+// names of the spans it gets, by trace ID, and their events'.
+type collector struct {
+	mu    sync.Mutex
+	spans map[string][]string
+}
+
+func (c *collector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var req coltracepb.ExportTraceServiceRequest
+	b := must io.ReadAll(r.Body)
+	must proto.Unmarshal(b, &req)
+	c.mu.Lock()
+	for _, rs := range req.ResourceSpans {
+		for _, ss := range rs.ScopeSpans {
+			for _, s := range ss.Spans {
+				id := f"{s.TraceId:x}"
+				c.spans[id] = append(c.spans[id], s.Name)
+				for _, e := range s.Events {
+					c.spans[id] = append(c.spans[id], "event "+e.Name)
+				}
+			}
+		}
+	}
+	c.mu.Unlock()
+	w.Header().Set("Content-Type", "application/x-protobuf")
+	out := must proto.Marshal(&coltracepb.ExportTraceServiceResponse{})
+	w.Write(out)
+}
+
+// TestExport is the OTLP part of M5's first gate: with an endpoint, the
+// spans that the profiler keeps, logs included, reach the collector too.
+func TestExport(t *testing.T) {
+	col := &collector{spans: map[string][]string{}}
+	srv := httptest.NewServer(col)
+	defer srv.Close()
+
+	exp := must otlp.New(otlp.Config{Endpoint: srv.URL})
+	p := profiler.New(profiler.Config{Enabled: true, Dir: t.TempDir()})
+	_, stop := must goncini.NewTracing([]goncini.SpanProcessor{p, exp})
+	logger := goncini.NewLogger(slog.NewTextHandler(io.Discard, nil))
+	k := &httpkernel.Kernel{Handler: http.HandlerFunc((w http.ResponseWriter, r *http.Request) => logger.InfoContext(r.Context(), "served"))}
+	k.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/hello", nil))
+	must stop(context.Background()) // flushes the batch
+
+	profiles := must p.Store.List(1)
+	if len(profiles) != 1 {
+		t.Fatalf("%d profiles", len(profiles))
+	}
+	col.mu.Lock()
+	defer col.mu.Unlock()
+	got := col.spans[profiles[0].ID]
+	if len(got) != 2 || got[0] != "GET" || got[1] != "event log" {
+		t.Errorf("the collector got %v for the profiled trace; all: %v", got, col.spans)
+	}
+}
+
+// TestDisabled checks that without an endpoint the exporter wants no
+// spans.
+func TestDisabled(t *testing.T) {
+	exp := must otlp.New(otlp.Config{})
+	if exp.Enabled() {
+		t.Error("enabled without an endpoint")
+	}
+}

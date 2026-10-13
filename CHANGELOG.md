@@ -344,6 +344,12 @@ Symfony's WebProfilerBundle, built from spans:
   - `debug:requests` prints them, and `debug:requests <id>` prints one's
     spans, queries and logs, from another terminal.
 
+- **OTLP export:** the `otel/otlp` adapter module, `otlp.Layer`, sends the
+  spans to a collector over OTLP/HTTP when `otlp.Config.Endpoint` is set,
+  in batches that the app's stop flushes. It is a module of its own, because
+  the exporter brings protobuf and gRPC. The articles example exports to
+  `OTEL_EXPORTER_OTLP_ENDPOINT` when it is set.
+
 Worth knowing: spans get the records that are logged, at the log's level.
 Query spans follow the tracer provider of their parent span.
 

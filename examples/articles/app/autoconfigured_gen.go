@@ -16,6 +16,7 @@ import (
 	"github.com/goncini/goncini/examples/articles/editors"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
+	"github.com/goncini/goncini/otel/otlp"
 	"github.com/goncini/goncini/profiler"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
@@ -25,7 +26,7 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigEditors, autoConfigProfiler, autoDefaultOpenapiConfig, autoDefaultTranslationConfig)
+var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigEditors, autoConfigProfiler, autoConfigOTLP, autoDefaultOpenapiConfig, autoDefaultTranslationConfig)
 
 // autoRoutes are the services that have routes, in the order they are provided.
 func autoRoutes(p1 *articles.Articles, p2 *profiler.Profiler) []routing.Routes {
@@ -63,8 +64,8 @@ func autoBackground() []goncini.Background {
 }
 
 // autoSpanProcessors are the services that receive the app's spans, when enabled.
-func autoSpanProcessors(p1 *profiler.Profiler) []goncini.SpanProcessor {
-	return []goncini.SpanProcessor{p1}
+func autoSpanProcessors(p1 *profiler.Profiler, p2 *otlp.Exporter) []goncini.SpanProcessor {
+	return []goncini.SpanProcessor{p1, p2}
 }
 
 // autoServices describes the app's services, for debug:container.
@@ -110,7 +111,9 @@ func autoServices() []goncini.Service {
 		{Type: "openapi.Annotations", Provider: "autoOpenAPI", Needs: []string{}},
 		{Type: "*openapi.Document", Provider: "goncini.NewOpenAPI", Needs: []string{"openapi.Config", "*routing.Router", "*httpkernel.Kernel", "openapi.Annotations"}},
 		{Type: "[]goncini.Background", Provider: "autoBackground", Needs: []string{}},
-		{Type: "[]goncini.SpanProcessor", Provider: "autoSpanProcessors", Needs: []string{"*profiler.Profiler"}},
+		{Type: "otlp.Config", Provider: "autoConfigOTLP", Needs: []string{"config.Config"}},
+		{Type: "*otlp.Exporter", Provider: "otlp.New", Needs: []string{"otlp.Config"}},
+		{Type: "[]goncini.SpanProcessor", Provider: "autoSpanProcessors", Needs: []string{"*profiler.Profiler", "*otlp.Exporter"}},
 		{Type: "*goncini.Tracing", Provider: "goncini.NewTracing", Needs: []string{"[]goncini.SpanProcessor"}},
 		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger", "*openapi.Document", "*event.Dispatcher", "[]goncini.Background", "*goncini.Tracing"}},
 	}
@@ -150,6 +153,9 @@ func autoConfigEditors(c config.Config) editors.Config { return c.Editors }
 
 // autoConfigProfiler is the Profiler section of the config.
 func autoConfigProfiler(c config.Config) profiler.Config { return c.Profiler }
+
+// autoConfigOTLP is the OTLP section of the config.
+func autoConfigOTLP(c config.Config) otlp.Config { return c.OTLP }
 
 // autoDefaultOpenapiConfig is the default of openapi.Config, which the config doesn't have.
 func autoDefaultOpenapiConfig() openapi.Config { return openapi.Config{} }

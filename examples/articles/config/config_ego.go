@@ -7,6 +7,7 @@ package config
 import (
 	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/otel/otlp"
 	"github.com/goncini/goncini/profiler"
 
 	"github.com/goncini/goncini/examples/articles/editors"
@@ -14,7 +15,7 @@ import (
 
 // Config is the articles API's config, one section per part of the app.
 //
-//line config.ego:14
+//line config.ego:15
 type Config struct {
 	HTTP    goncini.HTTP
 	Log     goncini.Log
@@ -22,6 +23,8 @@ type Config struct {
 	Editors editors.Config
 	// Profiler keeps what each request did, in dev.
 	Profiler profiler.Config
+	// OTLP exports the spans to a collector, if one is set.
+	OTLP otlp.Config
 }
 
 // Load returns the config of env: what every environment shares, then what
@@ -30,6 +33,7 @@ func Load(env *goncini.Env) Config {
 	c := Config{
 		DB:      db.Config{Driver: "sqlite", URL: env.Secret("DATABASE_URL")},
 		Editors: editors.Config{Keys: map[string]string{env.Secret("EDITOR_KEY"): "editor"}},
+		OTLP:    otlp.Config{Endpoint: env.OptionalSecret("OTEL_EXPORTER_OTLP_ENDPOINT")},
 	}
 	switch env.Name {
 	case "dev":

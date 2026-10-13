@@ -17,6 +17,7 @@ import (
 	"github.com/goncini/goncini/examples/articles/editors"
 	"github.com/goncini/goncini/examples/articles/translations"
 	"github.com/goncini/goncini/log/zaplog"
+	"github.com/goncini/goncini/otel/otlp"
 	"github.com/goncini/goncini/profiler"
 	"github.com/goncini/goncini/translation"
 )
@@ -87,7 +88,12 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
 	v9 := autoBackground()
-	v10 := autoSpanProcessors(profiler2)
+	config7 := autoConfigOTLP(cfg)
+	exporter, err := otlp.New(config7)
+	if err != nil {
+		return nil, fmt.Errorf("New: %w", err)
+	}
+	v10 := autoSpanProcessors(profiler2, exporter)
 	tracing, cleanup3, err := goncini.NewTracing(v10)
 	if err != nil {
 		return nil, fmt.Errorf("NewTracing: %w", err)
@@ -161,7 +167,12 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
 	v8 := autoBackground()
-	v9 := autoSpanProcessors(profiler2)
+	config7 := autoConfigOTLP(cfg)
+	exporter, err := otlp.New(config7)
+	if err != nil {
+		return nil, fmt.Errorf("New: %w", err)
+	}
+	v9 := autoSpanProcessors(profiler2, exporter)
 	tracing, cleanup3, err := goncini.NewTracing(v9)
 	if err != nil {
 		return nil, fmt.Errorf("NewTracing: %w", err)
