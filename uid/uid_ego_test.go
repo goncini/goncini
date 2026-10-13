@@ -86,14 +86,6 @@ func TestULID(t *testing.T) {
 	if known.Time().UnixMilli() != 1469918176385 {
 		t.Errorf("time %d", known.Time().UnixMilli())
 	}
-	confusable, err := uid.ParseULID("O1ARYZ6S41TSV4RRFFQ69G5FAV")
-	if err != nil {
-		panic(err)
-	} // O for 0
-//line uid_test.ego:67
-	if confusable != known {
-		t.Error("O isn't read as 0")
-	}
 	ids := make([]string, 10000)
 	for i := range ids {
 		ids[i] = uid.NewULID().String()
@@ -101,7 +93,8 @@ func TestULID(t *testing.T) {
 	if !slices.IsSorted(ids) {
 		t.Error("ULIDs made in a row aren't sorted")
 	}
-	for _, bad := range []string{"", "8ZZZZZZZZZZZZZZZZZZZZZZZZZ", "01ARZ3NDEKTSV4RRFFQ69G5FAU"} {
+	// Not ULIDs, as for routing.ULID: too long, an O, an L, a U.
+	for _, bad := range []string{"", "8ZZZZZZZZZZZZZZZZZZZZZZZZZ", "O1ARYZ6S41TSV4RRFFQ69G5FAV", "01ARYZ6S41TSV4RRFFQ69G5FAL", "01ARZ3NDEKTSV4RRFFQ69G5FAU"} {
 		if _, err := uid.ParseULID(bad); err == nil {
 			t.Errorf("%q parsed", bad)
 		}
@@ -115,15 +108,15 @@ func TestScan(t *testing.T) {
 	if err := fromText.Scan(text); err != nil {
 		panic(err)
 	}
-//line uid_test.ego:89
+//line uid_test.ego:86
 	if err := fromBytes.Scan([]byte(text.(string))); err != nil {
 		panic(err)
 	}
-//line uid_test.ego:90
+//line uid_test.ego:87
 	if err := fromBinary.Scan(u[:]); err != nil {
 		panic(err)
 	}
-//line uid_test.ego:91
+//line uid_test.ego:88
 	if fromText != u || fromBytes != u || fromBinary != u {
 		t.Error("UUIDs don't scan back")
 	}
@@ -136,8 +129,13 @@ func TestScan(t *testing.T) {
 	if err := ulid.Scan(lv); err != nil {
 		panic(err)
 	}
-//line uid_test.ego:101
-	if ulid != l {
+//line uid_test.ego:98
+	var fromUUID uid.ULID
+	if err := fromUUID.Scan(l.UUID().String()); err != nil {
+		panic(err)
+	} // a PostgreSQL uuid column's
+//line uid_test.ego:100
+	if ulid != l || fromUUID != l {
 		t.Error("ULIDs don't scan back")
 	}
 }

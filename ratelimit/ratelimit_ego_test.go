@@ -5,6 +5,7 @@ package ratelimit_test
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -19,7 +20,7 @@ import (
 
 // clock is a fake clock that tests move.
 //
-//line ratelimit_test.ego:19
+//line ratelimit_test.ego:20
 type clock struct{ now time.Time }
 
 func (c *clock) Now() time.Time          { return c.now }
@@ -45,7 +46,7 @@ func run(t *testing.T, name string, p ratelimit.Policy, steps []step) {
 		if err != nil {
 			panic(err)
 		}
-//line ratelimit_test.ego:41
+//line ratelimit_test.ego:42
 		if res.Allowed != s.allowed || res.Remaining != s.remaining || res.RetryAfter != s.retryAfter {
 			t.Errorf("%s, step %d: %+v, want allowed %v, remaining %d, retry after %v", name, i, res, s.allowed, s.remaining, s.retryAfter)
 		}
@@ -82,26 +83,26 @@ func TestReset(t *testing.T) {
 	if _, err := l.Take(ctx, "alice", 1); err != nil {
 		panic(err)
 	}
-//line ratelimit_test.ego:75
+//line ratelimit_test.ego:76
 	again, err := l.Take(ctx, "alice", 1)
 	if err != nil {
 		panic(err)
 	}
-//line ratelimit_test.ego:76
+//line ratelimit_test.ego:77
 	bob, err := l.Take(ctx, "bob", 1)
 	if err != nil {
 		panic(err)
 	}
-//line ratelimit_test.ego:77
+//line ratelimit_test.ego:78
 	if err := l.Reset(ctx, "alice"); err != nil {
 		panic(err)
 	}
-//line ratelimit_test.ego:78
+//line ratelimit_test.ego:79
 	reset, err := l.Take(ctx, "alice", 1)
 	if err != nil {
 		panic(err)
 	}
-//line ratelimit_test.ego:79
+//line ratelimit_test.ego:80
 	if again.Allowed || !bob.Allowed || !reset.Allowed {
 		t.Errorf("alice again %v, bob %v, alice after a reset %v", again.Allowed, bob.Allowed, reset.Allowed)
 	}
@@ -125,7 +126,7 @@ func TestConcurrentTakes(t *testing.T) {
 			}
 		})
 	}
-//line ratelimit_test.ego:99
+//line ratelimit_test.ego:100
 	wg.Wait()
 	if allowed != 50 {
 		t.Errorf("%d allowed, want 50", allowed)
@@ -154,6 +155,15 @@ func TestMiddleware(t *testing.T) {
 	if w := get("192.0.2.2"); w.Code != 200 {
 		t.Errorf("another client: %d", w.Code)
 	}
+	// An IPv6 client has its /64 whole.
+	get("[2001:db8::1]")
+	get("[2001:db8::2]")
+	if w := get("[2001:db8::3]"); w.Code != 429 {
+		t.Errorf("a third address of a /64: %d", w.Code)
+	}
+	if w := get("[2001:db8:0:1::1]"); w.Code != 200 {
+		t.Errorf("another /64: %d", w.Code)
+	}
 }
 
 func TestErr(t *testing.T) {
@@ -179,7 +189,7 @@ func TestDocumented(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line ratelimit_test.ego:149
+//line ratelimit_test.ego:159
 	res := doc.Paths["/"].Get.Responses["429"]
 	if res == nil || res.Headers["Retry-After"] == nil {
 		t.Errorf("429: %+v", res)
@@ -194,15 +204,37 @@ func TestStoreClock(t *testing.T) {
 	if _, err := l.Take(context.Background(), "k", 1); err != nil {
 		panic(err)
 	}
-//line ratelimit_test.ego:161
+//line ratelimit_test.ego:171
 	time.Sleep(20 * time.Millisecond) // the system's time passes, not the limiter's
 	res, err := l.Take(context.Background(), "k", 1)
 	if err != nil {
 		panic(err)
 	}
-//line ratelimit_test.ego:163
+//line ratelimit_test.ego:173
 	if res.Allowed {
 		t.Error("the store forgot the state by the system's clock")
+	}
+}
+
+// TestDailyQuota checks a token bucket whose Interval × Burst overflows a
+// Duration: its state lasts the day, and its burst is taken once.
+func TestDailyQuota(t *testing.T) {
+	c := newClock()
+	l := &ratelimit.Limiter{Policy: ratelimit.TokenBucket{Burst: 200000, Rate: 200000, Interval: 24 * time.Hour}, Now: c.Now}
+	ctx := context.Background()
+	first, err := l.Take(ctx, "k", 200000)
+	if err != nil {
+		panic(err)
+	}
+//line ratelimit_test.ego:185
+	c.now = c.now.Add(time.Millisecond)
+	second, err := l.Take(ctx, "k", 200000)
+	if err != nil {
+		panic(err)
+	}
+//line ratelimit_test.ego:187
+	if !first.Allowed || second.Allowed || second.RetryAfter < 23*time.Hour {
+		t.Errorf("first %+v, second %+v", first, second)
 	}
 }
 
@@ -213,6 +245,9 @@ func TestInvalidTakes(t *testing.T) {
 		"no limit":  {Policy: ratelimit.FixedWindow{Interval: time.Minute}},
 		"no rate":   {Policy: ratelimit.TokenBucket{Burst: 1, Interval: time.Minute}},
 		"no window": {Policy: ratelimit.SlidingWindow{Limit: 1}},
+		// Filling takes too long for a Duration, or less than a nanosecond.
+		"centuries": {Policy: ratelimit.TokenBucket{Burst: math.MaxInt32, Rate: 1, Interval: 24 * time.Hour}},
+		"instant":   {Policy: ratelimit.TokenBucket{Burst: 1, Rate: 10, Interval: time.Nanosecond}},
 	} {
 		if _, err := l.Take(ctx, "k", 1); err == nil {
 			t.Errorf("%s: no error", name)

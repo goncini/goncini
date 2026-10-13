@@ -77,7 +77,8 @@ func (e BadCredentials) As(target any) bool {
 }
 
 // TooManyLogins means that the email had too many failed logins from
-// the client's address: it may try again after RetryAfter.
+// the client's address, or the address too many logins: it may try
+// again after RetryAfter.
 type TooManyLogins struct{ RetryAfter time.Duration }
 
 func (TooManyLogins) isUserError() {}
@@ -129,7 +130,7 @@ func (e Unavailable) As(target any) bool {
 
 // Problem says what each UserError looks like over HTTP.
 //
-//line users.ego:51
+//line users.ego:52
 func Problem(err error) httpkernel.Problem {
 	var v httpkernel.Problem
 	if err == nil {
@@ -152,7 +153,7 @@ func Problem(err error) httpkernel.Problem {
 
 // tooManyLogins is a 429, with ratelimit's Retry-After header.
 //
-//line users.ego:63
+//line users.ego:64
 func tooManyLogins(e TooManyLogins) httpkernel.Problem {
 	p := conduit.Problem(http.StatusTooManyRequests, "credentials", "too many failed attempts")
 	p.Header = ratelimit.Exceeded{RetryAfter: e.RetryAfter}.Problem().Header
@@ -170,7 +171,7 @@ func Current(ctx context.Context) *User {
 	if err != nil {
 		panic(err)
 	}
-//line users.ego:77
+//line users.ego:78
 	return u
 }
 

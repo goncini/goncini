@@ -12,6 +12,7 @@ import (
 	"github.com/goncini/goncini/listing"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/validator"
 )
 
 // byDate sorts notes by date or title.
@@ -106,6 +107,20 @@ func TestLinkEdges(t *testing.T) {
 	}
 }
 
+// TestWindowBounds checks the window's bounds, with a validator.
+func TestWindowBounds(t *testing.T) {
+	_, k := notes()
+	k.Validator = validator.New()
+	for _, query := range []string{"limit=0", "limit=101", "offset=-1"} {
+		if w := get(k, "/notes?"+query); w.Code != 422 {
+			t.Errorf("%s: %d %s", query, w.Code, w.Body)
+		}
+	}
+	if w := get(k, "/notes?limit=100&offset=0"); w.Code != 200 {
+		t.Errorf("%d %s", w.Code, w.Body)
+	}
+}
+
 func TestSort(t *testing.T) {
 	_, k := notes()
 	if w := get(k, "/notes?sort=title,-createdAt"); !strings.Contains(w.Body.String(), `"n.title, n.created_at DESC"`) {
@@ -114,6 +129,9 @@ func TestSort(t *testing.T) {
 	w := get(k, "/notes?sort=-password")
 	if w.Code != 400 || !strings.Contains(w.Body.String(), `can't sort by \"password\": sort by createdAt, title`) {
 		t.Errorf("%d %s", w.Code, w.Body)
+	}
+	if w := get(k, "/notes?sort=title,-title"); w.Code != 400 {
+		t.Errorf("a field twice: %d %s", w.Code, w.Body)
 	}
 	var s listing.Sort[byDate]
 	must s.UnmarshalText([]byte("-title"))

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"sync"
 	"time"
@@ -245,11 +246,11 @@ type TokenBucket struct {
 }
 
 func (p TokenBucket) Take(st *State, n int, now time.Time) Result {
-	perToken := p.Interval / time.Duration(p.Rate)
+	perToken := float64(p.Interval) / float64(p.Rate) // in nanoseconds, which may be less than one
 	if st.Start.IsZero() {
 		*st = State{Start: now, Count: float64(p.Burst)}
 	}
-	refill := float64(now.Sub(st.Start)) / float64(perToken)
+	refill := float64(now.Sub(st.Start)) / perToken
 	st.Count = min(float64(p.Burst), st.Count+refill)
 	st.Start = now
 	res := Result{Limit: p.Burst}
@@ -257,29 +258,45 @@ func (p TokenBucket) Take(st *State, n int, now time.Time) Result {
 		st.Count -= float64(n)
 		res.Allowed = true
 	} else if n > p.Burst {
-		res.RetryAfter = p.Interval * time.Duration(p.Burst) / time.Duration(p.Rate)
+		res.RetryAfter = p.TTL()
 	} else {
-		res.RetryAfter = time.Duration((float64(n) - st.Count) * float64(perToken))
+		res.RetryAfter = time.Duration((float64(n) - st.Count) * perToken)
 	}
 	res.Remaining = int(st.Count)
-	res.Reset = time.Duration((float64(p.Burst) - st.Count) * float64(perToken))
+	res.Reset = time.Duration((float64(p.Burst) - st.Count) * perToken)
 	return res
 }
 
+// TTL is how long an empty bucket takes to fill.
 func (p TokenBucket) TTL() time.Duration {
-	return p.Interval * time.Duration(p.Burst) / time.Duration(p.Rate)
+	return time.Duration(p.fill())
+}
+
+// fill is how long an empty bucket takes to fill, in nanoseconds, computed
+// in floating point: Interval × Burst overflows a Duration for a daily
+// quota of a hundred thousand.
+func (p TokenBucket) fill() float64 {
+	return float64(p.Interval) * float64(p.Burst) / float64(p.Rate)
 }
 
 func (p TokenBucket) valid() error {
 	if p.Rate <= 0 {
 		return errors.New("ratelimit: TokenBucket.Rate must be positive")
 	}
-	return positive("TokenBucket", p.Burst, p.Interval)
+	check positive("TokenBucket", p.Burst, p.Interval) ""
+	if fill := p.fill(); fill < 1 || fill >= maxTTL {
+		return fmt.Errorf("ratelimit: TokenBucket fills in %v nanoseconds, out of a Duration's range", fill)
+	}
+	return nil
 }
 
-// positive checks a policy's limit and interval.
+// maxTTL is the longest TTL, in nanoseconds: a Duration's.
+const maxTTL = float64(math.MaxInt64)
+
+// positive checks a policy's limit and interval, which twice must be a
+// Duration still.
 func positive(policy string, limit int, interval time.Duration) error {
-	if limit <= 0 || interval <= 0 {
+	if limit <= 0 || interval <= 0 || interval > math.MaxInt64/2 {
 		return fmt.Errorf("ratelimit: %s needs a positive limit and interval", policy)
 	}
 	return nil
@@ -332,9 +349,20 @@ func (l *Limiter) Middleware(key func(*http.Request) string) func(http.Handler) 
 }
 
 // ByIP is the key of a request's client: its address, as
-// httpkernel.ClientIP gives it behind trusted proxies.
+// httpkernel.ClientIP gives it behind trusted proxies, as IPKey keys it.
 func ByIP(r *http.Request) string {
-	return httpkernel.ClientIP(r).String()
+	return IPKey(httpkernel.ClientIP(r))
+}
+
+// IPKey is the key of a client's address: an IPv4 address, or an IPv6
+// address's /64, which a client has whole, and whose addresses it could
+// take one after another.
+func IPKey(ip netip.Addr) string {
+	ip = ip.Unmap()
+	if ip.Is6() {
+		return netip.PrefixFrom(ip, 64).Masked().String()
+	}
+	return ip.String()
 }
 
 // limited is a handler behind a limiter.

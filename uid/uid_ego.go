@@ -13,6 +13,11 @@
 //
 // Both are 16 bytes, and convert to each other: a ULID is a UUID written
 // in 26 characters of Crockford's base 32.
+//
+// In a database, a UUID is stored as its 36 characters, which a text or a
+// PostgreSQL uuid column takes, and a ULID as its 26, for a text column;
+// both scan from either form, and from 16 bytes. To store one in 16 bytes,
+// as MySQL's BINARY(16), pass its bytes: id[:].
 package uid
 
 import (
@@ -33,7 +38,7 @@ import (
 // as 36 characters: 0192a6f0-7c1e-7d3a-9f3b-2b6c1e9d0a4f. The zero UUID is
 // the nil UUID.
 //
-//line uid.ego:33
+//line uid.ego:38
 type UUID [16]byte
 
 // NewV4 returns a random UUID.
@@ -250,8 +255,9 @@ func (u ULID) String() string {
 	return string(b[:])
 }
 
-// ParseULID parses a ULID, in upper or lower case, with I and L read as 1
-// and O as 0, as Crockford's base 32 allows.
+// ParseULID parses a ULID, in upper or lower case, of the characters that
+// String writes: I, L, O and U aren't, as in Symfony's, routing.ULID and
+// the OpenAPI schema.
 func ParseULID(s string) (ULID, error) {
 	if len(s) != 26 {
 		return ULID{}, errInvalidULID
@@ -273,26 +279,15 @@ func ParseULID(s string) (ULID, error) {
 
 var errInvalidULID = errors.New("not a ULID, such as 01J9AZ3W8XQ7P2M5V6N4K0RT3E")
 
-// normalize reads a character of Crockford's base 32 as its canonical one.
+// normalize upper-cases a character.
 func normalize(c byte) byte {
 	if c >= 'a' && c <= 'z' {
 		c -= 'a' - 'A'
 	}
-	var v byte
-	switch c {
-	case 'I', 'L':
-		v = '1'
-	case 'O':
-		v = '0'
-	default:
-		v = c
-	}
-	return v
+	return c
 }
 
 // MarshalText writes u as String does.
-//
-//line uid.ego:285
 func (u ULID) MarshalText() ([]byte, error) { return []byte(u.String()), nil }
 
 // UnmarshalText parses u as ParseULID does.
@@ -305,19 +300,32 @@ func (u *ULID) UnmarshalText(b []byte) error {
 // Value stores u as its 26 characters.
 func (u ULID) Value() (driver.Value, error) { return u.String(), nil }
 
-// Scan reads u from its 26 characters, or 16 bytes.
+// Scan reads u from its 26 characters, the 36 of its UUID, as a
+// PostgreSQL uuid column gives it, or 16 bytes.
 func (u *ULID) Scan(src any) error {
+	var text string
 	switch v := src.(type) {
 	case string:
-		return u.UnmarshalText([]byte(v))
+		text = v
 	case []byte:
 		if len(v) == 16 {
 			copy(u[:], v)
 			return nil
 		}
-		return u.UnmarshalText(v)
+		text = string(v)
+	default:
+		return fmt.Errorf("uid: can't scan a %T into a ULID", src)
 	}
-	return fmt.Errorf("uid: can't scan a %T into a ULID", src)
+	if len(text) == 36 {
+		id, err := ParseUUID(text)
+		if err != nil {
+			return err
+		}
+//line uid.ego:317
+		*u = ULID(id)
+		return nil
+	}
+	return u.UnmarshalText([]byte(text))
 }
 
 // OpenAPISchema describes ULIDs as strings of 26 characters.

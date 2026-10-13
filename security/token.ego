@@ -51,7 +51,8 @@ func NewTokens(c Config) (*Tokens, error) {
 }
 
 // Issue returns a token for the user that subject identifies, such as its
-// ID, valid for the TTL.
+// ID, valid for the TTL. Tokens are timed by time.Now, which tests move
+// with testing/synctest.
 func (t *Tokens) Issue(subject string) (string, error) {
 	now := time.Now()
 	claims := jwt.RegisteredClaims{

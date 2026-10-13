@@ -6,11 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/goncini/goncini/cors"
 )
 
-//line cors_test.ego:11
+//line cors_test.ego:12
 var ok = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Total", "3")
 	w.Write([]byte("ok"))
@@ -88,9 +89,25 @@ func TestInvalidConfigs(t *testing.T) {
 		{AllowOrigins: []string{"*.example.com"}},
 		{AllowOrigins: []string{"*://*.example.com"}},
 		{AllowOrigins: []string{"https://*.example.com/path"}},
+		// Exact origins that no browser sends: no scheme, a path.
+		{AllowOrigins: []string{"example.com"}},
+		{AllowOrigins: []string{"https://example.com/app"}},
+		{AllowOrigins: []string{"https://example.com?x"}},
 	} {
 		if _, err := cors.New(c); err == nil {
 			t.Errorf("%+v: no error", c)
+		}
+	}
+}
+
+// TestMaxAge checks that MaxAge is written in whole seconds, rounded up,
+// and that a negative one isn't cached.
+func TestMaxAge(t *testing.T) {
+	preflight := map[string]string{"Origin": "https://app.example.com", "Access-Control-Request-Method": "PUT"}
+	for age, want := range map[time.Duration]string{0: "600", 1500 * time.Millisecond: "2", -time.Second: "0"} {
+		w := serve(t, cors.Config{AllowOrigins: []string{"https://app.example.com/"}, MaxAge: age}, http.MethodOptions, preflight)
+		if got := w.Header().Get("Access-Control-Max-Age"); got != want {
+			t.Errorf("%v: %q, want %q", age, got, want)
 		}
 	}
 }

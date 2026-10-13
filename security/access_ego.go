@@ -99,8 +99,8 @@ type Strategy int
 const (
 	// Affirmative grants access when a voter grants it: the default.
 	Affirmative Strategy = iota
-	// Consensus grants access when no fewer voters grant it than deny it,
-	// as Symfony's does by default.
+	// Consensus grants access when no fewer voters grant it than deny it:
+	// a tie grants it, as in Symfony.
 	Consensus
 	// Unanimous grants access when a voter grants it and none denies it.
 	Unanimous

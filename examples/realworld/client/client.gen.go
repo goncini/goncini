@@ -456,7 +456,7 @@ type ClientInterface interface {
 	// UserLoginWithBody Returns the user with an email and a password, with a new token.
 	//
 	// Each email has a few attempts a minute from each address, which a
-	// successful one gives back.
+	// successful one gives back, and each address a few more for all emails.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -466,7 +466,7 @@ type ClientInterface interface {
 	// UserLogin Returns the user with an email and a password, with a new token.
 	//
 	// Each email has a few attempts a minute from each address, which a
-	// successful one gives back.
+	// successful one gives back, and each address a few more for all emails.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -876,7 +876,7 @@ func (c *Client) UserRegister(ctx context.Context, body UserRegisterJSONRequestB
 // UserLoginWithBody Returns the user with an email and a password, with a new token.
 //
 // Each email has a few attempts a minute from each address, which a
-// successful one gives back.
+// successful one gives back, and each address a few more for all emails.
 //
 // Takes any type of body and a specified content type.
 //
@@ -896,7 +896,7 @@ func (c *Client) UserLoginWithBody(ctx context.Context, contentType string, body
 // UserLogin Returns the user with an email and a password, with a new token.
 //
 // Each email has a few attempts a minute from each address, which a
-// successful one gives back.
+// successful one gives back, and each address a few more for all emails.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -1989,7 +1989,7 @@ type ClientWithResponsesInterface interface {
 	// UserLoginWithBodyWithResponse Returns the user with an email and a password, with a new token.
 	//
 	// Each email has a few attempts a minute from each address, which a
-	// successful one gives back.
+	// successful one gives back, and each address a few more for all emails.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -1999,7 +1999,7 @@ type ClientWithResponsesInterface interface {
 	// UserLoginWithResponse Returns the user with an email and a password, with a new token.
 	//
 	// Each email has a few attempts a minute from each address, which a
-	// successful one gives back.
+	// successful one gives back, and each address a few more for all emails.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -3970,7 +3970,7 @@ func (c *ClientWithResponses) UserRegisterWithResponse(ctx context.Context, body
 // UserLoginWithBodyWithResponse Returns the user with an email and a password, with a new token.
 //
 // Each email has a few attempts a minute from each address, which a
-// successful one gives back.
+// successful one gives back, and each address a few more for all emails.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -3986,7 +3986,7 @@ func (c *ClientWithResponses) UserLoginWithBodyWithResponse(ctx context.Context,
 // UserLoginWithResponse Returns the user with an email and a password, with a new token.
 //
 // Each email has a few attempts a minute from each address, which a
-// successful one gives back.
+// successful one gives back, and each address a few more for all emails.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

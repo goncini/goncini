@@ -14,11 +14,12 @@ import (
 	"github.com/goncini/goncini/listing"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/validator"
 )
 
 // byDate sorts notes by date or title.
 //
-//line listing_test.ego:18
+//line listing_test.ego:19
 type byDate struct{}
 
 func (byDate) Fields() map[string]string {
@@ -110,6 +111,20 @@ func TestLinkEdges(t *testing.T) {
 	}
 }
 
+// TestWindowBounds checks the window's bounds, with a validator.
+func TestWindowBounds(t *testing.T) {
+	_, k := notes()
+	k.Validator = validator.New()
+	for _, query := range []string{"limit=0", "limit=101", "offset=-1"} {
+		if w := get(k, "/notes?"+query); w.Code != 422 {
+			t.Errorf("%s: %d %s", query, w.Code, w.Body)
+		}
+	}
+	if w := get(k, "/notes?limit=100&offset=0"); w.Code != 200 {
+		t.Errorf("%d %s", w.Code, w.Body)
+	}
+}
+
 func TestSort(t *testing.T) {
 	_, k := notes()
 	if w := get(k, "/notes?sort=title,-createdAt"); !strings.Contains(w.Body.String(), `"n.title, n.created_at DESC"`) {
@@ -119,16 +134,19 @@ func TestSort(t *testing.T) {
 	if w.Code != 400 || !strings.Contains(w.Body.String(), `can't sort by \"password\": sort by createdAt, title`) {
 		t.Errorf("%d %s", w.Code, w.Body)
 	}
+	if w := get(k, "/notes?sort=title,-title"); w.Code != 400 {
+		t.Errorf("a field twice: %d %s", w.Code, w.Body)
+	}
 	var s listing.Sort[byDate]
 	if err := s.UnmarshalText([]byte("-title")); err != nil {
 		panic(err)
 	}
-//line listing_test.ego:120
+//line listing_test.ego:138
 	text, err := s.MarshalText()
 	if err != nil {
 		panic(err)
 	}
-//line listing_test.ego:121
+//line listing_test.ego:139
 	if string(text) != "-title" {
 		t.Errorf("%s", text)
 	}
@@ -140,12 +158,12 @@ func TestCursor(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line listing_test.ego:129
+//line listing_test.ego:147
 	var back listing.Cursor[[]any]
 	if err := back.UnmarshalText(text); err != nil {
 		panic(err)
 	}
-//line listing_test.ego:131
+//line listing_test.ego:149
 	if !back.Set || back.Key[0] != "2026-10-07" || back.Key[1] != 42.0 {
 		t.Errorf("%+v", back)
 	}
@@ -165,7 +183,7 @@ func TestDocumented(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line listing_test.ego:147
+//line listing_test.ego:165
 	op := doc.Paths["/notes"].Get
 	params := map[string]*openapi.Schema{}
 	for _, p := range op.Parameters {

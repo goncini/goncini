@@ -39,7 +39,8 @@ error UserError {
 	// BadCredentials means that no user has the email and password.
 	BadCredentials{} "invalid credentials"
 	// TooManyLogins means that the email had too many failed logins from
-	// the client's address: it may try again after RetryAfter.
+	// the client's address, or the address too many logins: it may try
+	// again after RetryAfter.
 	TooManyLogins{ RetryAfter time.Duration } "too many failed logins"
 	// NoProfile means that no user has the username.
 	NoProfile{ Username string } "no user {Username}"

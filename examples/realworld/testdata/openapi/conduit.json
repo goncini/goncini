@@ -3090,7 +3090,7 @@
           "Users"
         ],
         "summary": "Returns the user with an email and a password, with a new token.",
-        "description": "Each email has a few attempts a minute from each address, which a\nsuccessful one gives back.",
+        "description": "Each email has a few attempts a minute from each address, which a\nsuccessful one gives back, and each address a few more for all emails.",
         "operationId": "user_login",
         "requestBody": {
           "required": true,

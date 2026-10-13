@@ -51,7 +51,7 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	}
 	hasher2 := hasher()
 	v := clock()
-	limiter := logins(v)
+	logins2 := logins(v)
 	config5 := autoDefaultCacheConfig()
 	memoryStore := cache.NewMemoryStore()
 	cache2 := cache.New(config5, memoryStore)
@@ -82,7 +82,7 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v3 := autoSubscribers(invalidator, notices, subscriber)
 	dispatcher := goncini.NewDispatcher(v3)
 	mailer2 := mailer.NewAsync(config7, bus)
-	users2, err := users.NewUsers(store, hasher2, tokens, limiter, dispatcher, mailer2, sql2)
+	users2, err := users.NewUsers(store, hasher2, tokens, logins2, dispatcher, mailer2, sql2)
 	if err != nil {
 		return nil, fmt.Errorf("users.NewUsers: %w", err)
 	}
@@ -159,7 +159,7 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config) (*Test, e
 	}
 	hasher2 := hasher()
 	v := clock()
-	limiter := logins(v)
+	logins2 := logins(v)
 	config5 := autoDefaultCacheConfig()
 	memoryStore := cache.NewMemoryStore()
 	cache2 := cache.New(config5, memoryStore)
@@ -190,7 +190,7 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config) (*Test, e
 	v3 := autoSubscribers(invalidator, notices, subscriber)
 	dispatcher := goncini.NewDispatcher(v3)
 	mailer2 := mailer.NewAsync(config7, bus)
-	users2, err := users.NewUsers(store, hasher2, tokens, limiter, dispatcher, mailer2, sql2)
+	users2, err := users.NewUsers(store, hasher2, tokens, logins2, dispatcher, mailer2, sql2)
 	if err != nil {
 		return nil, fmt.Errorf("users.NewUsers: %w", err)
 	}

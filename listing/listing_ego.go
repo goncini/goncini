@@ -36,8 +36,10 @@ import (
 )
 
 // Window is where a page starts in a list, and its size: ?limit=20&offset=40.
+// Its bounds are validate tags, which the kernel's Validator checks, as
+// goncini.NewKernel's does: a kernel without one lets any limit through.
 //
-//line listing.ego:37
+//line listing.ego:39
 type Window struct {
 	Limit  int `query:"limit" default:"20" validate:"min=1,max=100"` // how many items, at most
 	Offset int `query:"offset" validate:"min=0"`                     // how many items to skip
@@ -100,7 +102,7 @@ func Links(r *http.Request, o Window, total int) []string {
 // skips or repeats nothing when the list changes between pages.
 //
 //	type FeedInput struct {
-//		Limit int                   `query:"limit" default:"20"`
+//		Limit int                   `query:"limit" default:"20" validate:"min=1,max=100"`
 //		After listing.Cursor[int64] `query:"after"`
 //	}
 //	type FeedBody struct {
@@ -125,7 +127,7 @@ func (c Cursor[K]) MarshalText() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-//line listing.ego:121
+//line listing.ego:123
 	return []byte(base64.RawURLEncoding.EncodeToString(b)), nil
 }
 
@@ -152,7 +154,8 @@ type Order interface {
 
 // Sort is how a list is sorted, as a parameter: fields separated by
 // commas, each first if descending with -, such as -createdAt,title. Only
-// the fields of O are allowed, so its SQL is safe to put in a query.
+// the fields of O are allowed, each once, so its SQL is safe to put in a
+// query.
 type Sort[O Order] []SortField
 
 // SortField is a field to sort by.
@@ -174,6 +177,9 @@ func (s *Sort[O]) UnmarshalText(text []byte) error {
 		if _, ok := allowed[f.Name]; !ok {
 			return errors.New("can't sort by " + strconv.Quote(f.Name) + ": sort by " + strings.Join(names(allowed), ", "))
 		}
+		if slices.ContainsFunc(out, func(other SortField) bool { return other.Name == f.Name }) {
+			return errors.New("can't sort by " + strconv.Quote(f.Name) + " twice")
+		}
 		out = append(out, f)
 	}
 	*s = out
@@ -190,7 +196,7 @@ func (s Sort[O]) MarshalText() ([]byte, error) {
 			parts[i] = f.Name
 		}
 	}
-//line listing.ego:181
+//line listing.ego:187
 	return []byte(strings.Join(parts, ",")), nil
 }
 
@@ -209,7 +215,7 @@ func (s Sort[O]) SQL() string {
 		}
 		parts[i] = allowed[f.Name] + v2
 	}
-//line listing.ego:193
+//line listing.ego:199
 	return strings.Join(parts, ", ")
 }
 

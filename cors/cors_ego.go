@@ -14,7 +14,9 @@ package cors
 import (
 	"cmp"
 	"errors"
+	"math"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,7 +26,7 @@ import (
 // Config says which origins may call the API, and how. The zero value
 // allows no origin.
 //
-//line cors.ego:24
+//line cors.ego:26
 type Config struct {
 	// AllowOrigins are the origins allowed, such as https://example.com,
 	// with an optional wildcard for subdomains, https://*.example.com; or
@@ -43,8 +45,9 @@ type Config struct {
 	// AllowCredentials lets requests carry cookies and HTTP
 	// authentication. It can't go with the origin "*".
 	AllowCredentials bool
-	// MaxAge is how long browsers may cache a preflight's answer; zero
-	// means 10 minutes, and browsers cap it, at 2 hours for Chromium.
+	// MaxAge is how long browsers may cache a preflight's answer, in whole
+	// seconds, rounded up; zero means 10 minutes, and a negative one not
+	// at all. Browsers cap it, at 2 hours for Chromium.
 	MaxAge time.Duration
 }
 
@@ -60,7 +63,7 @@ func New(c Config) (func(http.Handler) http.Handler, error) {
 		headers:     orDefault(c.AllowHeaders, defaultHeaders),
 		expose:      strings.Join(c.ExposeHeaders, ", "),
 		credentials: c.AllowCredentials,
-		maxAge:      strconv.Itoa(int(cmp.Or(c.MaxAge, 10*time.Minute).Seconds())),
+		maxAge:      strconv.Itoa(max(0, int(math.Ceil(cmp.Or(c.MaxAge, 10*time.Minute).Seconds())))),
 	}
 	for _, o := range c.AllowOrigins {
 		o = strings.ToLower(strings.TrimSuffix(o, "/"))
@@ -77,6 +80,10 @@ func New(c Config) (func(http.Handler) http.Handler, error) {
 			}
 			p.suffixes = append(p.suffixes, [2]string{scheme + "://", "." + host})
 		default:
+			u, err := url.Parse(o)
+			if err != nil || u.Scheme == "" || u.Host == "" || u.Opaque != "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.HasSuffix(o, "?") || strings.HasSuffix(o, "#") {
+				return nil, errors.New("cors: invalid origin " + strconv.Quote(o) + ": an origin is a scheme and a host, as in https://example.com")
+			}
 			p.origins = append(p.origins, o)
 		}
 	}
@@ -130,7 +137,7 @@ type handler struct {
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hd := w.Header()
-	if !h.p.any || h.p.credentials {
+	if !h.p.any {
 		// The response depends on the origin, even without one: a shared
 		// cache mustn't give it to another origin.
 		hd.Add("Vary", "Origin")
@@ -173,7 +180,7 @@ func (h *handler) preflight(w http.ResponseWriter, r *http.Request, origin strin
 
 // allow sets the headers that let the origin read the response.
 func (h *handler) allow(hd http.Header, origin string) {
-	if h.p.any && !h.p.credentials {
+	if h.p.any {
 		hd.Set("Access-Control-Allow-Origin", "*")
 	} else {
 		hd.Set("Access-Control-Allow-Origin", origin)

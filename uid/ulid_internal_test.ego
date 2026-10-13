@@ -5,6 +5,25 @@ import (
 	"time"
 )
 
+// TestV7Counter checks that a version 7 UUID made once the millisecond's
+// counter ran out borrows the next millisecond, still in order.
+func TestV7Counter(t *testing.T) {
+	clock.mu.Lock()
+	savedLast, savedSeq := clock.last, clock.seq
+	t.Cleanup(() => {
+		clock.mu.Lock()
+		clock.last, clock.seq = savedLast, savedSeq
+		clock.mu.Unlock()
+	})
+	future := uint64(time.Now().Add(time.Hour).UnixMilli())
+	clock.last, clock.seq = future, 1<<12-1
+	clock.mu.Unlock()
+	a, b := NewV7(), NewV7()
+	if a.Time().UnixMilli() != int64(future)+1 || b.String() <= a.String() {
+		t.Errorf("%s (%v), then %s", a, a.Time(), b)
+	}
+}
+
 // TestULIDOverflow checks that a ULID made when the last one's random part
 // is all ones, in the same millisecond, goes to the next millisecond rather
 // than wrapping around below it.

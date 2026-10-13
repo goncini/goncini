@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"sync"
 	"time"
@@ -28,7 +29,7 @@ import (
 
 // LimitError is everything a limiter refuses with.
 //
-//line ratelimit.ego:28
+//line ratelimit.ego:29
 type LimitError interface {
 	error
 	isLimitError()
@@ -58,7 +59,7 @@ func (e Exceeded) As(target any) bool {
 
 // Problem is a 429 with a Retry-After header, in whole seconds.
 //
-//line ratelimit.ego:38
+//line ratelimit.ego:39
 func (e Exceeded) Problem() httpkernel.Problem {
 	return httpkernel.Problem{
 		Status: http.StatusTooManyRequests,
@@ -149,18 +150,18 @@ func (l *Limiter) Take(ctx context.Context, key string, n int) (Result, error) {
 			return Result{}, err
 		}
 	}
-//line ratelimit.ego:126
+//line ratelimit.ego:127
 	v2 := l.Now
 	if v2 == nil {
 		v2 = time.Now
 	}
 	now := (v2)()
-//line ratelimit.ego:127
+//line ratelimit.ego:128
 	var res Result
 	err := l.store().Update(ctx, key, now, l.Policy.TTL(), func(st *State) {
 		res = l.Policy.Take(st, n, now)
 	})
-//line ratelimit.ego:129
+//line ratelimit.ego:130
 	return res, err
 }
 
@@ -178,7 +179,7 @@ func (l *Limiter) Reset(ctx context.Context, key string) error {
 
 // store is the limiter's store.
 //
-//line ratelimit.ego:139
+//line ratelimit.ego:140
 func (l *Limiter) store() Store {
 	if l.Store != nil {
 		return l.Store
@@ -186,7 +187,7 @@ func (l *Limiter) store() Store {
 	l.once.Do(func() {
 		l.mem = &MemoryStore{}
 	})
-//line ratelimit.ego:144
+//line ratelimit.ego:145
 	return l.mem
 }
 
@@ -214,7 +215,7 @@ func (p FixedWindow) Take(st *State, n int, now time.Time) Result {
 			res.RetryAfter = reset
 		}
 	}
-//line ratelimit.ego:167
+//line ratelimit.ego:168
 	res.Remaining = p.Limit - int(st.Count)
 	return res
 }
@@ -242,7 +243,7 @@ func (p SlidingWindow) Take(st *State, n int, now time.Time) Result {
 		} else {
 			st.Previous = 0
 		}
-//line ratelimit.ego:190
+//line ratelimit.ego:191
 		st.Count = 0
 		st.Start = st.Start.Add(windows * p.Interval)
 	}
@@ -301,11 +302,11 @@ type TokenBucket struct {
 }
 
 func (p TokenBucket) Take(st *State, n int, now time.Time) Result {
-	perToken := p.Interval / time.Duration(p.Rate)
+	perToken := float64(p.Interval) / float64(p.Rate) // in nanoseconds, which may be less than one
 	if st.Start.IsZero() {
 		*st = State{Start: now, Count: float64(p.Burst)}
 	}
-	refill := float64(now.Sub(st.Start)) / float64(perToken)
+	refill := float64(now.Sub(st.Start)) / perToken
 	st.Count = min(float64(p.Burst), st.Count+refill)
 	st.Start = now
 	res := Result{Limit: p.Burst}
@@ -313,29 +314,48 @@ func (p TokenBucket) Take(st *State, n int, now time.Time) Result {
 		st.Count -= float64(n)
 		res.Allowed = true
 	} else if n > p.Burst {
-		res.RetryAfter = p.Interval * time.Duration(p.Burst) / time.Duration(p.Rate)
+		res.RetryAfter = p.TTL()
 	} else {
-		res.RetryAfter = time.Duration((float64(n) - st.Count) * float64(perToken))
+		res.RetryAfter = time.Duration((float64(n) - st.Count) * perToken)
 	}
 	res.Remaining = int(st.Count)
-	res.Reset = time.Duration((float64(p.Burst) - st.Count) * float64(perToken))
+	res.Reset = time.Duration((float64(p.Burst) - st.Count) * perToken)
 	return res
 }
 
+// TTL is how long an empty bucket takes to fill.
 func (p TokenBucket) TTL() time.Duration {
-	return p.Interval * time.Duration(p.Burst) / time.Duration(p.Rate)
+	return time.Duration(p.fill())
+}
+
+// fill is how long an empty bucket takes to fill, in nanoseconds, computed
+// in floating point: Interval × Burst overflows a Duration for a daily
+// quota of a hundred thousand.
+func (p TokenBucket) fill() float64 {
+	return float64(p.Interval) * float64(p.Burst) / float64(p.Rate)
 }
 
 func (p TokenBucket) valid() error {
 	if p.Rate <= 0 {
 		return errors.New("ratelimit: TokenBucket.Rate must be positive")
 	}
-	return positive("TokenBucket", p.Burst, p.Interval)
+	if err := positive("TokenBucket", p.Burst, p.Interval); err != nil {
+		return err
+	}
+//line ratelimit.ego:287
+	if fill := p.fill(); fill < 1 || fill >= maxTTL {
+		return fmt.Errorf("ratelimit: TokenBucket fills in %v nanoseconds, out of a Duration's range", fill)
+	}
+	return nil
 }
 
-// positive checks a policy's limit and interval.
+// maxTTL is the longest TTL, in nanoseconds: a Duration's.
+const maxTTL = float64(math.MaxInt64)
+
+// positive checks a policy's limit and interval, which twice must be a
+// Duration still.
 func positive(policy string, limit int, interval time.Duration) error {
-	if limit <= 0 || interval <= 0 {
+	if limit <= 0 || interval <= 0 || interval > math.MaxInt64/2 {
 		return fmt.Errorf("ratelimit: %s needs a positive limit and interval", policy)
 	}
 	return nil
@@ -388,9 +408,20 @@ func (l *Limiter) Middleware(key func(*http.Request) string) func(http.Handler) 
 }
 
 // ByIP is the key of a request's client: its address, as
-// httpkernel.ClientIP gives it behind trusted proxies.
+// httpkernel.ClientIP gives it behind trusted proxies, as IPKey keys it.
 func ByIP(r *http.Request) string {
-	return httpkernel.ClientIP(r).String()
+	return IPKey(httpkernel.ClientIP(r))
+}
+
+// IPKey is the key of a client's address: an IPv4 address, or an IPv6
+// address's /64, which a client has whole, and whose addresses it could
+// take one after another.
+func IPKey(ip netip.Addr) string {
+	ip = ip.Unmap()
+	if ip.Is6() {
+		return netip.PrefixFrom(ip, 64).Masked().String()
+	}
+	return ip.String()
 }
 
 // limited is a handler behind a limiter.

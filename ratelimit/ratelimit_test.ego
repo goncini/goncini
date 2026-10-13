@@ -3,6 +3,7 @@ package ratelimit_test
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -124,6 +125,15 @@ func TestMiddleware(t *testing.T) {
 	if w := get("192.0.2.2"); w.Code != 200 {
 		t.Errorf("another client: %d", w.Code)
 	}
+	// An IPv6 client has its /64 whole.
+	get("[2001:db8::1]")
+	get("[2001:db8::2]")
+	if w := get("[2001:db8::3]"); w.Code != 429 {
+		t.Errorf("a third address of a /64: %d", w.Code)
+	}
+	if w := get("[2001:db8:0:1::1]"); w.Code != 200 {
+		t.Errorf("another /64: %d", w.Code)
+	}
 }
 
 func TestErr(t *testing.T) {
@@ -165,6 +175,20 @@ func TestStoreClock(t *testing.T) {
 	}
 }
 
+// TestDailyQuota checks a token bucket whose Interval × Burst overflows a
+// Duration: its state lasts the day, and its burst is taken once.
+func TestDailyQuota(t *testing.T) {
+	c := newClock()
+	l := &ratelimit.Limiter{Policy: ratelimit.TokenBucket{Burst: 200000, Rate: 200000, Interval: 24 * time.Hour}, Now: c.Now}
+	ctx := context.Background()
+	first := must l.Take(ctx, "k", 200000)
+	c.now = c.now.Add(time.Millisecond)
+	second := must l.Take(ctx, "k", 200000)
+	if !first.Allowed || second.Allowed || second.RetryAfter < 23*time.Hour {
+		t.Errorf("first %+v, second %+v", first, second)
+	}
+}
+
 func TestInvalidTakes(t *testing.T) {
 	ctx := context.Background()
 	ok := &ratelimit.Limiter{Policy: ratelimit.FixedWindow{Limit: 1, Interval: time.Minute}}
@@ -172,6 +196,9 @@ func TestInvalidTakes(t *testing.T) {
 		"no limit":  {Policy: ratelimit.FixedWindow{Interval: time.Minute}},
 		"no rate":   {Policy: ratelimit.TokenBucket{Burst: 1, Interval: time.Minute}},
 		"no window": {Policy: ratelimit.SlidingWindow{Limit: 1}},
+		// Filling takes too long for a Duration, or less than a nanosecond.
+		"centuries": {Policy: ratelimit.TokenBucket{Burst: math.MaxInt32, Rate: 1, Interval: 24 * time.Hour}},
+		"instant":   {Policy: ratelimit.TokenBucket{Burst: 1, Rate: 10, Interval: time.Nanosecond}},
 	} {
 		if _, err := l.Take(ctx, "k", 1); err == nil {
 			t.Errorf("%s: no error", name)

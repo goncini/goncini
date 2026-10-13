@@ -34,6 +34,8 @@ import (
 )
 
 // Window is where a page starts in a list, and its size: ?limit=20&offset=40.
+// Its bounds are validate tags, which the kernel's Validator checks, as
+// goncini.NewKernel's does: a kernel without one lets any limit through.
 type Window struct {
 	Limit  int `query:"limit" default:"20" validate:"min=1,max=100"` // how many items, at most
 	Offset int `query:"offset" validate:"min=0"`                     // how many items to skip
@@ -96,7 +98,7 @@ func Links(r *http.Request, o Window, total int) []string {
 // skips or repeats nothing when the list changes between pages.
 //
 //	type FeedInput struct {
-//		Limit int                   `query:"limit" default:"20"`
+//		Limit int                   `query:"limit" default:"20" validate:"min=1,max=100"`
 //		After listing.Cursor[int64] `query:"after"`
 //	}
 //	type FeedBody struct {
@@ -144,7 +146,8 @@ type Order interface {
 
 // Sort is how a list is sorted, as a parameter: fields separated by
 // commas, each first if descending with -, such as -createdAt,title. Only
-// the fields of O are allowed, so its SQL is safe to put in a query.
+// the fields of O are allowed, each once, so its SQL is safe to put in a
+// query.
 type Sort[O Order] []SortField
 
 // SortField is a field to sort by.
@@ -165,6 +168,9 @@ func (s *Sort[O]) UnmarshalText(text []byte) error {
 		}
 		if _, ok := allowed[f.Name]; !ok {
 			return errors.New("can't sort by " + strconv.Quote(f.Name) + ": sort by " + strings.Join(names(allowed), ", "))
+		}
+		if slices.ContainsFunc(out, other => other.Name == f.Name) {
+			return errors.New("can't sort by " + strconv.Quote(f.Name) + " twice")
 		}
 		out = append(out, f)
 	}
