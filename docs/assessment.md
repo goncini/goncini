@@ -251,7 +251,7 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 
 ### 4.3 Milestone 4
 
-**Gates** (proposed 2026-10-07, approved by the user on 2026-10-13):
+**Gates** (proposed 2026-10-07):
 
 1. **Caching is invisible but for speed.** RealWorld caches its tags and article lists with tags of their own: a second request makes no query, and publishing, editing or deleting an article invalidates what it changes, so no test of the Hurl suite sees a stale answer. Concurrent misses of a key compute it once. The Redis adapter passes the same conformance suite as the memory cache, against a real Redis in CI.
 2. **Outgoing HTTP is resilient and traced.** The HTTP client retries connection failures, 429s and 5xxs of idempotent requests on a schedule, honoring `Retry-After`, never retries a POST unless asked, propagates the trace context, and a mock transport answers tests, as Symfony's MockHttpClient does.
