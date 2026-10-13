@@ -29,7 +29,7 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger, autoConfigMailer, autoConfigNotifier, autoDefaultSchedulerConfig, autoDefaultCacheConfig)
+var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger, autoConfigMailer, autoConfigNotifier, autoDefaultCacheConfig, autoDefaultSchedulerConfig)
 
 // autoProblems are the error mappers that the app's packages declare.
 func autoProblems() []httpkernel.ErrorMapper {
@@ -222,8 +222,8 @@ func autoConfigMailer(c config.Config) mailer.Config { return c.Mailer }
 // autoConfigNotifier is the Notifier section of the config.
 func autoConfigNotifier(c config.Config) notifier.Config { return c.Notifier }
 
-// autoDefaultSchedulerConfig is the default of scheduler.Config, which the config doesn't have.
-func autoDefaultSchedulerConfig() scheduler.Config { return scheduler.Config{} }
-
 // autoDefaultCacheConfig is the default of cache.Config, which the config doesn't have.
 func autoDefaultCacheConfig() cache.Config { return cache.Config{} }
+
+// autoDefaultSchedulerConfig is the default of scheduler.Config, which the config doesn't have.
+func autoDefaultSchedulerConfig() scheduler.Config { return scheduler.Config{} }

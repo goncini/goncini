@@ -11,6 +11,7 @@ require (
 	github.com/effect-go/effect-go v0.3.2
 	github.com/goncini/goncini v0.0.0
 	github.com/goncini/goncini/db/goosedb v0.0.0
+	github.com/goncini/goncini/examples/maintenance v0.0.0-00010101000000-000000000000
 	github.com/goncini/goncini/log/zaplog v0.0.0
 	github.com/goncini/goncini/otel/otlp v0.0.0
 	github.com/pressly/goose/v3 v3.28.0
@@ -72,3 +73,5 @@ replace (
 replace github.com/goncini/goncini/log/zaplog => ../../log/zaplog
 
 replace github.com/goncini/goncini/otel/otlp => ../../otel/otlp
+
+replace github.com/goncini/goncini/examples/maintenance => ../maintenance

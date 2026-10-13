@@ -19,6 +19,8 @@ import (
 	"github.com/goncini/goncini/security"
 	"github.com/goncini/goncini/translation"
 
+	"github.com/goncini/goncini/examples/maintenance"
+
 	"github.com/goncini/goncini/examples/articles/articles"
 	"github.com/goncini/goncini/examples/articles/editors"
 	"github.com/goncini/goncini/examples/articles/migrations"
@@ -29,9 +31,10 @@ import (
 
 // Services is the app's own services.
 //
-//line services.ego:27
+//line services.ego:29
 var Services = layer.Set(zaplog.NewLogger, db.Open, db.NewSQL, migrator, articles.NewStore, articles.NewArticles, articles.NewSlugCommand, translation.New, translations.All,
-	articles.NewWorkflows, access, editors.NewFirewall, clock, profiler.Layer, otlp.Layer)
+	articles.NewWorkflows, access, editors.NewFirewall, clock, profiler.Layer, otlp.Layer,
+	maintenance.Layer) // a third-party bundle
 
 // access decides what users may do: roles only, here.
 func access() *security.Access { return &security.Access{} }

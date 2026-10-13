@@ -280,6 +280,8 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 3. **Makers write features that work.** In that new app, `goncini make:feature notes` writes a feature (its error set, endpoints, store, migration and test) that `goncini generate` wires, whose test passes, and whose endpoints the OpenAPI document lists; `make:endpoint`, `make:message`, `make:command` and `make:migration` add to it.
 4. **A bundle plugs in with one line.** A third-party bundle, a package exporting a `layer.Set`, a config section, routes, commands and a subscriber, adds them all to the articles example when its set joins the app's `Services`: no other wiring, and its config section has a default when the app's config has none.
 
+> **Status (2026-10-13):** built: [`profiler`](../profiler) with tracing, query spans and [`otel/otlp`](../otel/otlp); `goncini new` and the makers in [cmd/goncini](../cmd/goncini); bundles, with any provider's missing `Config` defaulted, and [examples/maintenance](../examples/maintenance). The four gates pass: the articles example's `TestProfiler` and `otlp`'s `TestExport`; `TestNew`, which writes an app, tests and serves it, then runs each maker on it and tests it again; and the articles example's `TestBundle`. The review is next.
+
 **Order of work:** the profiler (`profiler`, in dev, with a file store) and OTLP export (`otel/otlp`, an adapter module); `goncini new`; `make:*`; bundles, with `goncini generate` giving any provider's missing config section a default; then the gates.
 
 ## 5. Risks

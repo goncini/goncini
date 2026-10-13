@@ -394,6 +394,27 @@ Worth knowing:
 - A feature's queries take `?` parameters, as SQLite, a new app's database,
   does; an app on PostgreSQL writes `$1`.
 
+### Bundles (M5)
+
+Symfony's bundles, as packages: a bundle exports a `Layer`, a
+`layer.Set` of its providers, and an app adds it to its `Services`. Nothing
+else is wired by hand:
+
+- `goncini generate` hands goncini the bundle's routes, commands,
+  subscribers, message handlers, voters and the rest, as it does the app's.
+- Any `Config` that a provider takes, and that the app's config has no
+  section of, gets its zero value, the default: a bundle's, as goncini's.
+  A section in the app's config changes it. `goncini generate` used to
+  default only the sections of goncini's packages, from a list.
+- [examples/maintenance](examples/maintenance), a module of its own as a
+  third party's would be, takes an API down for maintenance: a subscriber
+  answers requests with 503, `maintenance:down` and `maintenance:up` switch
+  it, and `GET /_maintenance` says whether it is down. The articles example
+  adds it with one line, and `TestBundle` checks each part.
+
+Worth knowing: a bundle's `Config` must work as its zero value, as
+goncini's do.
+
 ### workflow (M4)
 
 Symfony's Workflow, as state machines: a `Definition` has places, an

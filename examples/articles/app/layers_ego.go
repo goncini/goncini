@@ -16,6 +16,7 @@ import (
 	"github.com/goncini/goncini/examples/articles/config"
 	"github.com/goncini/goncini/examples/articles/editors"
 	"github.com/goncini/goncini/examples/articles/translations"
+	"github.com/goncini/goncini/examples/maintenance"
 	"github.com/goncini/goncini/log/zaplog"
 	"github.com/goncini/goncini/otel/otlp"
 	"github.com/goncini/goncini/profiler"
@@ -39,19 +40,21 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	config3 := autoDefaultTranslationConfig()
 	catalogs := translations.All()
 	translator := translation.New(config3, catalogs)
-	v2 := autoSubscribers(translator)
+	config4 := autoDefaultMaintenanceConfig()
+	maintenance2 := maintenance.New(config4)
+	v2 := autoSubscribers(translator, maintenance2)
 	dispatcher := goncini.NewDispatcher(v2)
 	registry, err := articles.NewWorkflows(access2, dispatcher)
 	if err != nil {
 		return nil, fmt.Errorf("articles.NewWorkflows: %w", err)
 	}
 	articles2 := articles.NewArticles(store, v, registry)
-	config4 := autoConfigProfiler(cfg)
-	profiler2 := profiler.New(config4)
-	v3 := autoRoutes(articles2, profiler2)
+	config5 := autoConfigProfiler(cfg)
+	profiler2 := profiler.New(config5)
+	v3 := autoRoutes(articles2, profiler2, maintenance2)
 	router := goncini.NewRouter(v3)
-	config5 := autoConfigEditors(cfg)
-	firewall, err := editors.NewFirewall(config5)
+	config6 := autoConfigEditors(cfg)
+	firewall, err := editors.NewFirewall(config6)
 	if err != nil {
 		return nil, fmt.Errorf("editors.NewFirewall: %w", err)
 	}
@@ -74,22 +77,24 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	server := goncini.NewServer(http, kernel, logger2)
 	slugCommand := articles.NewSlugCommand(articles2)
 	requests := profiler.NewCommand(profiler2)
+	down := maintenance.NewDown(maintenance2)
+	up := maintenance.NewUp(maintenance2)
 	migrator2, err := migrator(db2)
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v6 := autoCommands(slugCommand, requests, migrator2, translator, registry)
+	v6 := autoCommands(slugCommand, requests, down, up, migrator2, translator, registry)
 	v7 := autoChecks(db2)
 	v8 := autoServices()
-	config6 := autoDefaultOpenapiConfig()
+	config7 := autoDefaultOpenapiConfig()
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config6, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config7, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
 	v9 := autoBackground()
-	config7 := autoConfigOTLP(cfg)
-	exporter, err := otlp.New(config7)
+	config8 := autoConfigOTLP(cfg)
+	exporter, err := otlp.New(config8)
 	if err != nil {
 		return nil, fmt.Errorf("New: %w", err)
 	}
@@ -118,19 +123,21 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	config3 := autoDefaultTranslationConfig()
 	catalogs := translations.All()
 	translator := translation.New(config3, catalogs)
-	v := autoSubscribers(translator)
+	config4 := autoDefaultMaintenanceConfig()
+	maintenance2 := maintenance.New(config4)
+	v := autoSubscribers(translator, maintenance2)
 	dispatcher := goncini.NewDispatcher(v)
 	registry, err := articles.NewWorkflows(access2, dispatcher)
 	if err != nil {
 		return nil, fmt.Errorf("articles.NewWorkflows: %w", err)
 	}
 	articles2 := articles.NewArticles(store, now, registry)
-	config4 := autoConfigProfiler(cfg)
-	profiler2 := profiler.New(config4)
-	v2 := autoRoutes(articles2, profiler2)
+	config5 := autoConfigProfiler(cfg)
+	profiler2 := profiler.New(config5)
+	v2 := autoRoutes(articles2, profiler2, maintenance2)
 	router := goncini.NewRouter(v2)
-	config5 := autoConfigEditors(cfg)
-	firewall, err := editors.NewFirewall(config5)
+	config6 := autoConfigEditors(cfg)
+	firewall, err := editors.NewFirewall(config6)
 	if err != nil {
 		return nil, fmt.Errorf("editors.NewFirewall: %w", err)
 	}
@@ -153,22 +160,24 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	server := goncini.NewServer(http, kernel, logger2)
 	slugCommand := articles.NewSlugCommand(articles2)
 	requests := profiler.NewCommand(profiler2)
+	down := maintenance.NewDown(maintenance2)
+	up := maintenance.NewUp(maintenance2)
 	migrator2, err := migrator(db2)
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	v5 := autoCommands(slugCommand, requests, migrator2, translator, registry)
+	v5 := autoCommands(slugCommand, requests, down, up, migrator2, translator, registry)
 	v6 := autoChecks(db2)
 	v7 := autoServices()
-	config6 := autoDefaultOpenapiConfig()
+	config7 := autoDefaultOpenapiConfig()
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config6, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config7, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
 	v8 := autoBackground()
-	config7 := autoConfigOTLP(cfg)
-	exporter, err := otlp.New(config7)
+	config8 := autoConfigOTLP(cfg)
+	exporter, err := otlp.New(config8)
 	if err != nil {
 		return nil, fmt.Errorf("New: %w", err)
 	}

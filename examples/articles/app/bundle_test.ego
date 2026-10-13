@@ -1,0 +1,30 @@
+package app_test
+
+import (
+	"os"
+	"testing"
+
+	"github.com/goncini/goncini/webtest"
+
+	"github.com/goncini/goncini/examples/articles/app"
+	"github.com/goncini/goncini/examples/articles/config"
+)
+
+// TestBundle is M5's fourth gate: the maintenance bundle, a third-party
+// package, plugs in with its Layer in the Services alone. Its config
+// section has a default, since the config has none, and its commands, its
+// subscriber and its documented endpoint work.
+func TestBundle(t *testing.T) {
+	t.Cleanup(func() { os.RemoveAll("var") }) // where the default config keeps the maintenance's file
+	a := webtest.Boot(t, config.Load, app.Build)
+	webtest.Run(t, a, "db:migrate")
+	c := webtest.NewClient(t, a)
+	c.Get("/_maintenance").Status(200).Contains(`"down":false`)
+
+	webtest.Run(t, a, "maintenance:down")
+	c.Get("/articles").Problem(503)
+	c.Get("/_maintenance").Status(200).Contains(`"down":true`)
+	webtest.Run(t, a, "maintenance:up")
+	c.Get("/articles").Status(200)
+	c.Get("/openapi.json").Status(200).Contains(`"/_maintenance"`)
+}

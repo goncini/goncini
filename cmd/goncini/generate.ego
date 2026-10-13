@@ -99,8 +99,9 @@ var kinds = []kind{
 	{"autoSpanProcessors", "goncini.SpanProcessor", "autoSpanProcessors are the services that receive the app's spans, when enabled."},
 }
 
-// sections are the config sections that goncini's providers take.
-var sections = []string{"goncini.HTTP", "goncini.Log", "openapi.Config", "messenger.Config", "scheduler.Config", "cache.Config", "translation.Config", "profiler.Config"}
+// sections are the config sections that goncini's Framework takes. The
+// other providers' are found by their parameters.
+var sections = []string{"goncini.HTTP", "goncini.Log", "openapi.Config"}
 
 // hasField reports whether the struct has a field of type t.
 func hasField(st *types.Struct, t types.Type) bool {
@@ -117,6 +118,7 @@ type app struct {
 	pkg      *packages.Package
 	all      []*packages.Package // the module's packages
 	provided []types.Type        // the results of the app's providers, in order
+	needed   []types.Type        // their parameters
 	config   *types.Named        // the injector's config type
 	imports  map[string]string   // import path -> name, for the generated file
 }
@@ -163,15 +165,29 @@ func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 			names = append(names, name)
 			fmt.Fprintf(&b, "// %s is the %s section of the config.\nfunc %s(c %s) %s { return c.%s }\n\n", name, f.Name(), name, a.typeString(a.config), a.typeString(f.Type()), f.Name())
 		}
-		// goncini's sections that the config doesn't have get their defaults.
+		// The sections that the config doesn't have get their defaults,
+		// their zero values: the Framework's, and the Config that any
+		// provider takes, such as a bundle's.
+		var defaults []types.Type
 		for _, section := range sections {
-			t := a.lookup(section)
-			if t == nil || a.provides(t) || hasField(st, t) {
-				continue
+			if t := a.lookup(section); t != nil {
+				defaults = append(defaults, t)
 			}
-			name := "autoDefault" + strings.ReplaceAll(exported(section), ".", "")
-			names = append(names, name)
-			fmt.Fprintf(&b, "// %s is the default of %s, which the config doesn't have.\nfunc %s() %s { return %s{} }\n\n", name, section, name, a.typeString(t), a.typeString(t))
+		}
+		for _, t := range a.needed {
+			if a.isSection(t) {
+				defaults = append(defaults, t)
+			}
+		}
+		done := map[string]bool{}
+		for _, t := range defaults {
+			if key := types.TypeString(t, nil); !done[key] && !a.provides(t) && !hasField(st, t) {
+				done[key] = true
+				ts := a.typeString(t)
+				name := "autoDefault" + strings.ReplaceAll(exported(ts), ".", "")
+				names = append(names, name)
+				fmt.Fprintf(&b, "// %s is the default of %s, which the config doesn't have.\nfunc %s() %s { return %s{} }\n\n", name, ts, name, ts, ts)
+			}
 		}
 	}
 	var out bytes.Buffer
@@ -321,6 +337,9 @@ func (a *app) addProvidersIn(info *types.Info, args []ast.Expr, seen map[types.O
 		}
 		if sig, ok := info.TypeOf(x).(*types.Signature); ok && sig.Results().Len() > 0 {
 			a.provided = append(a.provided, sig.Results().At(0).Type())
+			for i := 0; i < sig.Params().Len(); i++ {
+				a.needed = append(a.needed, sig.Params().At(i).Type())
+			}
 		}
 	}
 }
@@ -362,6 +381,17 @@ func (a *app) varInit(v *types.Var) (ast.Expr, *types.Info) {
 func isNamed(t types.Type, path, name string) bool {
 	n, ok := types.Unalias(t).(*types.Named)
 	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == path && n.Obj().Name() == name
+}
+
+// isSection reports whether t is a config section that a provider can
+// take: a struct type named Config, but the app's config.
+func (a *app) isSection(t types.Type) bool {
+	n, ok := types.Unalias(t).(*types.Named)
+	if !ok || n.Obj().Name() != "Config" || types.Identical(n, a.config) {
+		return false
+	}
+	_, ok = n.Underlying().(*types.Struct)
+	return ok
 }
 
 // provides reports whether an app's provider returns t.
