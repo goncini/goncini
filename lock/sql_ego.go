@@ -15,9 +15,12 @@ import (
 
 // SQLStore keeps locks in a table of a SQLite or PostgreSQL database: the
 // locks of the processes that share it. It creates its table the first
-// time it needs it, unless told not to.
+// time it needs it, unless told not to. It queries the pool, outside the
+// transaction of a context: a lock taken in db.SQL's InTx stays taken if
+// the transaction rolls back. Every 256 acquisitions, it deletes the
+// expired locks, such as a scheduler's past ticks.
 //
-//line sql.ego:17
+//line sql.ego:20
 type SQLStore struct {
 	pool    *sql.DB
 	dialect db.Dialect
@@ -61,7 +64,7 @@ func (s *SQLStore) table() string {
 // ready creates the table once, unless NoSetup says not to: until it
 // succeeded, each call tries again.
 //
-//line sql.ego:53
+//line sql.ego:56
 func (s *SQLStore) ready(ctx context.Context) error {
 	if s.NoSetup {
 		return nil
@@ -74,7 +77,7 @@ func (s *SQLStore) ready(ctx context.Context) error {
 	if _, err := s.pool.ExecContext(ctx, s.Schema()); err != nil {
 		return err
 	}
-//line sql.ego:63
+//line sql.ego:66
 	s.setUp = true
 	return nil
 }
@@ -83,7 +86,7 @@ func (s *SQLStore) Acquire(ctx context.Context, key, owner string, ttl time.Dura
 	if err := s.ready(ctx); err != nil {
 		return false, err
 	}
-//line sql.ego:69
+//line sql.ego:72
 	now := time.Now()
 	t := s.table()
 	// Insert the lock, or take it over if its owner is this one or its
@@ -93,12 +96,12 @@ func (s *SQLStore) Acquire(ctx context.Context, key, owner string, ttl time.Dura
 	if err != nil {
 		return false, fmt.Errorf("pool.ExecContext: %w", err)
 	}
-//line sql.ego:75
+//line sql.ego:78
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("res.RowsAffected: %w", err)
 	}
-//line sql.ego:76
+//line sql.ego:79
 	if s.acquired.Add(1)%256 == 0 {
 		// Locks of keys used once, such as a scheduler's ticks, would stay.
 		// A failure is no matter: the next prune does it.
@@ -111,10 +114,10 @@ func (s *SQLStore) Release(ctx context.Context, key, owner string) error {
 	if err := s.ready(ctx); err != nil {
 		return err
 	}
-//line sql.ego:86
+//line sql.ego:89
 	if _, err := s.pool.ExecContext(ctx, s.dialect.Rebind(fmt.Sprintf("DELETE FROM %s WHERE name = ? AND owner = ?", s.table())), key, owner); err != nil {
 		return fmt.Errorf("pool.ExecContext: %w", err)
 	}
-//line sql.ego:87
+//line sql.ego:90
 	return nil
 }

@@ -39,7 +39,8 @@ func TestOneInstancePerTickInSQL(t *testing.T) {
 		store.NoSetup = true
 		s := scheduler.New(scheduler.Config{}, store, nil, slog.New(slog.NewTextHandler(t.Output(), &slog.HandlerOptions{Level: slog.LevelWarn})))
 		s.Add("report", scheduler.Every(200*time.Millisecond), (ctx context.Context) => {
-			tick := time.Now().Truncate(200 * time.Millisecond).UnixMilli()
+			at, _ := scheduler.Tick(ctx)
+			tick := at.UnixMilli()
 			mu.Lock()
 			defer mu.Unlock()
 			ticks[tick] = append(ticks[tick], instance)

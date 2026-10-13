@@ -64,7 +64,8 @@ func TestOneInstancePerTickInSQL(t *testing.T) {
 		store.NoSetup = true
 		s := scheduler.New(scheduler.Config{}, store, nil, slog.New(slog.NewTextHandler(t.Output(), &slog.HandlerOptions{Level: slog.LevelWarn})))
 		s.Add("report", scheduler.Every(200*time.Millisecond), func(ctx context.Context) error {
-			tick := time.Now().Truncate(200 * time.Millisecond).UnixMilli()
+			at, _ := scheduler.Tick(ctx)
+			tick := at.UnixMilli()
 			mu.Lock()
 			defer mu.Unlock()
 			ticks[tick] = append(ticks[tick], instance)
@@ -74,7 +75,7 @@ func TestOneInstancePerTickInSQL(t *testing.T) {
 			s.Run(ctx)
 		})
 	}
-//line gate_test.ego:50
+//line gate_test.ego:51
 	wg.Wait()
 	if len(ticks) < 5 { // about 10, but a busy machine may miss some
 		t.Errorf("%d ticks ran, want about 10", len(ticks))

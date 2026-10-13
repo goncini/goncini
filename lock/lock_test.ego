@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -116,5 +117,25 @@ func TestRunLosesTheLock(t *testing.T) {
 	})
 	if !ok || !errors.Is(err, lock.ErrLost) {
 		t.Errorf("ok %v, err %v", ok, err)
+	}
+}
+
+// TestPrune checks that the SQL store deletes the expired locks now and
+// then: those of keys taken once, such as a scheduler's ticks, would stay.
+func TestPrune(t *testing.T) {
+	pool := must sql.Open("sqlite", "file::memory:")
+	pool.SetMaxOpenConns(1)
+	t.Cleanup(() => { pool.Close() })
+	s := must lock.NewSQLStore(pool)
+	ctx := context.Background()
+	for i := range 255 {
+		must s.Acquire(ctx, fmt.Sprint("tick:", i), "a", time.Millisecond)
+	}
+	time.Sleep(2 * time.Millisecond)
+	must s.Acquire(ctx, "tick:last", "a", time.Hour) // the 256th prunes
+	var n int
+	must pool.QueryRow("SELECT count(*) FROM goncini_locks").Scan(&n)
+	if n != 1 {
+		t.Errorf("%d locks, want the one that hasn't expired", n)
 	}
 }

@@ -700,6 +700,27 @@ with their providers and what they need, which `debug:container` lists.
   credentials, as Symfony's is; a cache invalidation that fails after a
   commit is still a 503; a notification's email gets a new `Message-ID` on
   each retry.
+- **M3's re-review:** after M5, three more independent reviews of M3's
+  packages found defects that the first had missed, each fixed with a
+  regression test. Among them:
+  - in New York, `*/15 * * * *` skipped the fall's repeated hour: a cron
+    whose minute or hour starts with `*` now runs through both, as Vixie
+    cron's does, and one with a fixed time still runs once;
+  - a task that outlasted its interval in one instance overlapped the next
+    tick's run in another: a lock is held while it runs, and that tick is
+    skipped, as it is in an instance alone;
+  - a wall clock set back ran a tick again; a tick at a fraction of a
+    second shared its lock with its second's other ticks; a task's panic
+    was logged without its stack; a `February 29th` cron gave up after 5
+    years, before 2104's;
+  - the event dispatcher looked its listeners up by reflection at each
+    dispatch: it keys them by a generic type now.
+
+  Worth knowing, now documented: a tick runs once across instances only
+  with a lock store they share; the ticks missed while no scheduler runs
+  are skipped; `scheduler.Tick(ctx)` is the time a run was due at; SQL
+  locks are taken outside the context's transaction; and `ErrorEvent`
+  isn't dispatched for an error after the response has started.
 - **M3's review:** two independent reviews found 13 defects, each
   reproduced, then fixed with a regression test. Among them:
   - a message that failed for good couldn't move to the SQL failure queue,

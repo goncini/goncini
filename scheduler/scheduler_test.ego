@@ -2,6 +2,7 @@ package scheduler_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -30,6 +31,11 @@ func TestCron(t *testing.T) {
 		if got := c.Next(from).Format(time.RFC3339); got != want {
 			t.Errorf("%s: %s, want %s", expr, got, want)
 		}
+	}
+	// 2100 isn't a leap year: February 29th comes 8 years after 2096's.
+	leap := must scheduler.Cron("0 0 29 2 *")
+	if got := leap.Next(time.Date(2096, 3, 1, 0, 0, 0, 0, time.UTC)); got.Year() != 2104 {
+		t.Errorf("after 2096's February 29th: %v", got)
 	}
 	never := must scheduler.Cron("0 0 30 2 *")
 	if !never.Next(from).IsZero() {
@@ -87,6 +93,87 @@ func TestOneInstancePerTick(t *testing.T) {
 	}
 }
 
+// TestNoOverlap checks that a run that outlasts its interval in one
+// instance isn't overlapped by the next tick's in another: that tick is
+// skipped.
+func TestNoOverlap(t *testing.T) {
+	synctest.Test(t, (t *testing.T) => {
+		var mu sync.Mutex
+		running, most, runs := 0, 0, 0
+		locks := &lock.MemoryStore{}
+		ctx, stop := context.WithTimeout(context.Background(), 10*time.Minute+time.Second)
+		defer stop()
+		var wg sync.WaitGroup
+		for range 2 {
+			s := scheduler.New(scheduler.Config{}, locks, nil, slog.New(slog.DiscardHandler))
+			s.Add("report", scheduler.Every(time.Minute), (ctx context.Context) => {
+				mu.Lock()
+				running++
+				runs++
+				most = max(most, running)
+				mu.Unlock()
+				time.Sleep(90 * time.Second)
+				mu.Lock()
+				running--
+				mu.Unlock()
+				return nil
+			})
+			wg.Go(() => { s.Run(ctx) })
+		}
+		wg.Wait()
+		if most != 1 || runs != 5 {
+			t.Errorf("%d runs, %d at once at most; want 5, one at a time", runs, most)
+		}
+	})
+}
+
+// TestFailures checks that a task that panics is logged with its stack, and
+// runs again at its next tick, and that one whose lock can't be taken
+// doesn't run.
+func TestFailures(t *testing.T) {
+	synctest.Test(t, (t *testing.T) => {
+		var logs strings.Builder
+		var mu sync.Mutex
+		runs := 0
+		s := scheduler.New(scheduler.Config{}, nil, nil, slog.New(slog.NewTextHandler(&logs, nil)))
+		s.Add("panics", scheduler.Every(time.Minute), (ctx context.Context) => {
+			mu.Lock()
+			runs++
+			mu.Unlock()
+			panic("boom")
+		})
+		ctx, stop := context.WithTimeout(context.Background(), 2*time.Minute+time.Second)
+		defer stop()
+		must s.Run(ctx)
+		if runs != 2 || !strings.Contains(logs.String(), "the task panicked: boom") || !strings.Contains(logs.String(), "scheduler_test") {
+			t.Errorf("%d runs, logs:\n%s", runs, logs.String())
+		}
+
+		logs.Reset()
+		runs = 0
+		s = scheduler.New(scheduler.Config{}, failingStore{}, nil, slog.New(slog.NewTextHandler(&logs, nil)))
+		s.Add("locked", scheduler.Every(time.Minute), (ctx context.Context) => {
+			runs++
+			return nil
+		})
+		ctx, stop = context.WithTimeout(context.Background(), time.Minute+time.Second)
+		defer stop()
+		must s.Run(ctx)
+		if runs != 0 || !strings.Contains(logs.String(), "taking the task's lock failed") {
+			t.Errorf("%d runs, logs:\n%s", runs, logs.String())
+		}
+	})
+}
+
+// failingStore is a lock store that is down.
+type failingStore struct{}
+
+func (failingStore) Acquire(ctx context.Context, key, owner string, ttl time.Duration) (bool, error) {
+	return false, errors.New("down")
+}
+
+func (failingStore) Release(ctx context.Context, key, owner string) error { return errors.New("down") }
+
 func TestDebugTable(t *testing.T) {
 	s := scheduler.New(scheduler.Config{}, nil, nil, nil)
 	s.Add("digest", scheduler.MustCron("0 8 * * 1-5"), (ctx context.Context) => nil)
@@ -115,6 +202,20 @@ func TestCronDaylightSaving(t *testing.T) {
 	second := repeated.Next(first)
 	if first.Day() != 1 || second.Day() != 2 {
 		t.Errorf("in the repeated hour: %v, then %v", first, second)
+	}
+	// A minute or an hour that starts with * runs in both of the repeated
+	// hours: every 15 minutes, from 0:45 EDT to 2:00 EST.
+	quarters := must scheduler.CronIn("*/15 * * * *", ny)
+	var runs []string
+	for at := time.Date(2026, 11, 1, 0, 45, 0, 0, ny); len(runs) < 10; {
+		runs = append(runs, at.Format("15:04 MST"))
+		at = quarters.Next(at)
+		if len(runs) > 1 && at.Sub(time.Date(2026, 11, 1, 0, 45, 0, 0, ny)) != time.Duration(len(runs))*15*time.Minute {
+			t.Fatalf("in the repeated hour: %v, then %v", runs, at)
+		}
+	}
+	if want := "00:45 EDT 01:00 EDT 01:15 EDT 01:30 EDT 01:45 EDT 01:00 EST 01:15 EST 01:30 EST 01:45 EST 02:00 EST"; strings.Join(runs, " ") != want {
+		t.Errorf("in the repeated hour: %v", runs)
 	}
 	// As in Vixie cron, a day of the month that starts with * restricts
 	// nothing when the weekday does: Mondays only.

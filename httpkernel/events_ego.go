@@ -30,6 +30,8 @@ type RequestEvent struct {
 
 // ErrorEvent is dispatched when an error is answered, before the problem is
 // rendered. A listener may change the problem; its own errors are logged.
+// An error after the response has started is only logged: it isn't
+// dispatched.
 type ErrorEvent struct {
 	Request *http.Request
 	Err     error

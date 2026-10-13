@@ -286,8 +286,11 @@ func (n *Notifications) Handlers(b *messenger.Bus) {
 check messenger.Dispatch(ctx, bus, NotifyFollowers{Slug: slug}) ""
 ```
 
-Recurring work is a scheduled task, run by `go run . scheduler:run`, once
-per tick across the app's instances:
+Recurring work is a scheduled task, run by `go run . scheduler:run`: with
+a lock store that the app's instances share, such as `lock.SQL`, once per
+tick across them, and never twice at once; without, in each instance. The
+ticks missed while no scheduler runs are skipped, and `scheduler.Tick(ctx)`
+is the time the run was due at:
 
 ```go
 func (n *Notifications) Schedule(s *scheduler.Scheduler) {

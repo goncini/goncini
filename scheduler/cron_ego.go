@@ -85,6 +85,7 @@ func CronIn(expr string, loc *time.Location) (Trigger, error) {
 	// A day field that starts with *, as */2, restricts nothing for the
 	// OR of the two days, as in Vixie cron.
 	c.anyDay, c.anyWeekday = strings.HasPrefix(fields[2], "*"), strings.HasPrefix(fields[4], "*")
+	c.wildcard = strings.HasPrefix(fields[0], "*") || strings.HasPrefix(fields[1], "*")
 	return c, nil
 }
 
@@ -103,6 +104,7 @@ type cron struct {
 	loc                                    *time.Location
 	minutes, hours, days, months, weekdays uint64
 	anyDay, anyWeekday                     bool
+	wildcard                               bool // the minute or the hour starts with *
 }
 
 // parseField parses a field into a bit set of its values.
@@ -149,12 +151,41 @@ func (c *cron) String() string { return c.expr }
 // Next returns the first minute after t that matches, walking the
 // location's calendar and clocks: a time that its clocks skip, in a
 // daylight saving gap, doesn't happen, and one that they repeat happens
-// once.
+// once, unless the minute or the hour starts with *, as in Vixie cron:
+// "*/15 * * * *" runs every 15 minutes through the repeated hour.
 func (c *cron) Next(t time.Time) time.Time {
 	t = t.In(c.loc)
+	next := c.walk(t)
+	if !c.wildcard || next.IsZero() {
+		return next
+	}
+	// The walk finds the first of a repeated time, which t may be past:
+	// when the clocks change around t, the second is found minute by
+	// minute, before the walk's, in the two hours after t.
+	_, before := t.Add(-2 * time.Hour).In(c.loc).Zone()
+	if _, after := next.Zone(); before == after {
+		return next
+	}
+	for u := t.Truncate(time.Minute).Add(time.Minute); u.Before(next) && u.Sub(t) <= 2*time.Hour; u = u.Add(time.Minute) {
+		if c.matches(u.In(c.loc)) {
+			return u.In(c.loc)
+		}
+	}
+	return next
+}
+
+// matches reports whether a time of the location matches the expression.
+func (c *cron) matches(t time.Time) bool {
+	return c.minutes&(1<<t.Minute()) != 0 && c.hours&(1<<t.Hour()) != 0 && c.months&(1<<int(t.Month())) != 0 && c.dayMatches(t)
+}
+
+// walk returns the first minute after t that matches on the location's
+// calendar, from t's wall time, in at most 9 years: 2104's February 29th
+// comes 8 years after 2096's.
+func (c *cron) walk(t time.Time) time.Time {
 	y, m, d := t.Date()
 	h, mi := t.Hour(), t.Minute()
-	for day := 0; day < 5*366; day++ { // no match within 5 years: never, as February 30
+	for day := 0; day < 9*366; day++ { // no match within 9 years: never, as February 30
 		date := time.Date(y, m, d+day, 12, 0, 0, 0, time.UTC) // a civil date
 		if c.months&(1<<int(date.Month())) == 0 || !c.dayMatches(date) {
 			continue

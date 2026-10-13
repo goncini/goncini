@@ -13,7 +13,10 @@ import (
 
 // SQLStore keeps locks in a table of a SQLite or PostgreSQL database: the
 // locks of the processes that share it. It creates its table the first
-// time it needs it, unless told not to.
+// time it needs it, unless told not to. It queries the pool, outside the
+// transaction of a context: a lock taken in db.SQL's InTx stays taken if
+// the transaction rolls back. Every 256 acquisitions, it deletes the
+// expired locks, such as a scheduler's past ticks.
 type SQLStore struct {
 	pool    *sql.DB
 	dialect db.Dialect

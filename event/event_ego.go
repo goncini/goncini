@@ -47,16 +47,19 @@ type Subscriber interface {
 // has none; a nil *Dispatcher dispatches to none.
 type Dispatcher struct {
 	mu        sync.RWMutex
-	listeners map[reflect.Type][]listener
-	added     int
+	listeners map[any][]listener // by the typeKey of their events
 }
+
+// typeKey[E] keys the listeners of the events of type E, without
+// reflection at each dispatch.
+type typeKey[E any] struct{}
 
 // listener is a listener of an event type: a func(context.Context, *E)
 // error, behind a func of any.
 type listener struct {
 	call     func(ctx context.Context, e any) error
 	priority int
-	order    int // when it was added, to keep that order at equal priorities
+	event    string // the event's type, for List
 	name     string
 }
 
@@ -82,25 +85,25 @@ func Priority(p int) Option {
 
 // On adds a listener of the events of type E.
 //
-//line event.ego:78
+//line event.ego:81
 func On[E any](d *Dispatcher, l func(ctx context.Context, e *E) error, opts ...Option) {
 	ln := listener{
-		call: func(ctx context.Context, e any) error { return l(ctx, e.(*E)) },
-		name: funcName(l),
+		call:  func(ctx context.Context, e any) error { return l(ctx, e.(*E)) },
+		event: reflect.TypeFor[E]().String(),
+		name:  funcName(l),
 	}
 	for _, o := range opts {
 		o(&ln)
 	}
-	t := reflect.TypeFor[E]()
+	t := typeKey[E]{}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	ln.order = d.added
-	d.added++
 	if d.listeners == nil {
-		d.listeners = map[reflect.Type][]listener{}
+		d.listeners = map[any][]listener{}
 	}
 	// A new slice, so that a dispatch going through the old one isn't
-	// disturbed.
+	// disturbed; the sort is stable, which keeps the order of registration
+	// at equal priorities.
 	ls := append(slices.Clone(d.listeners[t]), ln)
 	slices.SortStableFunc(ls, func(a, b listener) int { return cmp.Compare(b.priority, a.priority) })
 	d.listeners[t] = ls
@@ -113,7 +116,7 @@ func Dispatch[E any](ctx context.Context, d *Dispatcher, e *E) error {
 		return nil
 	}
 	d.mu.RLock()
-	ls := d.listeners[reflect.TypeFor[E]()]
+	ls := d.listeners[typeKey[E]{}]
 	d.mu.RUnlock()
 	for _, l := range ls {
 		if err := l.call(ctx, e); err != nil {
@@ -134,7 +137,7 @@ func Has[E any](d *Dispatcher) bool {
 	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	return len(d.listeners[reflect.TypeFor[E]()]) > 0
+	return len(d.listeners[typeKey[E]{}]) > 0
 }
 
 // Info describes a listener, for debug:event-dispatcher.
@@ -152,9 +155,9 @@ func (d *Dispatcher) List() []Info {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	var out []Info
-	for t, ls := range d.listeners {
+	for _, ls := range d.listeners {
 		for _, l := range ls {
-			out = append(out, Info{Event: t.String(), Listener: l.name, Priority: l.priority})
+			out = append(out, Info{Event: l.event, Listener: l.name, Priority: l.priority})
 		}
 	}
 	slices.SortStableFunc(out, func(a, b Info) int { return strings.Compare(a.Event, b.Event) })

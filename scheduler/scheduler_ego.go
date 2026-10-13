@@ -8,7 +8,8 @@
 //
 // scheduler:run runs the tasks until it is told to stop. A task's error is
 // logged; it runs again at its next tick. A task that should be retried
-// dispatches a message, which Messenger retries.
+// dispatches a message, which Messenger retries. The ticks missed while no
+// scheduler runs, or while the task still ran, are skipped.
 package scheduler
 
 import (
@@ -16,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"runtime/debug"
 	"slices"
 	"text/tabwriter"
 	"time"
@@ -30,7 +32,7 @@ import (
 // Tasks registers tasks on a scheduler: the services that do are what
 // goncini generate hands New.
 //
-//line scheduler.ego:30
+//line scheduler.ego:32
 type Tasks interface {
 	Schedule(s *Scheduler)
 }
@@ -48,7 +50,8 @@ type Scheduler struct {
 	// Config is the config the scheduler was made with.
 	Config Config
 	// Locks, if any, make each tick run in one instance of the app: the one
-	// that takes its lock. Without, every instance runs every tick.
+	// that takes its lock, if the task doesn't still run in another.
+	// Without, every instance runs every tick.
 	Locks lock.Store
 	// Logger logs the runs; nil means slog.Default().
 	Logger *slog.Logger
@@ -122,46 +125,97 @@ func (s *Scheduler) loop(ctx context.Context, t task) {
 		v = slog.Default()
 	}
 	log := (v).With(slog.String("task", t.name))
-//line scheduler.ego:117
+//line scheduler.ego:120
+	var last time.Time // the last tick, which a clock set back doesn't run again
 	for {
-		tick := t.trigger.Next(time.Now())
+		from := time.Now()
+		if from.Before(last) {
+			from = last
+		}
+		tick := t.trigger.Next(from)
 		if tick.IsZero() {
 			log.WarnContext(ctx, "the task never runs again")
 			return
 		}
-		select {
-		case <-ctx.Done():
+		last = tick
+		// The timer counts on the monotonic clock: a wall clock set back
+		// meanwhile wakes it early.
+		for now := time.Now(); now.Before(tick); now = time.Now() {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(tick.Sub(now)):
+			}
+		}
+		if ctx.Err() != nil {
 			return
-		case <-time.After(time.Until(tick)):
 		}
-		if s.Locks != nil {
-			// A lock per tick, never released, so that an instance that
-			// wakes up late doesn't run the tick again.
-			key := fmt.Sprintf("scheduler:%s:%d", t.name, tick.Unix())
-			ttl := max(t.trigger.Next(tick).Sub(tick), time.Minute)
-			won, err := s.Locks.Acquire(ctx, key, s.owner, ttl)
-			if err != nil {
-				log.ErrorContext(ctx, "taking the task's lock failed: it doesn't run this time", slog.Any("error", err))
-				continue
-			}
-			if !won {
-				continue // another instance runs it
-			}
-		}
+		ctx := context.WithValue(ctx, tickKey{}, tick)
 		start := time.Now()
-		if err := s.run(ctx, t); err != nil {
+		ran, err := s.runOnce(ctx, log, t, tick)
+		switch {
+		case err != nil && !ran:
+			log.ErrorContext(ctx, "taking the task's lock failed: it doesn't run this time", slog.Any("error", err))
+		case err != nil:
 			log.ErrorContext(ctx, "the task failed", slog.Any("error", err), slog.Duration("duration", time.Since(start)))
-		} else {
+		case ran:
 			log.InfoContext(ctx, "the task ran", slog.Duration("duration", time.Since(start)))
 		}
 	}
+}
+
+// runOnce runs t's tick, unless another instance does, and reports whether
+// it did.
+func (s *Scheduler) runOnce(ctx context.Context, log *slog.Logger, t task, tick time.Time) (bool, error) {
+	if s.Locks == nil {
+		return true, s.run(ctx, t)
+	}
+	// A lock per tick, never released, so that an instance that wakes up
+	// late doesn't run the tick again.
+	ttl := max(t.trigger.Next(tick).Sub(tick), time.Minute)
+	won, err := s.Locks.Acquire(ctx, fmt.Sprintf("scheduler:%s:%d", t.name, tick.UnixNano()), s.owner, ttl)
+	if err != nil {
+		return false, err
+	}
+//line scheduler.ego:168
+	if !won {
+		return false, nil // another instance runs it
+	}
+	// And a lock while it runs, so that a run that outlasts its interval
+	// in one instance doesn't overlap the next tick's in another: that
+	// tick is skipped, as it is in an instance alone.
+	running := (&lock.Factory{Store: s.Locks}).New("scheduler:" + t.name)
+	var runErr error
+	held, err := running.Run(ctx, func(ctx context.Context) error {
+		runErr = s.run(ctx, t)
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+//line scheduler.ego:180
+	if !held {
+		log.WarnContext(ctx, "the task still runs in another instance: it doesn't run this time")
+	}
+	return held, runErr
+}
+
+// tickKey is the context key of the tick being run.
+type tickKey struct{}
+
+// Tick returns the tick that the task of ctx runs for, which is the time it
+// was due at: a task that reports on the hour before its tick reads it,
+// rather than the clock, which a late or slow run has moved on.
+func Tick(ctx context.Context) (time.Time, bool) {
+	t, ok := ctx.Value(tickKey{}).(time.Time)
+	return t, ok
 }
 
 // run runs t, turning a panic into an error.
 func (s *Scheduler) run(ctx context.Context, t task) (err error) {
 	defer func() {
 		if v := recover(); v != nil {
-			err = fmt.Errorf("scheduler: the task panicked: %v", v)
+			err = fmt.Errorf("scheduler: the task panicked: %v\n%s", v, debug.Stack())
 		}
 	}()
 	return t.run(ctx)
@@ -188,7 +242,7 @@ func (s *Scheduler) writeTable(out io.Writer, now time.Time) error {
 		} else {
 			when = next.Format(time.RFC3339)
 		}
-//line scheduler.ego:177
+//line scheduler.ego:223
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", t.name, t.trigger, when)
 	}
 	return tw.Flush()

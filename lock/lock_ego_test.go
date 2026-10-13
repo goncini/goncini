@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ import (
 
 // stores are the stores to test, made new for each test.
 //
-//line lock_test.ego:17
+//line lock_test.ego:18
 var stores = map[string]func(t *testing.T) lock.Store{
 	"memory": func(t *testing.T) lock.Store { return &lock.MemoryStore{} },
 	"sqlite": func(t *testing.T) lock.Store {
@@ -25,17 +26,17 @@ var stores = map[string]func(t *testing.T) lock.Store{
 		if err != nil {
 			panic(err)
 		}
-//line lock_test.ego:21
+//line lock_test.ego:22
 		pool.SetMaxOpenConns(1) // one database: each connection to :memory: has its own
 		t.Cleanup(func() {
 			pool.Close()
 		})
-//line lock_test.ego:23
+//line lock_test.ego:24
 		s, err := lock.NewSQLStore(pool)
 		if err != nil {
 			panic(err)
 		}
-//line lock_test.ego:24
+//line lock_test.ego:25
 		return s
 	},
 }
@@ -107,7 +108,7 @@ func TestStores(t *testing.T) {
 // TestRun checks that Run keeps the lock while its function runs, beyond
 // the TTL, and that one of two concurrent runs gets it.
 //
-//line lock_test.ego:66
+//line lock_test.ego:67
 func TestRun(t *testing.T) {
 	for name, newStore := range stores {
 		t.Run(name, func(t *testing.T) {
@@ -147,7 +148,7 @@ func TestRun(t *testing.T) {
 // lossy is a store that loses every lock after its first acquisition, as
 // if it had expired and another owner took it.
 //
-//line lock_test.ego:99
+//line lock_test.ego:100
 type lossy struct{ acquired bool }
 
 func (l *lossy) Acquire(ctx context.Context, key, owner string, ttl time.Duration) (bool, error) {
@@ -168,5 +169,45 @@ func TestRunLosesTheLock(t *testing.T) {
 	})
 	if !ok || !errors.Is(err, lock.ErrLost) {
 		t.Errorf("ok %v, err %v", ok, err)
+	}
+}
+
+// TestPrune checks that the SQL store deletes the expired locks now and
+// then: those of keys taken once, such as a scheduler's ticks, would stay.
+func TestPrune(t *testing.T) {
+	pool, err := sql.Open("sqlite", "file::memory:")
+	if err != nil {
+		panic(err)
+	}
+//line lock_test.ego:127
+	pool.SetMaxOpenConns(1)
+	t.Cleanup(func() {
+		pool.Close()
+	})
+//line lock_test.ego:129
+	s, err := lock.NewSQLStore(pool)
+	if err != nil {
+		panic(err)
+	}
+//line lock_test.ego:130
+	ctx := context.Background()
+	for i := range 255 {
+		if _, err := s.Acquire(ctx, fmt.Sprint("tick:", i), "a", time.Millisecond); err != nil {
+			panic(err)
+		}
+	}
+//line lock_test.ego:134
+	time.Sleep(2 * time.Millisecond)
+	if _, err := s.Acquire(ctx, "tick:last", "a", time.Hour); err != nil {
+		panic(err)
+	} // the 256th prunes
+//line lock_test.ego:136
+	var n int
+	if err := pool.QueryRow("SELECT count(*) FROM goncini_locks").Scan(&n); err != nil {
+		panic(err)
+	}
+//line lock_test.ego:138
+	if n != 1 {
+		t.Errorf("%d locks, want the one that hasn't expired", n)
 	}
 }
