@@ -194,10 +194,12 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 
 | Milestone | Content | Gate |
 |---|---|---|
-| **M2: API contract and security** | OpenAPI 3.1 from endpoint types (`/openapi.json`, a docs page in dev, `openapi:dump`); responses checked against the contract in `webtest`; CORS; RateLimiter; voters; firewalls per route group; Uid; pagination and filtering helpers | Below |
-| **M3: async** | EventDispatcher (typed events, kernel events); Messenger (memory and SQL transports, retries as schedules, a failure transport, `messenger:consume` workers as fibers); Scheduler; Lock | Killing a worker mid-message loses nothing; SIGTERM drains within the deadline |
-| **M4: integrations** | Cache (memory, Redis in an adapter module, tags); HttpClient (retries, tracing); Mailer and Mime; Notifier; Translation of error messages; Workflow | Done (2026-10-13) |
-| **M5: developer experience** | A profiler built from spans (`debug:requests`, OTLP export); `goncini new` and `make:*`; bundles | To propose before M5 |
+| **M2: API contract and security** | OpenAPI 3.1 from endpoint types (`/openapi.json`, a docs page in dev, `openapi:dump`); responses checked against the contract in `webtest`; CORS; RateLimiter; voters; firewalls per route group; Uid; pagination and filtering helpers | Done (2026-10-13): the four gates of 4.1 |
+| **M3: async** | EventDispatcher (typed events, kernel events); Messenger (memory and SQL transports, retries as schedules, a failure transport, `messenger:consume` workers as fibers); Scheduler; Lock | Done (2026-10-13): killing a worker mid-message loses nothing; SIGTERM drains within the deadline |
+| **M4: integrations** | Cache (memory, Redis in an adapter module, tags); HttpClient (retries, tracing); Mailer and Mime; Notifier; Translation of error messages; Workflow | Done (2026-10-13): the six gates of 4.3 |
+| **M5: developer experience** | A profiler built from spans (`debug:requests`, OTLP export); `goncini new` and `make:*`; bundles | Done (2026-10-13): the four gates of 4.4 |
+
+> **Status of the goal (2026-10-13): complete.** M2 to M5 are done: each milestone's packages have tests and docs and are used by an example; each review's findings are fixed, M2's and M3's after a second review too; and CI is green on all 13 jobs. On 2026-10-13 every gate test passed again, none skipped, Hurl and Redis included: M2's `TestDocumentCoversRealWorlds`, `TestSpec` (the Hurl suite, checked against the document), `TestClient` (oapi-codegen's client) and `TestDocumentIsDumped`; M3's `TestKilledWorkerLosesNothing`, `TestSIGTERMDrains`, `TestRetriesAndFailures`, `TestFailedCommands`, `TestOneInstancePerTickInSQL` and `TestNotifications`; M4's `TestCaching`, `rediscache`'s suite, `httpclient`'s tests, `TestWelcomeEmail`, `TestRemovalNotices`, `TestFrench` and `TestReview`; M5's `TestProfiler`, `TestExport`, `TestNew` and `TestBundle`.
 
 ### 4.1 Milestone 2
 
