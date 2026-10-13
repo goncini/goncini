@@ -4,12 +4,15 @@ package openapi_test
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"maps"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
@@ -19,7 +22,7 @@ import (
 // document returns the document of one endpoint taking In and returning
 // Out, at GET /.
 //
-//line schema_test.ego:19
+//line schema_test.ego:22
 func document[In, Out any](t *testing.T) *openapi.Document {
 	t.Helper()
 	r := routing.New()
@@ -31,7 +34,7 @@ func document[In, Out any](t *testing.T) *openapi.Document {
 	if err != nil {
 		panic(err)
 	}
-//line schema_test.ego:27
+//line schema_test.ego:30
 	return doc
 }
 
@@ -41,7 +44,7 @@ func encoded(s *openapi.Schema) string {
 	if err != nil {
 		panic(err)
 	}
-//line schema_test.ego:33
+//line schema_test.ego:36
 	return string(b)
 }
 
@@ -128,6 +131,74 @@ func TestReadingAndWriting(t *testing.T) {
 	}
 	if s["itemInput"] == nil || s["itemInput2"] == nil || s["itemInput"].Properties["other"] == nil {
 		t.Errorf("components: %v", strings.Join(slices.Sorted(maps.Keys(s)), " "))
+	}
+}
+
+type itemRequest struct {
+	Body struct {
+		Item  item      `json:"item"`
+		Input itemInput `json:"input"`
+	}
+}
+
+// TestInputNames checks that a type named as another's Input keeps its
+// name, though the other's reading schema comes first.
+func TestInputNames(t *testing.T) {
+	s := document[itemRequest, item](t).Components.Schemas
+	if s["itemInput"] == nil || s["itemInput"].Properties["other"] == nil || s["itemInput2"].Properties["id"] == nil {
+		t.Errorf("components: %v", strings.Join(slices.Sorted(maps.Keys(s)), " "))
+	}
+}
+
+type box[T any] struct {
+	Value T `json:"value"`
+}
+
+type boxes struct {
+	Any    box[any]             `json:"any"`
+	Map    box[map[string]any]  `json:"map"`
+	Struct box[struct{ A int }] `json:"struct"`
+	Embeds embeds               `json:"embeds"`
+	Wait   time.Duration        `json:"-"`
+}
+
+// embeds has a struct that json/v2 promotes the members of, one it doesn't
+// (inline isn't its option), and a fallback for other members.
+type embeds struct {
+	Promoted inner          `json:",embed"`
+	Named    inner          `json:",inline"`
+	Rest     jsontext.Value `json:",embed"`
+}
+
+// TestNames checks the names of generic types' components, which only
+// letters and digits make, and json/v2's embedding.
+func TestNames(t *testing.T) {
+	s := document[struct{}, boxes](t).Components.Schemas
+	for _, name := range []string{"boxInterface", "boxMapStringInterface", "boxStructAInt"} {
+		if s[name] == nil {
+			t.Errorf("no %s in %v", name, strings.Join(slices.Sorted(maps.Keys(s)), " "))
+		}
+	}
+	if got := encoded(s["embeds"]); got != `{"type":"object","properties":{"Named":{"$ref":"#/components/schemas/inner"},"name":{"type":"string"}},"required":["Named"],"additionalProperties":{}}` {
+		t.Errorf("embeds: %s", got)
+	}
+}
+
+// TestDurationParameter checks that a duration parameter is described as
+// time.ParseDuration reads it.
+func TestDurationParameter(t *testing.T) {
+	doc := document[struct {
+		Wait time.Duration `query:"wait"`
+	}, struct{}](t)
+	p := doc.Paths["/"].Get.Parameters[0].Schema
+	re := regexp.MustCompile(p.Pattern)
+	for value, want := range map[string]bool{"1h30m": true, "250ms": true, "-1.5h": true, "0": true, "PT1M": false, "1": false} {
+		if re.MatchString(value) != want {
+			t.Errorf("%s: matched %v", value, !want)
+		}
+	}
+	if p.Format != "" {
+		t.Errorf("format %q", p.Format)
 	}
 }
 

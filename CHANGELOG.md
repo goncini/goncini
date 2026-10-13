@@ -738,8 +738,8 @@ with their providers and what they need, which `debug:container` lists.
   are skipped; `scheduler.Tick(ctx)` is the time a run was due at; SQL
   locks are taken outside the context's transaction; `ErrorEvent` isn't
   dispatched for an error after the response has started; `-drain` leaves
-  the messages whose delay isn't due; messages are json/v2, which needs a
-  format for a `time.Duration`.
+  the messages whose delay isn't due; messages are json/v2, which can't
+  encode a `time.Duration`.
 
   Decisions taken on the user's behalf: `pgxdb.New` takes the `*sql.DB`
   whose users join its transactions, and `db.SQL.Tx` returns a `db.Conn`,
@@ -765,6 +765,43 @@ with their providers and what they need, which `debug:container` lists.
   outbox, the message written in the article's transaction, is the fix,
   which waits for an app that needs it. Lock expiry uses each process's
   clock.
+- **M2's re-review:** after M5, two more independent reviews of M2's
+  packages found defects that the first had missed, each fixed with a
+  regression test. Among them:
+  - a `TokenBucket` with a daily quota of a hundred thousand overflowed its
+    TTL, which turned the limiter off; `ByIP` keyed IPv6 clients by their
+    address, which they rotate within their /64; RealWorld's logins had no
+    limit across emails: each address has 25 a minute now, as Symfony's
+    login throttling has;
+  - the contract check failed a 304 to a conditional GET, a
+    `Response[T]`'s other statuses and media types, a `+json` request
+    body, and blamed an operation for the 404 of a path its requirement
+    refuses; `Response[T]` is documented as a `2XX` now;
+  - components of generic types got names that OpenAPI refuses, such as
+    `BoxInterface{}`, and a type named `ThingInput` was renamed
+    `ThingInput2` or not depending on the routes' order;
+  - `time.Duration` parameters were described as ISO 8601 durations, which
+    `time.ParseDuration` refuses; json/v2's `inline` option, which it
+    ignores, promoted members; an `Optional` in a response was written as a
+    struct, while documented as its value: it is written as its value now;
+  - `goncini generate` missed generic functions' endpoints, and the
+    status of a `httpkernel.Problem{Status: http.StatusConflict}`;
+  - CORS accepted exact origins that no browser sends, such as
+    `example.com`, and wrote sub-second and negative `MaxAge`s wrong;
+    `ParseULID` accepted I, L and O, which `routing.ULID` refuses: it is
+    strict now, as Symfony's is; `ULID.Scan` refused a PostgreSQL `uuid`
+    column's value; a sort could name a field again and again.
+
+  Decisions taken on the user's behalf: `ParseULID` is strict, rather than
+  the route requirement and the schema lenient; `Tokens` keep reading
+  `time.Now`, which `testing/synctest` fakes, rather than take a clock;
+  `Window`'s bounds stay validate tags, which a kernel without a
+  `Validator` doesn't check, as documented; the docs page pins Swagger UI
+  with integrity hashes.
+
+  What was left, deliberately: the memory rate-limit store isn't capped;
+  a firewall's `Load` must not report a nil user, as documented, since
+  telling a typed nil apart would need reflection per request.
 - **M2's review:** three independent reviews found 23 defects in M2's
   packages, each reproduced, then fixed with a regression test. Among them:
   - schemas didn't follow json/v2's rules when embedded fields shared a

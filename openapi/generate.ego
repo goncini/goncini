@@ -284,11 +284,12 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 		op.Errors = append(op.Errors, httpkernel.Invalid(invalid))
 	}
 	op.Errors = append(op.Errors, doc.Errors...)
-	res := &Response{Description: http.StatusText(d.Status)}
+	status := if d.Status == 0 { "2XX" } else { strconv.Itoa(d.Status) }
+	res := &Response{Description: if d.Status == 0 { "Success" } else { http.StatusText(d.Status) }}
 	if d.Result != nil {
 		res.Content = map[string]*MediaType{"application/json": {Schema: g.schemas.of(d.Result, writing)}}
 	}
-	op.Responses[strconv.Itoa(d.Status)] = res
+	op.Responses[status] = res
 }
 
 // fieldDoc returns the doc comment of t's field with the name, or of an

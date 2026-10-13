@@ -43,3 +43,16 @@ func (o *Optional[T]) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 	}
 	return json.UnmarshalDecode(d, &o.Value)
 }
+
+// MarshalJSONTo encodes the member as UnmarshalJSONFrom decodes it: null,
+// or its value. An absent member is left out with the omitzero option,
+// which IsZero serves; without, it is null.
+func (o Optional[T]) MarshalJSONTo(e *jsontext.Encoder) error {
+	if !o.Present() {
+		return e.WriteToken(jsontext.Null)
+	}
+	return json.MarshalEncode(e, o.Value)
+}
+
+// IsZero reports whether the member is absent, for omitzero.
+func (o Optional[T]) IsZero() bool { return !o.Set }

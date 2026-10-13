@@ -27,7 +27,7 @@ type Description struct {
 	// Output is the handler's Out type.
 	Output reflect.Type
 	// Status is the status of a successful response: 200, or the one that
-	// a ResponseDescriber result gives.
+	// a ResponseDescriber result gives, 0 for any 2xx.
 	Status int
 	// Result is the type of the successful response's JSON body: Out, or
 	// the one that a ResponseDescriber result gives; nil for none.
@@ -56,8 +56,8 @@ type ParamDescription struct {
 }
 
 // ResponseDescriber is a Responder that says what it writes, for
-// documentation: the status, and the type of the JSON body, nil for none.
-// It is called on the zero value. Created, NoContent, Response and Cached
+// documentation: the status, 0 for any 2xx, and the type of the JSON
+// body, nil for none. It is called on the zero value. Created, NoContent, Response and Cached
 // implement it.
 type ResponseDescriber interface {
 	Responder
@@ -130,10 +130,10 @@ func (NoContent) DescribeResponse() (int, reflect.Type) {
 	return http.StatusNoContent, nil
 }
 
-// DescribeResponse says that res is a T, with status 200: the status a
+// DescribeResponse says that res is a T, with a 2xx status: the one a
 // handler chooses at run time is unknown.
 func (Response[T]) DescribeResponse() (int, reflect.Type) {
-	return http.StatusOK, reflect.TypeFor[T]()
+	return 0, reflect.TypeFor[T]()
 }
 
 // DescribeResponse says that c is a 200 with a T.

@@ -60,6 +60,9 @@ var (
 	httpkernelPkgPath = "github.com/goncini/goncini/httpkernel"
 )
 
+// durationPattern matches what time.ParseDuration reads.
+const durationPattern = `^[-+]?(0|([0-9]*(\.[0-9]*)?(ns|us|µs|μs|ms|s|m|h))+)$`
+
 // of returns the schema of t, in mode m.
 func (s *schemas) of(t reflect.Type, m mode) *Schema {
 	if t.Kind() == reflect.Pointer {
@@ -77,7 +80,9 @@ func (s *schemas) of(t reflect.Type, m mode) *Schema {
 	case t == timeType:
 		return &Schema{Type: Types{"string"}, Format: "date-time"}
 	case t == durationType:
-		return &Schema{Type: Types{"string"}, Format: "duration"}
+		// As a parameter, which time.ParseDuration reads: json/v2 can't
+		// encode one in a body.
+		return &Schema{Type: Types{"string"}, Pattern: durationPattern, Description: "A duration, such as 1h30m or 250ms"}
 	case t == jsontextValue:
 		return &Schema{}
 	case m == writing && implementsAny(t, jsonMarshalers), m == reading && implementsAny(t, jsonUnmarshalers):
@@ -203,10 +208,14 @@ func (s *schemas) collect(all *[]member, o *Schema, t reflect.Type, m mode, doc 
 			continue
 		}
 		options := strings.Split(opts, ",")
-		if slices.Contains(options, "embed") || slices.Contains(options, "inline") || f.Anonymous && name == "" {
+		if slices.Contains(options, "embed") || f.Anonymous && name == "" {
 			elem := f.Type
 			if elem.Kind() == reflect.Pointer {
 				elem = elem.Elem()
+			}
+			if elem == jsontextValue {
+				o.AdditionalProperties = &Schema{} // a fallback for any member, of any value
+				continue
 			}
 			if elem.Kind() == reflect.Map {
 				o.AdditionalProperties = s.of(elem.Elem(), m) // a fallback for any member
@@ -301,10 +310,10 @@ func (s *schemas) inner(p *Schema, t reflect.Type, m mode) *Schema {
 	return p
 }
 
-// quoted is the schema of a number or boolean written as a JSON string,
-// by the json tag's string option.
+// quoted is the schema of a number written as a JSON string, by the json
+// tag's string option.
 func quoted(p *Schema) *Schema {
-	if p.Type.Is("integer") || p.Type.Is("number") || p.Type.Is("boolean") {
+	if p.Type.Is("integer") || p.Type.Is("number") {
 		q := Schema{Type: Types{"string"}, Description: p.Description}
 		if p.Type.Is("null") {
 			q.Type = append(q.Type, "null")
@@ -399,18 +408,21 @@ func (s *schemas) finish() map[string]*Schema {
 	}
 	names := map[schemaKey]string{}
 	out := map[string]*Schema{}
-	// Types' own names first, then those with Input.
+	// Types' own names first, then those with Input, so that a type named
+	// ThingInput keeps its name, whatever the order of the routes.
+	input := func(k schemaKey) bool {
+		_, both := s.components[schemaKey{k.t, writing}]
+		return k.m == reading && both
+	}
 	keys := slices.Clone(s.order)
-	slices.SortStableFunc(keys, (a, b schemaKey) => if a.m == b.m { 0 } else if a.m == writing { -1 } else { 1 })
+	slices.SortStableFunc(keys, (a, b schemaKey) => if input(a) == input(b) { 0 } else if input(b) { -1 } else { 1 })
 	for _, k := range keys {
 		if k.m == reading && shared[k.t] {
 			continue
 		}
 		name := base[k.t]
-		if k.m == reading {
-			if _, both := s.components[schemaKey{k.t, writing}]; both {
-				name += "Input"
-			}
+		if input(k) {
+			name += "Input"
 		}
 		unique := name
 		for n := 2; out[unique] != nil; n++ {
@@ -453,7 +465,12 @@ func baseName(t reflect.Type) string {
 	b.WriteString(name)
 	for _, a := range strings.FieldsFunc(strings.TrimSuffix(args, "]"), r => r == ',' || r == '[' || r == ']' || r == '*' || r == ' ') {
 		a = a[strings.LastIndexAny(a, "./")+1:]
-		b.WriteString(exported(a))
+		// Only letters and digits, which the names of components allow,
+		// of an argument such as interface {} or struct{ A int }.
+		a = strings.Map((r rune) => if 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' { r } else { -1 }, a)
+		if a != "" {
+			b.WriteString(exported(a))
+		}
 	}
 	return b.String()
 }

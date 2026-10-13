@@ -1,0 +1,34 @@
+package main
+
+import (
+	"strings"
+	"testing"
+
+	"golang.org/x/tools/go/packages"
+)
+
+// TestAnnotations checks what goncini generate says of testdata/annotated's
+// endpoints: their doc comments, under the names the runtime gives them,
+// a generic function's too, and a problem's constant status.
+func TestAnnotations(t *testing.T) {
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports | packages.NeedDeps,
+		Dir:  "testdata/annotated",
+	}
+	pkgs := must packages.Load(cfg, "./...")
+	if packages.PrintErrors(pkgs) > 0 {
+		t.Fatal("testdata/annotated doesn't load")
+	}
+	a := &app{all: pkgs, pkg: pkgs[0], imports: map[string]string{}}
+	got := a.annotations()
+	for _, want := range []string{
+		`"example.com/annotated.Show": {Summary: "Returns a thing.", Description: "Anyone may.", Errors: []error{httpkernel.Problem{Status: 409}}},`,
+		`"example.com/annotated.Generic[...]": {Summary: "Returns a T."},`,
+		`"example.com/annotated.(*Things).List": {Summary: "Lists the things."},`,
+		`reflect.TypeFor[Thing](): {Description: "Thing is a thing.", Fields: map[string]string{"Name": "its name"}},`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("without %s:\n%s", want, got)
+		}
+	}
+}

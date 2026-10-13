@@ -33,10 +33,15 @@ type Exchange struct {
 // status, media type or body the operation doesn't declare, or a
 // successful request whose body the operation doesn't allow. A request
 // that the API refused isn't checked, since the client may have meant to
-// break the rules. Nor is a request for none of the document's operations.
+// break the rules. Nor is a request for none of the document's operations,
+// or a 304 without a body to a GET or HEAD, which any conditional request
+// may get.
 func (d *Document) Check(x Exchange) error {
 	op, template := d.find(x.Method, x.Path)
 	if op == nil {
+		return nil
+	}
+	if x.Status == http.StatusNotModified && len(x.Body) == 0 && (x.Method == http.MethodGet || x.Method == http.MethodHead) {
 		return nil
 	}
 	what := f"{x.Method} {template}"
@@ -63,7 +68,9 @@ func (d *Document) Check(x Exchange) error {
 
 // find returns the operation of the method on the path, and the path's
 // template. Of the templates that match, the one with the most literal
-// segments wins, as with ServeMux: /articles/feed over /articles/{slug}.
+// segments wins, as with ServeMux: /articles/feed over /articles/{slug}. A
+// path parameter whose schema has a pattern, as a route's requirement
+// gives it, matches only the values that the pattern does.
 func (d *Document) find(method, path string) (*Operation, string) {
 	segments := strings.Split(path, "/")
 	for i, seg := range segments {
@@ -77,10 +84,14 @@ func (d *Document) find(method, path string) (*Operation, string) {
 		if len(parts) != len(segments) {
 			continue
 		}
+		field := item.Operation(method)
+		if field == nil || *field == nil {
+			continue
+		}
 		literals := 0
 		for i, p := range parts {
 			if strings.HasPrefix(p, "{") && strings.HasSuffix(p, "}") {
-				if segments[i] == "" {
+				if segments[i] == "" || !d.paramMatches(*field, p[1:len(p)-1], segments[i]) {
 					literals = -1
 					break
 				}
@@ -92,12 +103,29 @@ func (d *Document) find(method, path string) (*Operation, string) {
 			}
 			literals++
 		}
-		field := item.Operation(method)
-		if literals > bestLiterals && field != nil && *field != nil {
+		if literals > bestLiterals {
 			best, bestTemplate, bestLiterals = *field, template, literals
 		}
 	}
 	return best, bestTemplate
+}
+
+// paramMatches reports whether a path parameter's value matches its
+// schema's pattern, or its integer type: a route's requirement, which
+// refuses other values.
+func (d *Document) paramMatches(op *Operation, name, value string) bool {
+	for _, p := range op.Parameters {
+		if p.In != "path" || p.Name != name || p.Schema == nil {
+			continue
+		}
+		if p.Schema.Type.Is("integer") && !p.Schema.Type.Is("string") {
+			if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+				return false
+			}
+		}
+		return p.Schema.Pattern == "" || compiled(p.Schema.Pattern).MatchString(value)
+	}
+	return true
 }
 
 // requestBody returns rb, or the component it refers to.
@@ -124,6 +152,11 @@ func (d *Document) response(r *Response) *Response {
 func (d *Document) checkContent(content map[string]*MediaType, contentType string, body []byte) error {
 	mediaType, _, _ := mime.ParseMediaType(contentType)
 	mt, ok := content[mediaType]
+	if !ok && strings.HasSuffix(mediaType, "+json") {
+		// A JSON body of a more specific type, such as
+		// application/merge-patch+json, which the API reads as JSON.
+		mt, ok = content["application/json"]
+	}
 	if !ok {
 		if len(content) == 0 {
 			return errors.New(f"its {mediaType} body isn't declared")

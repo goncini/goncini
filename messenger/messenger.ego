@@ -21,8 +21,8 @@
 // third of the lease.
 //
 // Messages are encoded with encoding/json/v2, whose member names match
-// case-sensitively, and which has no default form for time.Duration: give
-// such a field a format tag, such as `json:",format:nano"`.
+// case-sensitively, and which can't encode a time.Duration: give a message
+// an int64 of nanoseconds, or a string, instead.
 package messenger
 
 import (

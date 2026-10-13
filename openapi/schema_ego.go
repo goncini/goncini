@@ -79,6 +79,9 @@ var (
 	httpkernelPkgPath = "github.com/goncini/goncini/httpkernel"
 )
 
+// durationPattern matches what time.ParseDuration reads.
+const durationPattern = `^[-+]?(0|([0-9]*(\.[0-9]*)?(ns|us|µs|μs|ms|s|m|h))+)$`
+
 // of returns the schema of t, in mode m.
 func (s *schemas) of(t reflect.Type, m mode) *Schema {
 	if t.Kind() == reflect.Pointer {
@@ -96,7 +99,9 @@ func (s *schemas) of(t reflect.Type, m mode) *Schema {
 	case t == timeType:
 		return &Schema{Type: Types{"string"}, Format: "date-time"}
 	case t == durationType:
-		return &Schema{Type: Types{"string"}, Format: "duration"}
+		// As a parameter, which time.ParseDuration reads: json/v2 can't
+		// encode one in a body.
+		return &Schema{Type: Types{"string"}, Pattern: durationPattern, Description: "A duration, such as 1h30m or 250ms"}
 	case t == jsontextValue:
 		return &Schema{}
 	case m == writing && implementsAny(t, jsonMarshalers), m == reading && implementsAny(t, jsonUnmarshalers):
@@ -152,7 +157,7 @@ func provided(t reflect.Type) *Schema {
 		v2 = &Schema{}
 	}
 	own := *(v2)
-//line schema.ego:132
+//line schema.ego:137
 	return &own
 }
 
@@ -180,7 +185,7 @@ func (s *schemas) object(t reflect.Type, m mode, doc TypeDoc, prefix string) *Sc
 		v = ""
 	}
 	o := &Schema{Type: Types{"object"}, Properties: map[string]*Schema{}, Description: v}
-//line schema.ego:153
+//line schema.ego:158
 	s.fields(o, t, m, doc, prefix)
 	if len(o.Properties) == 0 {
 		o.Properties = nil
@@ -234,10 +239,14 @@ func (s *schemas) collect(all *[]member, o *Schema, t reflect.Type, m mode, doc 
 			continue
 		}
 		options := strings.Split(opts, ",")
-		if slices.Contains(options, "embed") || slices.Contains(options, "inline") || f.Anonymous && name == "" {
+		if slices.Contains(options, "embed") || f.Anonymous && name == "" {
 			elem := f.Type
 			if elem.Kind() == reflect.Pointer {
 				elem = elem.Elem()
+			}
+			if elem == jsontextValue {
+				o.AdditionalProperties = &Schema{} // a fallback for any member, of any value
+				continue
 			}
 			if elem.Kind() == reflect.Map {
 				o.AdditionalProperties = s.of(elem.Elem(), m) // a fallback for any member
@@ -333,14 +342,14 @@ func (s *schemas) inner(p *Schema, t reflect.Type, m mode) *Schema {
 		}
 		return v
 	}
-//line schema.ego:301
+//line schema.ego:310
 	return p
 }
 
-// quoted is the schema of a number or boolean written as a JSON string,
-// by the json tag's string option.
+// quoted is the schema of a number written as a JSON string, by the json
+// tag's string option.
 func quoted(p *Schema) *Schema {
-	if p.Type.Is("integer") || p.Type.Is("number") || p.Type.Is("boolean") {
+	if p.Type.Is("integer") || p.Type.Is("number") {
 		q := Schema{Type: Types{"string"}, Description: p.Description}
 		if p.Type.Is("null") {
 			q.Type = append(q.Type, "null")
@@ -410,7 +419,7 @@ func (s *schemas) finish() map[string]*Schema {
 		}
 	}
 	// Refs hold markers of their keys until the names are known.
-//line schema.ego:373
+//line schema.ego:382
 	index := map[schemaKey]int{}
 	for i, k := range s.order {
 		index[k] = i
@@ -436,7 +445,7 @@ func (s *schemas) finish() map[string]*Schema {
 		}
 		return v
 	}
-//line schema.ego:390
+//line schema.ego:399
 	render := func(sch *Schema) string { return s.render(sch, label) }
 	for changed := true; changed; {
 		changed = false
@@ -449,29 +458,32 @@ func (s *schemas) finish() map[string]*Schema {
 	}
 	names := map[schemaKey]string{}
 	out := map[string]*Schema{}
-	// Types' own names first, then those with Input.
+	// Types' own names first, then those with Input, so that a type named
+	// ThingInput keeps its name, whatever the order of the routes.
+	input := func(k schemaKey) bool {
+		_, both := s.components[schemaKey{k.t, writing}]
+		return k.m == reading && both
+	}
 	keys := slices.Clone(s.order)
 	slices.SortStableFunc(keys, func(a, b schemaKey) int {
 		var v int
-		if a.m == b.m {
+		if input(a) == input(b) {
 			v = 0
-		} else if a.m == writing {
+		} else if input(b) {
 			v = -1
 		} else {
 			v = 1
 		}
 		return v
 	})
-//line schema.ego:405
+//line schema.ego:419
 	for _, k := range keys {
 		if k.m == reading && shared[k.t] {
 			continue
 		}
 		name := base[k.t]
-		if k.m == reading {
-			if _, both := s.components[schemaKey{k.t, writing}]; both {
-				name += "Input"
-			}
+		if input(k) {
+			name += "Input"
 		}
 		unique := name
 		for n := 2; out[unique] != nil; n++ {
@@ -485,7 +497,7 @@ func (s *schemas) finish() map[string]*Schema {
 		if !ok {
 			name = names[schemaKey{k.t, writing}]
 		}
-//line schema.ego:424
+//line schema.ego:436
 		marker := fmt.Sprintf("#/components/schemas/\x00%d\x00", i)
 		for _, r := range s.refs[k] {
 			if r.Ref == marker {
@@ -518,7 +530,21 @@ func baseName(t reflect.Type) string {
 	b.WriteString(name)
 	for _, a := range strings.FieldsFunc(strings.TrimSuffix(args, "]"), func(r rune) bool { return r == ',' || r == '[' || r == ']' || r == '*' || r == ' ' }) {
 		a = a[strings.LastIndexAny(a, "./")+1:]
-		b.WriteString(exported(a))
+		// Only letters and digits, which the names of components allow,
+		// of an argument such as interface {} or struct{ A int }.
+		a = strings.Map(func(r rune) rune {
+			var v rune
+			if 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' {
+				v = r
+			} else {
+				v = -1
+			}
+			return v
+		}, a)
+//line schema.ego:471
+		if a != "" {
+			b.WriteString(exported(a))
+		}
 	}
 	return b.String()
 }
@@ -649,7 +675,7 @@ func limit(p *Schema, t reflect.Type, param string, upper, inclusive bool) {
 				count = count + 1
 			}
 		}
-//line schema.ego:583
+//line schema.ego:600
 		if t.Kind() == reflect.String {
 			if upper {
 				p.MaxLength = &count

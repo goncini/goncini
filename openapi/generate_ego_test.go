@@ -151,9 +151,18 @@ func (n *Notes) Delete(ctx context.Context, in ShowInput) (_ httpkernel.NoConten
 	return httpkernel.NoContent{}, nil
 }
 
-// locked answers 423 to every request, and says so.
+// Archive answers 202 while it archives a note, or 200 once it did.
 //
 //line generate_test.ego:95
+func (n *Notes) Archive(ctx context.Context, in ShowInput) (_ httpkernel.Response[NoteBody], err error) {
+	ctx, span := trace.Start(ctx, "openapi_test.Notes.Archive")
+	defer trace.End(span, &err)
+	return httpkernel.Response[NoteBody]{Status: http.StatusAccepted}, nil
+}
+
+// locked answers 423 to every request, and says so.
+//
+//line generate_test.ego:100
 func locked(next http.Handler) http.Handler { return lockedHandler{} }
 
 type lockedHandler struct{}
@@ -174,6 +183,7 @@ func notesAPI() (*routing.Router, *httpkernel.Kernel, openapi.Annotations) {
 	r.Get("/notes", httpkernel.Endpoint(n.List))
 	r.With(locked).Post("/notes", httpkernel.Endpoint(n.Create)).Name("note_create")
 	r.Delete("/notes/{id}", httpkernel.Endpoint(n.Delete)).Name("note_delete")
+	r.Put("/notes/{id}/archive", httpkernel.Endpoint(n.Archive)).Name("note_archive")
 	r.Handle("/health", http.NotFoundHandler())
 	k := &httpkernel.Kernel{Handler: r, ErrorMappers: []httpkernel.ErrorMapper{httpkernel.Map[NoteError](noteProblem)}, Validator: validator.New()}
 	d, _ := httpkernel.Describe(show)

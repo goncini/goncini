@@ -312,11 +312,25 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 	}
 //line generate.ego:286
 	op.Errors = append(op.Errors, doc.Errors...)
-	res := &Response{Description: http.StatusText(d.Status)}
+	var status string
+	if d.Status == 0 {
+		status = "2XX"
+	} else {
+		status = strconv.Itoa(d.Status)
+	}
+//line generate.ego:288
+	var v5 string
+	if d.Status == 0 {
+		v5 = "Success"
+	} else {
+		v5 = http.StatusText(d.Status)
+	}
+	res := &Response{Description: v5}
+//line generate.ego:289
 	if d.Result != nil {
 		res.Content = map[string]*MediaType{"application/json": {Schema: g.schemas.of(d.Result, writing)}}
 	}
-	op.Responses[strconv.Itoa(d.Status)] = res
+	op.Responses[status] = res
 }
 
 // fieldDoc returns the doc comment of t's field with the name, or of an
@@ -371,7 +385,7 @@ func (g *generator) paramSchema(p httpkernel.ParamDescription) (*Schema, bool) {
 		} else {
 			target = s
 		}
-//line generate.ego:341
+//line generate.ego:342
 		target.Enum = enumValues(t, p.Enum)
 	}
 	if p.Default != nil {
@@ -444,7 +458,7 @@ func (g *generator) errors(op *Op) (err error) {
 	} else {
 		render = httpkernel.RenderProblem
 	}
-//line generate.ego:408
+//line generate.ego:409
 	req := httptest.NewRequest(op.Method, "/", nil)
 	for _, e := range op.Errors {
 		rec := &recorder{header: http.Header{}}
@@ -460,7 +474,7 @@ func (g *generator) errors(op *Op) (err error) {
 		if err != nil {
 			return err
 		}
-//line generate.ego:421
+//line generate.ego:422
 		status := strconv.Itoa(rec.status)
 		res := op.Responses[status]
 		if res == nil {

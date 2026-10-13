@@ -451,6 +451,63 @@
           }
         }
       }
+    },
+    "/notes/{id}/archive": {
+      "put": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "note_archive",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "2XX": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteBody"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "Problem": {
+                    "summary": "400 Bad Request: invalid request parameters",
+                    "value": {
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "invalid request parameters",
+                      "errors": [
+                        {
+                          "detail": "is invalid",
+                          "parameter": "id"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

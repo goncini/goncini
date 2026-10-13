@@ -37,10 +37,15 @@ type Exchange struct {
 // status, media type or body the operation doesn't declare, or a
 // successful request whose body the operation doesn't allow. A request
 // that the API refused isn't checked, since the client may have meant to
-// break the rules. Nor is a request for none of the document's operations.
+// break the rules. Nor is a request for none of the document's operations,
+// or a 304 without a body to a GET or HEAD, which any conditional request
+// may get.
 func (d *Document) Check(x Exchange) error {
 	op, template := d.find(x.Method, x.Path)
 	if op == nil {
+		return nil
+	}
+	if x.Status == http.StatusNotModified && len(x.Body) == 0 && (x.Method == http.MethodGet || x.Method == http.MethodHead) {
 		return nil
 	}
 	what := fmt.Sprintf("%s %s", x.Method, template)
@@ -62,7 +67,7 @@ func (d *Document) Check(x Exchange) error {
 			res = op.Responses["default"]
 		}
 	}
-//line check.ego:54
+//line check.ego:59
 	if res == nil {
 		errs = append(errs, errors.New(fmt.Sprintf("%s: the document has no %d response", what, x.Status)))
 	} else if res = d.response(res); len(x.Body) > 0 || len(res.Content) > 0 {
@@ -75,7 +80,9 @@ func (d *Document) Check(x Exchange) error {
 
 // find returns the operation of the method on the path, and the path's
 // template. Of the templates that match, the one with the most literal
-// segments wins, as with ServeMux: /articles/feed over /articles/{slug}.
+// segments wins, as with ServeMux: /articles/feed over /articles/{slug}. A
+// path parameter whose schema has a pattern, as a route's requirement
+// gives it, matches only the values that the pattern does.
 func (d *Document) find(method, path string) (*Operation, string) {
 	segments := strings.Split(path, "/")
 	for i, seg := range segments {
@@ -85,7 +92,7 @@ func (d *Document) find(method, path string) (*Operation, string) {
 			segments[i] = v
 		}
 	}
-//line check.ego:72
+//line check.ego:79
 	var best *Operation
 	var bestTemplate string
 	bestLiterals := -1
@@ -94,10 +101,14 @@ func (d *Document) find(method, path string) (*Operation, string) {
 		if len(parts) != len(segments) {
 			continue
 		}
+		field := item.Operation(method)
+		if field == nil || *field == nil {
+			continue
+		}
 		literals := 0
 		for i, p := range parts {
 			if strings.HasPrefix(p, "{") && strings.HasSuffix(p, "}") {
-				if segments[i] == "" {
+				if segments[i] == "" || !d.paramMatches(*field, p[1:len(p)-1], segments[i]) {
 					literals = -1
 					break
 				}
@@ -109,12 +120,29 @@ func (d *Document) find(method, path string) (*Operation, string) {
 			}
 			literals++
 		}
-		field := item.Operation(method)
-		if literals > bestLiterals && field != nil && *field != nil {
+		if literals > bestLiterals {
 			best, bestTemplate, bestLiterals = *field, template, literals
 		}
 	}
 	return best, bestTemplate
+}
+
+// paramMatches reports whether a path parameter's value matches its
+// schema's pattern, or its integer type: a route's requirement, which
+// refuses other values.
+func (d *Document) paramMatches(op *Operation, name, value string) bool {
+	for _, p := range op.Parameters {
+		if p.In != "path" || p.Name != name || p.Schema == nil {
+			continue
+		}
+		if p.Schema.Type.Is("integer") && !p.Schema.Type.Is("string") {
+			if _, err := strconv.ParseInt(value, 10, 64); err != nil {
+				return false
+			}
+		}
+		return p.Schema.Pattern == "" || compiled(p.Schema.Pattern).MatchString(value)
+	}
+	return true
 }
 
 // requestBody returns rb, or the component it refers to.
@@ -129,7 +157,7 @@ func (d *Document) requestBody(rb *RequestBody) *RequestBody {
 		}
 		return v
 	}
-//line check.ego:111
+//line check.ego:139
 	return rb
 }
 
@@ -142,7 +170,7 @@ func (d *Document) response(r *Response) *Response {
 		}
 		return v
 	}
-//line check.ego:119
+//line check.ego:147
 	return r
 }
 
@@ -151,6 +179,11 @@ func (d *Document) response(r *Response) *Response {
 func (d *Document) checkContent(content map[string]*MediaType, contentType string, body []byte) error {
 	mediaType, _, _ := mime.ParseMediaType(contentType)
 	mt, ok := content[mediaType]
+	if !ok && strings.HasSuffix(mediaType, "+json") {
+		// A JSON body of a more specific type, such as
+		// application/merge-patch+json, which the API reads as JSON.
+		mt, ok = content["application/json"]
+	}
 	if !ok {
 		if len(content) == 0 {
 			return errors.New(fmt.Sprintf("its %s body isn't declared", mediaType))
@@ -220,11 +253,11 @@ func (c *checker) value(s *Schema, v any, at string) {
 	if str, ok2 := v.(string); ok2 {
 		c.text(s, str, at)
 	} else if n, ok3 := v.(float64); ok3 {
-//line check.ego:195
+//line check.ego:228
 		c.number(s, n, at)
 	} else if items, ok4 := v.([]any); ok4 {
 
-//line check.ego:197
+//line check.ego:230
 		if s.MinItems != nil && len(items) < *s.MinItems || s.MaxItems != nil && len(items) > *s.MaxItems {
 			c.fail(at, "has %d items, out of bounds", len(items))
 		}
@@ -234,7 +267,7 @@ func (c *checker) value(s *Schema, v any, at string) {
 
 	} else if members, ok := v.(map[string]any); ok {
 
-//line check.ego:205
+//line check.ego:238
 		for _, name := range s.Required {
 			if _, ok := members[name]; !ok {
 				c.fail(at, "the required member %q is missing", name)
@@ -245,7 +278,7 @@ func (c *checker) value(s *Schema, v any, at string) {
 			if !ok5 {
 				p = s.AdditionalProperties
 			}
-//line check.ego:212
+//line check.ego:245
 			c.value(p, m, at+"/"+strings.ReplaceAll(strings.ReplaceAll(name, "~", "~0"), "/", "~1"))
 		}
 
@@ -256,7 +289,7 @@ func (c *checker) value(s *Schema, v any, at string) {
 
 // text checks a string's length, pattern and date-time format.
 //
-//line check.ego:221
+//line check.ego:254
 func (c *checker) text(s *Schema, str, at string) {
 	n := utf8.RuneCountInString(str)
 	if s.MinLength != nil && n < *s.MinLength || s.MaxLength != nil && n > *s.MaxLength {
@@ -307,7 +340,7 @@ func kindOf(v any) string {
 
 // describe shows v in a message.
 //
-//line check.ego:258
+//line check.ego:291
 func describe(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil || len(b) > 40 {

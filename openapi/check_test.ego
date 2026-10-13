@@ -31,6 +31,12 @@ func TestCheck(t *testing.T) {
 		{"an accepted invalid request", openapi.Exchange{Method: "POST", Path: "/notes", RequestType: "application/json", RequestBody: []byte(`{"note":{"title":"Hi","tags":["a1"]}}`), Status: 201, Header: jsonHeader, Body: []byte(note)}, `the request body: /note/tags/0: "a1" doesn't match ^[a-zA-Z]+$`},
 		{"a refused invalid request", openapi.Exchange{Method: "POST", Path: "/notes", RequestType: "application/json", RequestBody: []byte(`{"note":{}}`), Status: 422, Header: problemHeader, Body: []byte(`{"status":422,"errors":[{"detail":"is required"}]}`)}, ""},
 		{"an unknown path", openapi.Exchange{Method: "GET", Path: "/nope", Status: 404}, ""},
+		{"a 304", openapi.Exchange{Method: "GET", Path: "/notes/1", Status: 304, Header: http.Header{}}, ""},
+		{"a 304 to a POST", openapi.Exchange{Method: "POST", Path: "/notes", Status: 304, Header: http.Header{}}, "no 304 response"},
+		// The route requires digits: /notes/abc is no route's.
+		{"a requirement unmet", openapi.Exchange{Method: "GET", Path: "/notes/abc", Status: 404, Header: problemHeader, Body: []byte(`{}`)}, ""},
+		{"a +json request", openapi.Exchange{Method: "POST", Path: "/notes", RequestType: "application/merge-patch+json", RequestBody: []byte(`{"note":{"title":"Hi"}}`), Status: 201, Header: jsonHeader, Body: []byte(note)}, ""},
+		{"a Response's 202", openapi.Exchange{Method: "PUT", Path: "/notes/1/archive", Status: 202, Header: http.Header{"Content-Type": {"application/vnd.notes+json"}}, Body: []byte(note)}, ""},
 	} {
 		err := doc.Check(c.x)
 		switch {

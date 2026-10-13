@@ -5,8 +5,10 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/token"
 	"go/types"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,9 +26,10 @@ import (
 // it builds, in its body and in the functions it calls, through the
 // module's packages and goncini's: an error case is a struct type that the
 // kernel answers for, as a case of an error set that a mapper maps
-// (httpkernel.Map), or a ProblemError.
+// (httpkernel.Map), or a ProblemError; or an httpkernel.Problem whose
+// Status is a constant.
 //
-//line annotations.ego:25
+//line annotations.ego:28
 func (a *app) annotations() string {
 	x := a.newCrawler()
 	var ops, docs []string
@@ -34,8 +37,13 @@ func (a *app) annotations() string {
 	for _, fn := range x.endpoints() {
 		decl := x.decls[fn]
 		var cases []string
-		for _, c := range x.cases(fn) {
+		named, statuses := x.cases(fn)
+		for _, c := range named {
 			cases = append(cases, a.typeString(c)+"{}")
+		}
+		problem := a.typeString(a.lookup("httpkernel.Problem"))
+		for _, status := range statuses {
+			cases = append(cases, fmt.Sprintf("%s{Status: %d}", problem, status))
 		}
 		summary, desc := opDoc(fn.Name(), decl.fd.Doc.Text())
 		fields := []string{}
@@ -173,7 +181,14 @@ func (x *crawler) endpoints() []*types.Func {
 					return true
 				}
 				var fn *types.Func
-				switch arg := call.Args[0].(type) {
+				arg := call.Args[0]
+				switch ix := arg.(type) {
+				case *ast.IndexExpr:
+					arg = ix.X
+				case *ast.IndexListExpr:
+					arg = ix.X
+				}
+				switch arg := arg.(type) {
 				case *ast.SelectorExpr:
 					if s := p.TypesInfo.Selections[arg]; s != nil {
 						fn, _ = s.Obj().(*types.Func)
@@ -191,6 +206,7 @@ func (x *crawler) endpoints() []*types.Func {
 			})
 		}
 	}
+//line annotations.ego:203
 	sort.Slice(fns, func(i, j int) bool { return runtimeName(fns[i]) < runtimeName(fns[j]) })
 	return fns
 }
@@ -212,6 +228,9 @@ func calleeIdent(fun ast.Expr) *ast.Ident {
 func runtimeName(fn *types.Func) string {
 	sig := fn.Type().(*types.Signature)
 	if sig.Recv() == nil {
+		if sig.TypeParams().Len() > 0 {
+			return fn.Pkg().Path() + "." + fn.Name() + "[...]" // as the runtime writes a generic function's
+		}
 		return fn.Pkg().Path() + "." + fn.Name()
 	}
 	recv := sig.Recv().Type()
@@ -230,24 +249,36 @@ func runtimeName(fn *types.Func) string {
 	return fn.Pkg().Path() + "." + name + "." + fn.Name()
 }
 
+// found is what crawl finds: error cases, and the statuses of problems.
+type found struct {
+	cases    map[*types.Named]bool
+	statuses map[int64]bool
+}
+
 // cases returns the error cases that fn builds, or the functions it calls
-// do, sorted by their packages and names.
-func (x *crawler) cases(fn *types.Func) []*types.Named {
-	found := map[*types.Named]bool{}
-	x.crawl(fn.Origin(), found, map[*types.Func]bool{})
+// do, sorted by their packages and names, and the constant statuses of the
+// httpkernel.Problems they build, sorted.
+func (x *crawler) cases(fn *types.Func) ([]*types.Named, []int64) {
+	f := found{cases: map[*types.Named]bool{}, statuses: map[int64]bool{}}
+	x.crawl(fn.Origin(), f, map[*types.Func]bool{})
 	var out []*types.Named
-	for n := range found {
+	for n := range f.cases {
 		out = append(out, n)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Obj().Pkg().Path()+"."+out[i].Obj().Name() < out[j].Obj().Pkg().Path()+"."+out[j].Obj().Name()
 	})
-	return out
+	var statuses []int64
+	for s := range f.statuses {
+		statuses = append(statuses, s)
+	}
+	slices.Sort(statuses)
+	return out, statuses
 }
 
 // crawl adds the error cases that fn's body builds, and the functions it
 // calls statically, to found.
-func (x *crawler) crawl(fn *types.Func, found map[*types.Named]bool, seen map[*types.Func]bool) {
+func (x *crawler) crawl(fn *types.Func, found found, seen map[*types.Func]bool) {
 	d, ok := x.decls[fn]
 	if !ok || seen[fn] {
 		return
@@ -257,8 +288,15 @@ func (x *crawler) crawl(fn *types.Func, found map[*types.Named]bool, seen map[*t
 	ast.Inspect(d.fd.Body, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.CompositeLit:
-			if named, ok := types.Unalias(info.TypeOf(n)).(*types.Named); ok && x.isCase(named) {
-				found[named] = true
+			named, ok := types.Unalias(info.TypeOf(n)).(*types.Named)
+			switch {
+			case !ok:
+			case x.isCase(named):
+				found.cases[named] = true
+			case isProblem(named):
+				if status, ok := constantStatus(info, n); ok {
+					found.statuses[status] = true
+				}
 			}
 		case *ast.CallExpr:
 			if callee := typeutil.StaticCallee(info, n); callee != nil {
@@ -276,8 +314,8 @@ func (x *crawler) isCase(t *types.Named) bool {
 	if _, ok := t.Underlying().(*types.Struct); !ok || !t.Obj().Exported() || t.TypeArgs().Len() > 0 {
 		return false
 	}
-	if t.Obj().Pkg().Path() == gonciniPath+"/httpkernel" && t.Obj().Name() == "Problem" {
-		return false // its status is a value
+	if isProblem(t) {
+		return false // its status is a value, which constantStatus reads
 	}
 	for _, set := range x.sets {
 		if types.Implements(t, set) {
@@ -285,6 +323,29 @@ func (x *crawler) isCase(t *types.Named) bool {
 		}
 	}
 	return x.problem != nil && types.Implements(t, x.problem)
+}
+
+// isProblem reports whether t is httpkernel.Problem.
+func isProblem(t *types.Named) bool {
+	return t.Obj().Pkg() != nil && t.Obj().Pkg().Path() == gonciniPath+"/httpkernel" && t.Obj().Name() == "Problem"
+}
+
+// constantStatus returns the Status of a Problem literal, if it is a
+// constant: httpkernel.Problem{Status: http.StatusConflict}.
+func constantStatus(info *types.Info, lit *ast.CompositeLit) (int64, bool) {
+	for _, e := range lit.Elts {
+		kv, ok := e.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		if key, isIdent := kv.Key.(*ast.Ident); !isIdent || key.Name != "Status" {
+			continue
+		}
+		if v := info.Types[kv.Value].Value; v != nil {
+			return constant.Int64Val(v)
+		}
+	}
+	return 0, false
 }
 
 // collectTypes adds the named types of the module that t holds, through

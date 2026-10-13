@@ -4,12 +4,13 @@ package httpkernel_test
 
 import (
 	"context"
+	"encoding/json/v2"
 	"testing"
 
 	"github.com/goncini/goncini/httpkernel"
 )
 
-//line optional_test.ego:10
+//line optional_test.ego:11
 func TestOptional(t *testing.T) {
 	type input struct {
 		Body struct {
@@ -33,5 +34,31 @@ func TestOptional(t *testing.T) {
 	}
 	if rec := do(k, "PUT", "/", `{"email":1}`); rec.Code != 422 || problem(t, rec).Errors[0].Pointer != "#/email" {
 		t.Errorf("a number for a string: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// TestOptionalEncoding checks that an Optional is written as it is read:
+// its value, null, or absent with omitzero.
+func TestOptionalEncoding(t *testing.T) {
+	type body struct {
+		Bio   httpkernel.Optional[string]   `json:"bio,omitzero"`
+		Email httpkernel.Optional[string]   `json:"email,omitzero"`
+		Tags  httpkernel.Optional[[]string] `json:"tags"`
+	}
+	out, err := json.Marshal(body{Bio: httpkernel.Optional[string]{Set: true, Value: "hi"}, Email: httpkernel.Optional[string]{Set: true, Null: true}})
+	if err != nil {
+		panic(err)
+	}
+//line optional_test.ego:46
+	if string(out) != `{"bio":"hi","email":null,"tags":null}` {
+		t.Errorf("%s", out)
+	}
+	var back body
+	if err := json.Unmarshal(out, &back); err != nil {
+		panic(err)
+	}
+//line optional_test.ego:51
+	if !back.Bio.Present() || back.Bio.Value != "hi" || !back.Email.Null || !back.Tags.Null {
+		t.Errorf("%+v", back)
 	}
 }
