@@ -1,9 +1,11 @@
 package db
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"strings"
+	"unicode"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -16,10 +18,43 @@ const Instrumentation = "github.com/goncini/goncini/db"
 // traced is a Conn that makes a span of each statement, named after its
 // operation, such as SELECT, with its text: what the profiler shows of a
 // request's queries. Its spans cost next to nothing when no span is
-// recorded.
+// recorded. A query's span ends when the query returns its rows, before
+// they are read.
 type traced struct {
 	conn Conn
-	pool *sql.DB // whose driver names the database system
+	sql  *SQL
+}
+
+// dbSystem returns the name of s's database system, as OpenTelemetry's
+// db.system.name has it, found once.
+func (s *SQL) dbSystem() string {
+	s.systemOnce.Do(() => {
+		s.system = match DialectOf(s.DB) {
+			SQLite     => "sqlite"
+			PostgreSQL => "postgresql"
+			_          => "other_sql"
+		}
+	})
+	return s.system
+}
+
+// operation returns what query does, its first word, such as SELECT, after
+// its comments, such as sqlc's "-- name: GetArticle :one".
+func operation(query string) string {
+	for {
+		query = strings.TrimSpace(query)
+		switch {
+		case strings.HasPrefix(query, "--"):
+			_, query, _ = strings.Cut(query, "\n")
+		case strings.HasPrefix(query, "/*"):
+			_, query, _ = strings.Cut(query, "*/")
+		default:
+			if i := strings.IndexFunc(query, unicode.IsSpace); i >= 0 {
+				query = query[:i]
+			}
+			return cmp.Or(strings.ToUpper(query), "QUERY")
+		}
+	}
 }
 
 // start starts the span of query, if ctx's span is recorded: a query
@@ -29,14 +64,8 @@ func (t traced) start(ctx context.Context, query string) (context.Context, trace
 	if !parent.IsRecording() {
 		return ctx, nil
 	}
-	op, _, _ := strings.Cut(strings.TrimSpace(query), " ")
-	system := match DialectOf(t.pool) {
-		SQLite     => "sqlite"
-		PostgreSQL => "postgresql"
-		_          => "other_sql"
-	}
-	return parent.TracerProvider().Tracer(Instrumentation).Start(ctx, strings.ToUpper(op), trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(attribute.String("db.system.name", system), attribute.String("db.query.text", query)))
+	return parent.TracerProvider().Tracer(Instrumentation).Start(ctx, operation(query), trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(attribute.String("db.system.name", t.sql.dbSystem()), attribute.String("db.query.text", query)))
 }
 
 // end ends a query's span, if it has one, with its error.
@@ -44,7 +73,7 @@ func end(span trace.Span, err error) {
 	if span == nil {
 		return
 	}
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}

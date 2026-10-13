@@ -343,15 +343,40 @@ Symfony's WebProfilerBundle, built from spans:
     handlers, which the OpenAPI document leaves out;
   - `debug:requests` prints them, and `debug:requests <id>` prints one's
     spans, queries and logs, from another terminal.
-
 - **OTLP export:** the `otel/otlp` adapter module, `otlp.Layer`, sends the
   spans to a collector over OTLP/HTTP when `otlp.Config.Endpoint` is set,
   in batches that the app's stop flushes. It is a module of its own, because
   the exporter brings protobuf and gRPC. The articles example exports to
   `OTEL_EXPORTER_OTLP_ENDPOINT` when it is set.
 
-Worth knowing: spans get the records that are logged, at the log's level.
-Query spans follow the tracer provider of their parent span.
+Worth knowing:
+
+- Spans get the records that are logged, at the log's level.
+- Query spans follow the tracer provider of their parent span, and end when
+  the query returns its rows, before they are read. They are named after
+  the statement's first word, past its comments, such as sqlc's.
+- A profile's ID is its root span's. Requests of a trace that started
+  elsewhere, which share its ID, get a profile each, of their own spans.
+- A relative `profiler.Config.Dir` is the project directory's, so that
+  `debug:requests` reads it from anywhere in the project.
+- `/_profiler` has no authentication: enable the profiler in dev only.
+- The tracer provider is OTel's global one, which effect-go's spans use.
+  When the app stops, its processors get 5 seconds to flush, and the
+  globals are restored unless another app in the process has set them
+  since.
+- `otlp.Config.Endpoint` is a base URL, as `OTEL_EXPORTER_OTLP_ENDPOINT`
+  is: the spans go to its `/v1/traces`, unless it has a path.
+
+M5's review fixed:
+
+- spans exported to the collector's `/`, not to `/v1/traces`;
+- concurrent requests of one remote trace sharing one profile;
+- `/_profiler` and `debug:requests` failing on a profile half written;
+- a panic on a negative `Keep`;
+- the pending traces' order that grew with each request;
+- reflection on each recorded query, to name its database;
+- query spans named `--` or `SELECT\n`;
+- a profile that couldn't be saved, without a word: it is logged.
 
 ### goncini new and make:* (M5)
 
@@ -402,18 +427,31 @@ else is wired by hand:
 
 - `goncini generate` hands goncini the bundle's routes, commands,
   subscribers, message handlers, voters and the rest, as it does the app's.
-- Any `Config` that a provider takes, and that the app's config has no
-  section of, gets its zero value, the default: a bundle's, as goncini's.
-  A section in the app's config changes it. `goncini generate` used to
-  default only the sections of goncini's packages, from a list.
+- A bundle's `Config`, a struct type named `Config` in the package that
+  exports the `Layer`, gets its zero value, its default, when a provider
+  takes it and the app's config has no field of that type: a section in
+  the app's config changes it. goncini's packages' `Config`s are defaulted
+  the same way. `goncini generate` used to default only goncini's, from a
+  list.
+- Any other section that the config lacks, such as one of the app's own
+  features, stays an error, which `layer` reports: a missing section
+  isn't silently zero.
 - [examples/maintenance](examples/maintenance), a module of its own as a
   third party's would be, takes an API down for maintenance: a subscriber
   answers requests with 503, `maintenance:down` and `maintenance:up` switch
   it, and `GET /_maintenance` says whether it is down. The articles example
   adds it with one line, and `TestBundle` checks each part.
 
-Worth knowing: a bundle's `Config` must work as its zero value, as
-goncini's do.
+Worth knowing:
+
+- A bundle's `Config` must work as its zero value, as goncini's do. A
+  config field of type `*maintenance.Config` isn't a section of
+  `maintenance.Config`.
+- A relative `maintenance.Config.File` is the project directory's, as
+  `goncini.ProjectDir` finds it: commands run from anywhere in the project
+  see the server's file. A deployed binary's is its working directory.
+- `goncini generate` writes a stub `Autoconfigured` before it loads the
+  app, so that a generated file that doesn't compile doesn't stop it.
 
 ### workflow (M4)
 

@@ -35,10 +35,8 @@ const (
 // after, so that the app's layers use the providers.
 func generate(root, appDir string, checkOnly bool) error {
 	path := filepath.Join(root, appDir, FileName)
-	_, err := os.Stat(path)
-	missing := errors.Is(err, fs.ErrNotExist)
 	if checkOnly {
-		if missing {
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%s is missing: run goncini generate", path)
 		}
 		services := check describe(root, appDir) ""
@@ -49,10 +47,10 @@ func generate(root, appDir string, checkOnly bool) error {
 		}
 		return nil
 	}
-	if missing {
-		stub := generatedTitle + "package " + filepath.Base(appDir) + "\n\nimport \"" + layerPath + "\"\n\nvar Autoconfigured = layer.Set()\n"
-		check os.WriteFile(path, []byte(stub), 0o644) ""
-	}
+	// A stub, until the app's packages are loaded: the file that a former
+	// version of goncini, or a former run, wrote may not compile.
+	stub := generatedTitle + "package " + filepath.Base(appDir) + "\n\nimport \"" + layerPath + "\"\n\nvar Autoconfigured = layer.Set()\n"
+	check os.WriteFile(path, []byte(stub), 0o644) ""
 	egoGenerate(root, "./...") // the app's layers can't be wired until Autoconfigured is
 	code := check autoconfigure(root, appDir, nil) ""
 	check os.WriteFile(path, code, 0o644) ""
@@ -166,8 +164,9 @@ func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 			fmt.Fprintf(&b, "// %s is the %s section of the config.\nfunc %s(c %s) %s { return c.%s }\n\n", name, f.Name(), name, a.typeString(a.config), a.typeString(f.Type()), f.Name())
 		}
 		// The sections that the config doesn't have get their defaults,
-		// their zero values: the Framework's, and the Config that any
-		// provider takes, such as a bundle's.
+		// their zero values: the Framework's, and the Config of goncini's
+		// packages and of bundles that a provider takes. Any other section
+		// that the config lacks is an error, which layer reports.
 		var defaults []types.Type
 		for _, section := range sections {
 			if t := a.lookup(section); t != nil {
@@ -175,7 +174,7 @@ func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 			}
 		}
 		for _, t := range a.needed {
-			if a.isSection(t) {
+			if isSection(t) {
 				defaults = append(defaults, t)
 			}
 		}
@@ -383,15 +382,24 @@ func isNamed(t types.Type, path, name string) bool {
 	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == path && n.Obj().Name() == name
 }
 
-// isSection reports whether t is a config section that a provider can
-// take: a struct type named Config, but the app's config.
-func (a *app) isSection(t types.Type) bool {
+// isSection reports whether t is a config section whose zero value is its
+// default: a struct type named Config, not generic, of one of goncini's
+// packages, or of a bundle, a package that exports a Layer, a
+// layer.ProviderSet.
+func isSection(t types.Type) bool {
 	n, ok := types.Unalias(t).(*types.Named)
-	if !ok || n.Obj().Name() != "Config" || types.Identical(n, a.config) {
+	if !ok || n.Obj().Name() != "Config" || n.Obj().Pkg() == nil || n.TypeArgs().Len() > 0 {
 		return false
 	}
-	_, ok = n.Underlying().(*types.Struct)
-	return ok
+	if _, ok := n.Underlying().(*types.Struct); !ok {
+		return false
+	}
+	pkg := n.Obj().Pkg()
+	if strings.HasPrefix(pkg.Path(), gonciniPath+"/") {
+		return true
+	}
+	l, ok := pkg.Scope().Lookup("Layer").(*types.Var)
+	return ok && isNamed(l.Type(), layerPath, "ProviderSet")
 }
 
 // provides reports whether an app's provider returns t.

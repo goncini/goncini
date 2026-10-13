@@ -4,8 +4,11 @@ package profiler_test
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -23,7 +26,7 @@ import (
 // request makes the spans of a request for path, as the kernel would,
 // with a failed query and a log record.
 //
-//line profiler_test.ego:23
+//line profiler_test.ego:26
 func request(tracer trace.Tracer, path string) {
 	ctx, root := tracer.Start(context.Background(), "GET", trace.WithSpanKind(trace.SpanKindServer),
 		trace.WithAttributes(attribute.String("http.request.method", "GET"), attribute.String("url.path", path)))
@@ -35,17 +38,25 @@ func request(tracer trace.Tracer, path string) {
 	root.End()
 }
 
+func newProfiler(c profiler.Config) *profiler.Profiler {
+	return profiler.New(c, slog.New(slog.DiscardHandler))
+}
+
 func TestProfiler(t *testing.T) {
-	p := profiler.New(profiler.Config{Enabled: true, Dir: t.TempDir(), Keep: 2})
+	p := newProfiler(profiler.Config{Enabled: true, Dir: t.TempDir(), Keep: 2})
 	tracer := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(p)).Tracer("test")
 	for _, path := range []string{"/articles", "/_profiler", "/_profiler/x", "/articles", "/articles"} {
 		request(tracer, path)
 	}
+	if err := os.WriteFile(filepath.Join(p.Store.Dir, "x.json"), []byte("{"), 0o644); err != nil {
+		panic(err)
+	} // not a profile: skipped
+//line profiler_test.ego:48
 	profiles, err := p.Store.List(10)
 	if err != nil {
 		panic(err)
 	}
-//line profiler_test.ego:41
+//line profiler_test.ego:49
 	if len(profiles) != 2 { // the profiler's own requests aren't kept, and only the last two of the others
 		t.Fatalf("%d profiles", len(profiles))
 	}
@@ -59,7 +70,7 @@ func TestProfiler(t *testing.T) {
 	if err := console.Run(context.Background(), &out, []console.Command{cmd}, "", []string{"debug:requests"}); err != nil {
 		panic(err)
 	}
-//line profiler_test.ego:52
+//line profiler_test.ego:60
 	if lines := strings.Split(strings.TrimSpace(out.String()), "\n"); len(lines) != 3 || !strings.Contains(lines[1], "503") || !strings.Contains(lines[1], "GET /articles") {
 		t.Errorf("list:\n%s", out.String())
 	}
@@ -67,7 +78,7 @@ func TestProfiler(t *testing.T) {
 	if err := console.Run(context.Background(), &out, []console.Command{cmd}, "", []string{"debug:requests", got.ID}); err != nil {
 		panic(err)
 	}
-//line profiler_test.ego:57
+//line profiler_test.ego:65
 	for _, want := range []string{"GET /articles  503", "SELECT", "error: no such table", "SELECT * FROM articles", "[WARN] slow"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("no %q in:\n%s", want, out.String())
@@ -75,23 +86,46 @@ func TestProfiler(t *testing.T) {
 	}
 }
 
-// TestDisabled checks that a disabled profiler wants no spans.
-func TestDisabled(t *testing.T) {
-	if profiler.New(profiler.Config{}).Enabled() {
-		t.Error("enabled by default")
+// TestSharedTrace checks that two requests of a trace that started
+// elsewhere, at the same time, get a profile each, of their own spans.
+func TestSharedTrace(t *testing.T) {
+	p := newProfiler(profiler.Config{Enabled: true, Dir: t.TempDir()})
+	tracer := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(p)).Tracer("test")
+	remote := trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{1}, TraceFlags: trace.FlagsSampled, Remote: true})
+	ctx := trace.ContextWithRemoteSpanContext(context.Background(), remote)
+	ctxA, a := tracer.Start(ctx, "A")
+	ctxB, b := tracer.Start(ctx, "B")
+	_, qa := tracer.Start(ctxA, "query A")
+	_, qb := tracer.Start(ctxB, "query B")
+	qb.End()
+	qa.End()
+	a.End()
+	b.End()
+	profiles, err := p.Store.List(10)
+	if err != nil {
+		panic(err)
+	}
+//line profiler_test.ego:88
+	if len(profiles) != 2 || profiles[0].ID == profiles[1].ID || profiles[0].Trace != profiles[1].Trace {
+		t.Fatalf("profiles %+v", profiles)
+	}
+	for _, pr := range profiles {
+		if len(pr.Spans) != 2 || pr.Spans[1].Name != "query "+pr.Name {
+			t.Errorf("%s's spans: %+v", pr.Name, pr.Spans)
+		}
 	}
 }
 
-// TestRoutes checks that the profiles are served as JSON, and only when
-// the profiler is enabled.
+// TestRoutes checks that the profiles are served as JSON, and that a
+// profiler is disabled by default.
 func TestRoutes(t *testing.T) {
-	p := profiler.New(profiler.Config{Enabled: true, Dir: t.TempDir()})
+	p := newProfiler(profiler.Config{Enabled: true, Dir: t.TempDir()})
 	request(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(p)).Tracer("test"), "/articles")
 	listed, err := p.Store.List(1)
 	if err != nil {
 		panic(err)
 	}
-//line profiler_test.ego:77
+//line profiler_test.ego:104
 	id := listed[0].ID
 	k := &httpkernel.Kernel{Handler: routing.New(p)}
 	for path, want := range map[string]string{
@@ -105,7 +139,7 @@ func TestRoutes(t *testing.T) {
 			t.Errorf("%s: %d %s", path, w.Code, w.Body)
 		}
 	}
-	if len(routing.New(profiler.New(profiler.Config{})).List()) != 0 {
-		t.Error("a disabled profiler serves routes")
+	if disabled := newProfiler(profiler.Config{}); disabled.Enabled() || len(routing.New(disabled).List()) != 0 {
+		t.Error("a disabled profiler wants spans, or serves routes")
 	}
 }

@@ -51,11 +51,13 @@ func (c *collector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // spans that the profiler keeps, logs included, reach the collector too.
 func TestExport(t *testing.T) {
 	col := &collector{spans: map[string][]string{}}
-	srv := httptest.NewServer(col)
+	mux := http.NewServeMux()
+	mux.Handle("POST /v1/traces", col)
+	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	exp := must otlp.New(otlp.Config{Endpoint: srv.URL})
-	p := profiler.New(profiler.Config{Enabled: true, Dir: t.TempDir()})
+	p := profiler.New(profiler.Config{Enabled: true, Dir: t.TempDir()}, slog.New(slog.DiscardHandler))
 	_, stop := must goncini.NewTracing([]goncini.SpanProcessor{p, exp})
 	logger := goncini.NewLogger(slog.NewTextHandler(io.Discard, nil))
 	k := &httpkernel.Kernel{Handler: http.HandlerFunc((w http.ResponseWriter, r *http.Request) => logger.InfoContext(r.Context(), "served"))}
@@ -68,7 +70,7 @@ func TestExport(t *testing.T) {
 	}
 	col.mu.Lock()
 	defer col.mu.Unlock()
-	got := col.spans[profiles[0].ID]
+	got := col.spans[profiles[0].Trace]
 	if len(got) != 2 || got[0] != "GET" || got[1] != "event log" {
 		t.Errorf("the collector got %v for the profiled trace; all: %v", got, col.spans)
 	}

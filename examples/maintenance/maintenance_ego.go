@@ -2,8 +2,8 @@
 
 // Package maintenance is a bundle that takes an API down for maintenance:
 // while it is down, every request but the maintenance status's is answered
-// with 503 Service Unavailable, on every instance that shares the file
-// that says so.
+// with 503 Service Unavailable, by every instance that sees the file that
+// says so.
 //
 // It is an example of a third-party bundle, a package that plugs into a
 // goncini app when its Layer joins the app's Services:
@@ -17,6 +17,7 @@
 package maintenance
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io/fs"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/effect-go/effect-go/layer"
 
+	"github.com/goncini/goncini"
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
@@ -35,13 +37,15 @@ import (
 
 // Config configures the maintenance.
 //
-//line maintenance.ego:33
+//line maintenance.ego:35
 type Config struct {
 	// File is the file whose existence means that the API is down; empty
-	// means var/maintenance.
+	// means var/maintenance. A relative path is the app's project
+	// directory's, as goncini.ProjectDir finds it.
 	File string
 	// Path is the maintenance status's path, which stays up; empty means
-	// /_maintenance.
+	// /_maintenance. It is the path as requests have it, under any prefix
+	// that the app puts the routes under.
 	Path string
 }
 
@@ -54,13 +58,11 @@ type Maintenance struct {
 }
 
 func New(c Config) *Maintenance {
-	if c.File == "" {
-		c.File = filepath.Join("var", "maintenance")
+	file := cmp.Or(c.File, filepath.Join("var", "maintenance"))
+	if !filepath.IsAbs(file) {
+		file = filepath.Join(goncini.ProjectDir(), file)
 	}
-	if c.Path == "" {
-		c.Path = "/_maintenance"
-	}
-	return &Maintenance{file: c.File, path: c.Path}
+	return &Maintenance{file: file, path: cmp.Or(c.Path, "/_maintenance")}
 }
 
 // IsDown reports whether the API is down for maintenance.
@@ -81,11 +83,11 @@ func (m *Maintenance) SetDown(down bool) error {
 		}
 		return v
 	}
-//line maintenance.ego:72
+//line maintenance.ego:74
 	if err := os.MkdirAll(filepath.Dir(m.file), 0o755); err != nil {
 		return err
 	}
-//line maintenance.ego:73
+//line maintenance.ego:75
 	return os.WriteFile(m.file, nil, 0o644)
 }
 

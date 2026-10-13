@@ -50,7 +50,15 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	}
 	articles2 := articles.NewArticles(store, v, registry)
 	config5 := autoConfigProfiler(cfg)
-	profiler2 := profiler.New(config5)
+	log := autoConfigLog(cfg)
+	logger, cleanup2, err := zaplog.NewLogger(log)
+	if err != nil {
+		return nil, fmt.Errorf("zaplog.NewLogger: %w", err)
+	}
+	s.Defer(func(context.Context) error { return cleanup2() })
+	handler := zaplog.NewHandler(logger)
+	logger2 := goncini.NewLogger(handler)
+	profiler2 := profiler.New(config5, logger2)
 	v3 := autoRoutes(articles2, profiler2, maintenance2)
 	router := goncini.NewRouter(v3)
 	config6 := autoConfigEditors(cfg)
@@ -62,14 +70,6 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v5 := autoProblems()
 	renderer := goncini.NewRenderer()
 	validator := goncini.NewValidator()
-	log := autoConfigLog(cfg)
-	logger, cleanup2, err := zaplog.NewLogger(log)
-	if err != nil {
-		return nil, fmt.Errorf("zaplog.NewLogger: %w", err)
-	}
-	s.Defer(func(context.Context) error { return cleanup2() })
-	handler := zaplog.NewHandler(logger)
-	logger2 := goncini.NewLogger(handler)
 	kernel, err := goncini.NewKernel(http, router, v4, v5, renderer, validator, dispatcher, logger2)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
@@ -133,7 +133,15 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	}
 	articles2 := articles.NewArticles(store, now, registry)
 	config5 := autoConfigProfiler(cfg)
-	profiler2 := profiler.New(config5)
+	log := autoConfigLog(cfg)
+	logger, cleanup2, err := zaplog.NewLogger(log)
+	if err != nil {
+		return nil, fmt.Errorf("zaplog.NewLogger: %w", err)
+	}
+	s.Defer(func(context.Context) error { return cleanup2() })
+	handler := zaplog.NewHandler(logger)
+	logger2 := goncini.NewLogger(handler)
+	profiler2 := profiler.New(config5, logger2)
 	v2 := autoRoutes(articles2, profiler2, maintenance2)
 	router := goncini.NewRouter(v2)
 	config6 := autoConfigEditors(cfg)
@@ -145,14 +153,6 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	v4 := autoProblems()
 	renderer := goncini.NewRenderer()
 	validator := goncini.NewValidator()
-	log := autoConfigLog(cfg)
-	logger, cleanup2, err := zaplog.NewLogger(log)
-	if err != nil {
-		return nil, fmt.Errorf("zaplog.NewLogger: %w", err)
-	}
-	s.Defer(func(context.Context) error { return cleanup2() })
-	handler := zaplog.NewHandler(logger)
-	logger2 := goncini.NewLogger(handler)
 	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, dispatcher, logger2)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)

@@ -170,7 +170,7 @@ func TestQuerySpans(t *testing.T) {
 	rec := tracetest.NewSpanRecorder()
 	ctx, parent := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)).Tracer("test").Start(context.Background(), "request")
 	s.Conn(ctx).ExecContext(ctx, "insert into t")
-	s.Conn(ctx).QueryContext(ctx, "select")
+	s.Conn(ctx).QueryContext(ctx, "-- name: List :many\n/* sqlc */ select\n\tid") // named past its comments
 	parent.End()
 	s.Conn(context.Background()).ExecContext(context.Background(), "insert outside") // no span
 	var got []string

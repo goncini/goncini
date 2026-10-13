@@ -3,7 +3,6 @@
 package app_test
 
 import (
-	"os"
 	"testing"
 
 	"github.com/goncini/goncini/webtest"
@@ -17,10 +16,10 @@ import (
 // section has a default, since the config has none, and its commands, its
 // subscriber and its documented endpoint work.
 //
-//line bundle_test.ego:17
+//line bundle_test.ego:16
 func TestBundle(t *testing.T) {
-	t.Cleanup(func() { os.RemoveAll("var") }) // where the default config keeps the maintenance's file
 	a := webtest.Boot(t, config.Load, app.Build)
+	t.Cleanup(func() { webtest.Run(t, a, "maintenance:up") }) // the file stays, in the project's var/, if the test fails
 	webtest.Run(t, a, "db:migrate")
 	c := webtest.NewClient(t, a)
 	c.Get("/_maintenance").Status(200).Contains(`"down":false`)

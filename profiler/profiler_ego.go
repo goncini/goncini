@@ -2,12 +2,14 @@
 
 // Package profiler shows what each request did, as Symfony's
 // WebProfilerBundle does, from the spans the app already makes: the
-// endpoint's, the store's queries, the outgoing HTTP calls, and the log
+// endpoint's, the store's queries, httpclient's calls, and the log
 // records, which goncini adds to their spans.
 //
 // In dev, with Config.Enabled, each request's profile is kept in
 // var/profiler: /_profiler lists the last ones as JSON, /_profiler/{id}
-// shows one, and debug:requests prints them from another terminal.
+// shows one, and debug:requests prints them from another terminal. The
+// profiles hold the requests' queries and logs, and /_profiler has no
+// authentication: enable it in dev only.
 //
 //	var Services = layer.Set(profiler.Layer, …)
 //
@@ -17,25 +19,31 @@ package profiler
 import (
 	"cmp"
 	"context"
+	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 
 	"github.com/effect-go/effect-go/layer"
+
+	"github.com/goncini/goncini"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // Config configures the profiler.
 //
-//line profiler.ego:28
+//line profiler.ego:34
 type Config struct {
 	// Enabled profiles the app's requests: for development only, as
 	// profiles show the requests' data.
 	Enabled bool
-	// Dir is where profiles are kept; empty means var/profiler.
+	// Dir is where profiles are kept; empty means var/profiler. A relative
+	// path is the app's project directory's, as goncini.ProjectDir finds
+	// it, so that debug:requests reads it from anywhere in the project.
 	Dir string
-	// Keep is how many profiles are kept; zero means 200.
+	// Keep is how many profiles are kept; zero or less means 200.
 	Keep int
 	// Path is where the profiles are served; empty means /_profiler.
 	Path string
@@ -54,6 +62,7 @@ const maxPending = 1000
 type Profiler struct {
 	Config Config
 	Store  *FileStore
+	Logger *slog.Logger // says when a profile can't be kept
 
 	mu      sync.Mutex
 	pending map[trace.TraceID][]sdktrace.ReadOnlySpan
@@ -61,10 +70,15 @@ type Profiler struct {
 }
 
 // New returns the profiler that c configures.
-func New(c Config) *Profiler {
-	c.Dir, c.Path = cmp.Or(c.Dir, "var/profiler"), cmp.Or(c.Path, "/_profiler")
-	c.Keep = cmp.Or(c.Keep, 200)
-	return &Profiler{Config: c, Store: &FileStore{Dir: c.Dir, Keep: c.Keep}, pending: map[trace.TraceID][]sdktrace.ReadOnlySpan{}}
+func New(c Config, logger *slog.Logger) *Profiler {
+	c.Dir, c.Path = cmp.Or(c.Dir, filepath.Join("var", "profiler")), cmp.Or(c.Path, "/_profiler")
+	if !filepath.IsAbs(c.Dir) {
+		c.Dir = filepath.Join(goncini.ProjectDir(), c.Dir)
+	}
+	if c.Keep <= 0 {
+		c.Keep = 200
+	}
+	return &Profiler{Config: c, Store: &FileStore{Dir: c.Dir, Keep: c.Keep}, Logger: logger, pending: map[trace.TraceID][]sdktrace.ReadOnlySpan{}}
 }
 
 // Enabled reports whether the profiler wants the app's spans.
@@ -72,29 +86,61 @@ func (p *Profiler) Enabled() bool { return p.Config.Enabled }
 
 func (p *Profiler) OnStart(ctx context.Context, s sdktrace.ReadWriteSpan) {}
 
-// OnEnd keeps s with its trace's, until its trace's root ends: then the
-// profile is made and kept, unless it is a request for the profiles.
+// OnEnd keeps s with its trace's, until its root ends, a span whose parent
+// isn't in the process: then the root's profile is made of it and its
+// descendants, and kept, unless it is a request for the profiles.
 func (p *Profiler) OnEnd(s sdktrace.ReadOnlySpan) {
 	id := s.SpanContext().TraceID()
 	parent := s.Parent()
 	p.mu.Lock()
-	if _, ok := p.pending[id]; !ok {
-		p.order = append(p.order, id)
-	}
-	p.pending[id] = append(p.pending[id], s)
+	var spans []sdktrace.ReadOnlySpan
 	if parent.IsValid() && !parent.IsRemote() {
-		p.forgetOldest()
-		p.mu.Unlock()
+		if _, ok := p.pending[id]; !ok {
+			p.order = append(p.order, id)
+		}
+		p.pending[id] = append(p.pending[id], s)
+	} else {
+		spans = p.takeTree(s)
+	}
+	p.forgetOldest()
+	p.mu.Unlock()
+	if spans == nil {
 		return
 	}
-	spans := p.pending[id]
-	delete(p.pending, id)
-	p.mu.Unlock()
 	profile := build(s, spans)
 	if profile.Path == p.Config.Path || strings.HasPrefix(profile.Path, p.Config.Path+"/") {
 		return
 	}
-	p.Store.Save(profile) // a profile that can't be kept is lost: the request isn't
+	if err := p.Store.Save(profile); err != nil { // the profile is lost, not the request
+		p.Logger.Warn("profiler: a profile can't be kept", "error", err)
+	}
+}
+
+// takeTree returns root and the pending spans that descend from it, which
+// it forgets. The requests of a trace that started elsewhere share its ID:
+// each gets its own spans.
+func (p *Profiler) takeTree(root sdktrace.ReadOnlySpan) []sdktrace.ReadOnlySpan {
+	id := root.SpanContext().TraceID()
+	children := map[trace.SpanID][]sdktrace.ReadOnlySpan{}
+	for _, s := range p.pending[id] {
+		children[s.Parent().SpanID()] = append(children[s.Parent().SpanID()], s)
+	}
+	tree := []sdktrace.ReadOnlySpan{root}
+	for i := 0; i < len(tree); i++ {
+		sid := tree[i].SpanContext().SpanID()
+		tree = append(tree, children[sid]...)
+		delete(children, sid)
+	}
+	var rest []sdktrace.ReadOnlySpan
+	for _, spans := range children {
+		rest = append(rest, spans...)
+	}
+	if len(rest) == 0 {
+		delete(p.pending, id)
+	} else {
+		p.pending[id] = rest
+	}
+	return tree
 }
 
 // forgetOldest forgets the oldest traces beyond maxPending, whose roots

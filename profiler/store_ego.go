@@ -23,33 +23,45 @@ type FileStore struct {
 	Dir  string
 	Keep int
 
-	mu sync.Mutex
+	mu  sync.Mutex
+	seq int // orders the profiles of the same time
 }
 
 // Save keeps p, and forgets the oldest profiles beyond Keep.
 func (s *FileStore) Save(p Profile) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
-		return err
+	if err2 := os.MkdirAll(s.Dir, 0o755); err2 != nil {
+		return err2
 	}
-//line store.ego:30
-	b, err := json.Marshal(p)
-	if err != nil {
-		return err
+//line store.ego:31
+	b, err3 := json.Marshal(p)
+	if err3 != nil {
+		return err3
 	}
 	// Names sort as the profiles' times: the newest last.
-//line store.ego:32
-	name := fmt.Sprintf("%020d-%s.json", p.Time.UnixNano(), p.ID)
-	if err := os.WriteFile(filepath.Join(s.Dir, name), b, 0o644); err != nil {
-		return err
+//line store.ego:33
+	s.seq++
+	name := fmt.Sprintf("%020d-%09d-%s.json", p.Time.UnixNano(), s.seq%1_000_000_000, p.ID)
+	// Written whole, then renamed: readers never see half a profile.
+	tmp, err4 := os.CreateTemp(s.Dir, ".profile-*")
+	if err4 != nil {
+		return err4
 	}
-//line store.ego:34
-	names, err := s.names()
+//line store.ego:37
+	_, err := tmp.Write(b)
+	if err = errors.Join(err, tmp.Close()); err == nil {
+		err = os.Rename(tmp.Name(), filepath.Join(s.Dir, name))
+	}
 	if err != nil {
+		os.Remove(tmp.Name())
 		return err
 	}
-//line store.ego:35
+	names, err5 := s.names()
+	if err5 != nil {
+		return err5
+	}
+//line store.ego:46
 	for _, old := range names[:max(len(names)-s.Keep, 0)] {
 		os.Remove(filepath.Join(s.Dir, old))
 	}
@@ -62,19 +74,16 @@ func (s *FileStore) List(n int) ([]Profile, error) {
 	if err != nil {
 		return nil, err
 	}
-//line store.ego:44
+//line store.ego:55
 	slices.Reverse(names)
 	out := []Profile{}
-	for _, name := range names[:min(n, len(names))] {
-		p, err := s.read(name)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue // forgotten meanwhile
+	for _, name := range names {
+		if len(out) == n {
+			break
 		}
-		if err != nil {
-			return nil, err
-		}
-//line store.ego:52
-		out = append(out, p)
+		if p, err := s.read(name); err == nil {
+			out = append(out, p)
+		} // else forgotten meanwhile, or not a profile
 	}
 	return out, nil
 }
@@ -85,7 +94,7 @@ func (s *FileStore) Get(id string) (Profile, bool, error) {
 	if err != nil {
 		return Profile{}, false, err
 	}
-//line store.ego:60
+//line store.ego:71
 	for _, name := range names {
 		if strings.HasSuffix(name, "-"+id+".json") {
 			p, err := s.read(name)
@@ -107,7 +116,7 @@ func (s *FileStore) names() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-//line store.ego:79
+//line store.ego:90
 	var names []string
 	for _, e := range entries {
 		if strings.HasSuffix(e.Name(), ".json") {
@@ -123,10 +132,10 @@ func (s *FileStore) read(name string) (Profile, error) {
 	if err != nil {
 		return Profile{}, err
 	}
-//line store.ego:91
+//line store.ego:102
 	if err := json.Unmarshal(b, &p); err != nil {
 		return Profile{}, err
 	}
-//line store.ego:92
+//line store.ego:103
 	return p, nil
 }

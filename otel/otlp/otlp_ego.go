@@ -17,6 +17,7 @@ package otlp
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/effect-go/effect-go/layer"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -25,10 +26,11 @@ import (
 
 // Config configures the export.
 //
-//line otlp.ego:25
+//line otlp.ego:26
 type Config struct {
-	// Endpoint is the collector's URL, such as http://localhost:4318: the
-	// spans go to its /v1/traces. Empty means no export.
+	// Endpoint is the collector's URL, such as http://localhost:4318, as
+	// OTEL_EXPORTER_OTLP_ENDPOINT has it: the spans go to its /v1/traces,
+	// unless it has a path of its own. Empty means no export.
 	Endpoint string
 	// Headers are sent with each export, such as an API key: secrets.
 	Headers map[string]string
@@ -50,7 +52,14 @@ func New(c Config) (*Exporter, error) {
 	if c.Endpoint == "" {
 		return &Exporter{}, nil
 	}
-	opts := []otlptracehttp.Option{otlptracehttp.WithEndpointURL(c.Endpoint)}
+	u, err := url.Parse(c.Endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("otlp: %w", err)
+	}
+	if u.Path == "" || u.Path == "/" {
+		u.Path = "/v1/traces"
+	}
+	opts := []otlptracehttp.Option{otlptracehttp.WithEndpointURL(u.String())}
 	if len(c.Headers) > 0 {
 		opts = append(opts, otlptracehttp.WithHeaders(c.Headers))
 	}

@@ -354,13 +354,12 @@ plain constructors, matched by their result types.
   the services that can be pinged (checked before serving), and a provider
   per field of the config. A kind that the app provides itself, such as
   `[]routing.Routes` to put them under a prefix, is left to it.
-- A `Config` that a provider takes and the config has no field of gets its
-  zero value, which is its default: the app's config has a section only
-  for what it changes.
-- A bundle is a package that exports a `Layer`, its providers: listing it in
-  `Services` adds its routes, commands and subscribers, as
-  `examples/maintenance` does to the articles example. Its `Config`'s zero
-  value works, and an app's config section changes it.
+- A bundle is a package that exports a `Layer`, its providers: listing it
+  in `Services` adds its routes, commands and subscribers, as
+  `examples/maintenance` does to the articles example. Its `Config`, as
+  goncini's packages', has its zero value as default when the app's config
+  has no field of its type: the config has a section only for what it
+  changes. A missing section of the app's own is an error.
 - A service that logs takes a `*slog.Logger`. The app's logs go to the
   `slog.Handler` it provides, goncini's text or JSON one by default.
 - A service that needs the time takes a `now func() time.Time`, which the

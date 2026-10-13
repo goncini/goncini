@@ -27,13 +27,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
 // Config configures a database/sql connection pool. Each field's zero value
 // is database/sql's default.
 //
-//line db.ego:33
+//line db.ego:34
 type Config struct {
 	// Driver is the name of the database/sql driver, such as "pgx" or
 	// "sqlite"; the app imports the driver's package.
@@ -109,6 +110,9 @@ type SQL struct {
 	// TxOptions sets the isolation level and read-only mode of the
 	// transactions; nil means the driver's defaults.
 	TxOptions *sql.TxOptions
+
+	systemOnce sync.Once
+	system     string // the database's, for the queries' spans
 }
 
 // NewSQL returns the Transactor of pool.
@@ -125,9 +129,9 @@ type txKey struct{ db *sql.DB }
 //	queries := sqlcgen.New(s.sql.Conn(ctx))
 func (s *SQL) Conn(ctx context.Context) Conn {
 	if tx, ok := ctx.Value(txKey{s.DB}).(*sql.Tx); ok {
-		return traced{tx, s.DB}
+		return traced{tx, s}
 	}
-	return traced{s.DB, s.DB}
+	return traced{s.DB, s}
 }
 
 // Tx returns the transaction that ctx is in, if any.

@@ -18,9 +18,12 @@ import (
 //
 //line profile.ego:16
 type Profile struct {
-	// ID is the trace's.
-	ID   string    `json:"id"`
-	Time time.Time `json:"time"`
+	// ID is the root span's.
+	ID string `json:"id"`
+	// Trace is the trace's ID, which the requests of a trace that started
+	// elsewhere share.
+	Trace string    `json:"trace"`
+	Time  time.Time `json:"time"`
 	// Micros is how long it took, in microseconds.
 	Micros int64 `json:"micros"`
 	// Name is the root span's, such as GET.
@@ -63,7 +66,8 @@ func build(root sdktrace.ReadOnlySpan, spans []sdktrace.ReadOnlySpan) Profile {
 	start := root.StartTime()
 	attrs := attributes(root)
 	p := Profile{
-		ID:     root.SpanContext().TraceID().String(),
+		ID:     root.SpanContext().SpanID().String(),
+		Trace:  root.SpanContext().TraceID().String(),
 		Time:   start,
 		Micros: root.EndTime().Sub(start).Microseconds(),
 		Name:   root.Name(),

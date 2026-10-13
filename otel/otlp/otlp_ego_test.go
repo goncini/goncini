@@ -67,20 +67,22 @@ func (c *collector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // spans that the profiler keeps, logs included, reach the collector too.
 func TestExport(t *testing.T) {
 	col := &collector{spans: map[string][]string{}}
-	srv := httptest.NewServer(col)
+	mux := http.NewServeMux()
+	mux.Handle("POST /v1/traces", col)
+	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	exp, err := otlp.New(otlp.Config{Endpoint: srv.URL})
 	if err != nil {
 		panic(err)
 	}
-//line otlp_test.ego:58
-	p := profiler.New(profiler.Config{Enabled: true, Dir: t.TempDir()})
+//line otlp_test.ego:60
+	p := profiler.New(profiler.Config{Enabled: true, Dir: t.TempDir()}, slog.New(slog.DiscardHandler))
 	_, stop, err := goncini.NewTracing([]goncini.SpanProcessor{p, exp})
 	if err != nil {
 		panic(err)
 	}
-//line otlp_test.ego:60
+//line otlp_test.ego:62
 	logger := goncini.NewLogger(slog.NewTextHandler(io.Discard, nil))
 	k := &httpkernel.Kernel{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { logger.InfoContext(r.Context(), "served") })}
 	k.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/hello", nil))
@@ -88,18 +90,18 @@ func TestExport(t *testing.T) {
 		panic(err)
 	} // flushes the batch
 
-//line otlp_test.ego:65
+//line otlp_test.ego:67
 	profiles, err := p.Store.List(1)
 	if err != nil {
 		panic(err)
 	}
-//line otlp_test.ego:66
+//line otlp_test.ego:68
 	if len(profiles) != 1 {
 		t.Fatalf("%d profiles", len(profiles))
 	}
 	col.mu.Lock()
 	defer col.mu.Unlock()
-	got := col.spans[profiles[0].ID]
+	got := col.spans[profiles[0].Trace]
 	if len(got) != 2 || got[0] != "GET" || got[1] != "event log" {
 		t.Errorf("the collector got %v for the profiled trace; all: %v", got, col.spans)
 	}
@@ -112,7 +114,7 @@ func TestDisabled(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line otlp_test.ego:81
+//line otlp_test.ego:83
 	if exp.Enabled() {
 		t.Error("enabled without an endpoint")
 	}

@@ -2,10 +2,12 @@ package goncini
 
 import (
 	"context"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // SpanProcessor receives the app's spans when it is enabled, as the
@@ -18,6 +20,10 @@ type SpanProcessor interface {
 	Enabled() bool
 }
 
+// shutdownTimeout bounds the flush of the spans when the app stops, as to
+// a collector that doesn't answer.
+const shutdownTimeout = 5 * time.Second
+
 // Tracing is the app's tracer provider, nil when no SpanProcessor is
 // enabled.
 type Tracing struct {
@@ -29,6 +35,9 @@ type Tracing struct {
 // until the app stops; its resource follows OTEL_SERVICE_NAME and
 // OTEL_RESOURCE_ATTRIBUTES. It also makes W3C trace context the global
 // propagator, so that incoming and outgoing requests carry their traces.
+// When the app stops, the processors get shutdownTimeout to flush their
+// spans, and the globals are restored, unless another app has replaced
+// them meanwhile.
 func NewTracing(processors []SpanProcessor) (*Tracing, func(ctx context.Context) error, error) {
 	var opts []sdktrace.TracerProviderOption
 	for _, p := range processors {
@@ -44,8 +53,12 @@ func NewTracing(processors []SpanProcessor) (*Tracing, func(ctx context.Context)
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	stop := func(ctx context.Context) error {
-		otel.SetTracerProvider(previous)
-		otel.SetTextMapPropagator(propagator)
+		if otel.GetTracerProvider() == trace.TracerProvider(tp) {
+			otel.SetTracerProvider(previous)
+			otel.SetTextMapPropagator(propagator)
+		}
+		ctx, cancel := context.WithTimeout(ctx, shutdownTimeout)
+		defer cancel()
 		return tp.Shutdown(ctx)
 	}
 	return &Tracing{Provider: tp}, stop, nil
