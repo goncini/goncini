@@ -6,9 +6,11 @@ import (
 	"context"
 	"errors"
 	"html"
+	"net/mail"
 	"strconv"
 	"strings"
 
+	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/mailer"
@@ -22,7 +24,7 @@ import (
 
 // Users serves the users and their profiles.
 //
-//line controller.ego:18
+//line controller.ego:21
 type Users struct {
 	store  *Store
 	hasher security.Hasher
@@ -30,19 +32,20 @@ type Users struct {
 	logins *ratelimit.Limiter // by email and client address
 	events *event.Dispatcher
 	mailer *mailer.Mailer
+	tx     db.Transactor // a user's save and its messages are one
 	// dummy is the hash that a login with an unknown email checks, so that
 	// it takes as long as with a known one: the time doesn't tell which
 	// emails have users.
 	dummy string
 }
 
-func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins *ratelimit.Limiter, events *event.Dispatcher, m *mailer.Mailer) (*Users, error) {
+func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins *ratelimit.Limiter, events *event.Dispatcher, m *mailer.Mailer, tx db.Transactor) (*Users, error) {
 	dummy, err := hasher.Hash("no user has this password")
 	if err != nil {
 		return nil, err
 	}
-//line controller.ego:33
-	return &Users{store: store, hasher: hasher, tokens: tokens, logins: logins, events: events, mailer: m, dummy: dummy}, nil
+//line controller.ego:37
+	return &Users{store: store, hasher: hasher, tokens: tokens, logins: logins, events: events, mailer: m, tx: tx, dummy: dummy}, nil
 }
 
 // Updated is the event of a user's profile changed, for the features that
@@ -82,7 +85,7 @@ func (u *Users) body(user *User) (UserBody, error) {
 		return UserBody{}, err
 	}
 	b.User.Token = v
-//line controller.ego:69
+//line controller.ego:73
 	b.User.Email, b.User.Username, b.User.Bio, b.User.Image = user.Email, user.Username, user.Bio, user.Image
 	return b, nil
 }
@@ -91,7 +94,7 @@ type RegisterInput struct {
 	Body struct {
 		User struct {
 			Username string `json:"username" validate:"required"`
-			Email    string `json:"email" validate:"required"`
+			Email    string `json:"email" validate:"required,email"`
 			Password string `json:"password" validate:"required"`
 		} `json:"user"`
 	}
@@ -101,7 +104,7 @@ type RegisterInput struct {
 func (u *Users) Register(ctx context.Context, in RegisterInput) (_ httpkernel.Created[UserBody], err error) {
 	ctx, span := trace.Start(ctx, "users.Users.Register")
 	defer trace.End(span, &err)
-//line controller.ego:85
+//line controller.ego:89
 	b := in.Body.User
 	hash, err := u.hasher.Hash(b.Password)
 	if err != nil {
@@ -110,26 +113,25 @@ func (u *Users) Register(ctx context.Context, in RegisterInput) (_ httpkernel.Cr
 		}
 		return httpkernel.Created[UserBody]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:87
+//line controller.ego:91
 	user := &User{Username: b.Username, Email: b.Email, PasswordHash: hash}
-	taken, err := u.store.Save(ctx, user)
-	if err != nil {
+	if err := u.tx.InTx(ctx, func(ctx context.Context) error {
+		taken, err := u.store.Save(ctx, user)
+		if err != nil {
+			return err
+		}
+//line controller.ego:94
+		if taken != "" {
+			return Taken{Field: taken}
+		}
+		return u.mailer.Send(ctx, welcome(user)) // queued with the user, and sent by a worker
+	}); err != nil {
 		if _, ok := errors.AsType[UserError](err); ok {
 			return httpkernel.Created[UserBody]{}, err
 		}
 		return httpkernel.Created[UserBody]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:89
-	if taken != "" {
-		return httpkernel.Created[UserBody]{}, Taken{Field: taken}
-	}
-	if err := u.mailer.Send(ctx, welcome(user)); err != nil {
-		if _, ok := errors.AsType[UserError](err); ok {
-			return httpkernel.Created[UserBody]{}, err
-		}
-		return httpkernel.Created[UserBody]{}, Unavailable{Cause: err}
-	} // sent by a worker
-//line controller.ego:93
+//line controller.ego:99
 	body, err := u.body(user)
 	if err != nil {
 		if _, ok := errors.AsType[UserError](err); ok {
@@ -137,7 +139,7 @@ func (u *Users) Register(ctx context.Context, in RegisterInput) (_ httpkernel.Cr
 		}
 		return httpkernel.Created[UserBody]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:94
+//line controller.ego:100
 	return httpkernel.Created[UserBody]{Body: body}, nil
 }
 
@@ -156,7 +158,7 @@ type LoginInput struct {
 func (u *Users) Login(ctx context.Context, in LoginInput) (_ UserBody, err error) {
 	ctx, span := trace.Start(ctx, "users.Users.Login")
 	defer trace.End(span, &err)
-//line controller.ego:110
+//line controller.ego:116
 	key := strings.ToLower(in.Body.User.Email) + " " + httpkernel.ClientIPOf(ctx).String()
 	attempt, err := u.logins.Take(ctx, key, 1)
 	if err != nil {
@@ -165,7 +167,7 @@ func (u *Users) Login(ctx context.Context, in LoginInput) (_ UserBody, err error
 		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:112
+//line controller.ego:118
 	if !attempt.Allowed {
 		return UserBody{}, TooManyLogins{RetryAfter: attempt.RetryAfter}
 	}
@@ -176,14 +178,14 @@ func (u *Users) Login(ctx context.Context, in LoginInput) (_ UserBody, err error
 		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:116
+//line controller.ego:122
 	var hash string
 	if ok {
 		hash = user.PasswordHash
 	} else {
 		hash = u.dummy
 	}
-//line controller.ego:117
+//line controller.ego:123
 	valid, err := u.hasher.Verify(hash, in.Body.User.Password)
 	if err != nil {
 		if _, ok := errors.AsType[UserError](err); ok {
@@ -191,7 +193,7 @@ func (u *Users) Login(ctx context.Context, in LoginInput) (_ UserBody, err error
 		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:118
+//line controller.ego:124
 	if !ok || !valid {
 		return UserBody{}, BadCredentials{}
 	}
@@ -201,7 +203,7 @@ func (u *Users) Login(ctx context.Context, in LoginInput) (_ UserBody, err error
 		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:122
+//line controller.ego:128
 	body, err := u.body(user)
 	if err != nil {
 		if _, ok := errors.AsType[UserError](err); ok {
@@ -209,7 +211,7 @@ func (u *Users) Login(ctx context.Context, in LoginInput) (_ UserBody, err error
 		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:123
+//line controller.ego:129
 	return body, nil
 }
 
@@ -217,7 +219,7 @@ func (u *Users) Login(ctx context.Context, in LoginInput) (_ UserBody, err error
 func (u *Users) Current(ctx context.Context, in struct{}) (_ UserBody, err error) {
 	ctx, span := trace.Start(ctx, "users.Users.Current")
 	defer trace.End(span, &err)
-//line controller.ego:128
+//line controller.ego:134
 	body, err := u.body(Current(ctx))
 	if err != nil {
 		if _, ok := errors.AsType[UserError](err); ok {
@@ -225,7 +227,7 @@ func (u *Users) Current(ctx context.Context, in struct{}) (_ UserBody, err error
 		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:129
+//line controller.ego:135
 	return body, nil
 }
 
@@ -251,6 +253,11 @@ func (in *UpdateInput) Validate() error {
 			vs = append(vs, httpkernel.Violation{Pointer: "#/user/" + name, Detail: "can't be blank"})
 		}
 	}
+	if b.Email.Present() && b.Email.Value != "" {
+		if a, err := mail.ParseAddress(b.Email.Value); err != nil || a.Address != b.Email.Value {
+			vs = append(vs, httpkernel.Violation{Pointer: "#/user/email", Detail: "is invalid"})
+		}
+	}
 	if b.Password.Present() && b.Password.Value != "" && len([]rune(b.Password.Value)) < 8 {
 		vs = append(vs, httpkernel.Violation{Pointer: "#/user/password", Detail: "is too short (minimum is 8 characters)"})
 	}
@@ -264,7 +271,7 @@ func (in *UpdateInput) Validate() error {
 func (u *Users) Update(ctx context.Context, in UpdateInput) (_ UserBody, err error) {
 	ctx, span := trace.Start(ctx, "users.Users.Update")
 	defer trace.End(span, &err)
-//line controller.ego:165
+//line controller.ego:176
 	b := in.Body.User
 	user := *Current(ctx)
 	if b.Email.Set {
@@ -283,31 +290,30 @@ func (u *Users) Update(ctx context.Context, in UpdateInput) (_ UserBody, err err
 		}
 		user.PasswordHash = v
 	}
-//line controller.ego:176
+//line controller.ego:187
 	if b.Bio.Set {
 		user.Bio = orNull(b.Bio)
 	}
 	if b.Image.Set {
 		user.Image = orNull(b.Image)
 	}
-	taken, err := u.store.Save(ctx, &user)
-	if err != nil {
+	if err := u.tx.InTx(ctx, func(ctx context.Context) error {
+		taken, err := u.store.Save(ctx, &user)
+		if err != nil {
+			return err
+		}
+//line controller.ego:195
+		if taken != "" {
+			return Taken{Field: taken}
+		}
+		return event.Dispatch(ctx, u.events, &Updated{ID: user.ID})
+	}); err != nil {
 		if _, ok := errors.AsType[UserError](err); ok {
 			return UserBody{}, err
 		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:183
-	if taken != "" {
-		return UserBody{}, Taken{Field: taken}
-	}
-	if err := event.Dispatch(ctx, u.events, &Updated{ID: user.ID}); err != nil {
-		if _, ok := errors.AsType[UserError](err); ok {
-			return UserBody{}, err
-		}
-		return UserBody{}, Unavailable{Cause: err}
-	}
-//line controller.ego:187
+//line controller.ego:200
 	body, err := u.body(&user)
 	if err != nil {
 		if _, ok := errors.AsType[UserError](err); ok {
@@ -315,7 +321,7 @@ func (u *Users) Update(ctx context.Context, in UpdateInput) (_ UserBody, err err
 		}
 		return UserBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:188
+//line controller.ego:201
 	return body, nil
 }
 
@@ -332,7 +338,7 @@ func orNull(o httpkernel.Optional[string]) *string {
 
 // ProfileBody is a profile, as the API sends it.
 //
-//line controller.ego:197
+//line controller.ego:210
 type ProfileBody struct {
 	Profile Profile `json:"profile"`
 }
@@ -350,7 +356,7 @@ func (u *Users) Profile(ctx context.Context, in ProfileInput) (_ ProfileBody, er
 
 // Follow makes the authenticated user follow another.
 //
-//line controller.ego:211
+//line controller.ego:224
 func (u *Users) Follow(ctx context.Context, in ProfileInput) (_ ProfileBody, err error) {
 	ctx, span := trace.Start(ctx, "users.Users.Follow")
 	defer trace.End(span, &err)
@@ -360,7 +366,7 @@ func (u *Users) Follow(ctx context.Context, in ProfileInput) (_ ProfileBody, err
 
 // Unfollow makes the authenticated user stop following another.
 //
-//line controller.ego:217
+//line controller.ego:230
 func (u *Users) Unfollow(ctx context.Context, in ProfileInput) (_ ProfileBody, err error) {
 	ctx, span := trace.Start(ctx, "users.Users.Unfollow")
 	defer trace.End(span, &err)
@@ -371,11 +377,11 @@ func (u *Users) Unfollow(ctx context.Context, in ProfileInput) (_ ProfileBody, e
 // profile returns the profile of the user with the username, as the viewer
 // sees it, after following or unfollowing them if follow isn't nil.
 //
-//line controller.ego:224
+//line controller.ego:237
 func (u *Users) profile(ctx context.Context, username string, follow *bool) (_ ProfileBody, err error) {
 	ctx, span := trace.Start(ctx, "users.Users.profile")
 	defer trace.End(span, &err)
-//line controller.ego:225
+//line controller.ego:238
 	user, ok, err := u.store.ByUsername(ctx, username)
 	if err != nil {
 		if _, ok := errors.AsType[UserError](err); ok {
@@ -383,7 +389,7 @@ func (u *Users) profile(ctx context.Context, username string, follow *bool) (_ P
 		}
 		return ProfileBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:226
+//line controller.ego:239
 	if !ok {
 		return ProfileBody{}, NoProfile{Username: username}
 	}
@@ -396,7 +402,7 @@ func (u *Users) profile(ctx context.Context, username string, follow *bool) (_ P
 			return ProfileBody{}, Unavailable{Cause: err}
 		}
 	}
-//line controller.ego:233
+//line controller.ego:246
 	following, err := u.store.Follows(ctx, viewer, user.ID)
 	if err != nil {
 		if _, ok := errors.AsType[UserError](err); ok {
@@ -404,7 +410,7 @@ func (u *Users) profile(ctx context.Context, username string, follow *bool) (_ P
 		}
 		return ProfileBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:234
+//line controller.ego:247
 	return ProfileBody{Profile{Username: user.Username, Bio: user.Bio, Image: user.Image, Following: following}}, nil
 }
 

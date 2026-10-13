@@ -245,20 +245,25 @@ func (c *EmailChannel) Notify(ctx context.Context, n Notification, r Recipient) 
 }
 
 // ChatChannel posts notifications to a chat's incoming webhook, as Slack's
-// {"text": …}.
+// {"text": …}. Their subjects and contents are text: their &, < and > are
+// escaped, so that they can't mention @channel or make links.
 type ChatChannel struct {
 	Client *httpclient.Client
 	URL    string
 }
 
+// chatEscaper escapes what Slack's format gives a meaning to.
+var chatEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
 func (c *ChatChannel) Notify(ctx context.Context, n Notification, r Recipient) error {
+	subject, content := chatEscaper.Replace(n.Subject), chatEscaper.Replace(n.Content)
 	var text string
-	if n.Subject != "" && n.Content != "" {
-		text = "*" + n.Subject + "*\n" + n.Content
+	if subject != "" && content != "" {
+		text = "*" + subject + "*\n" + content
 	} else {
-		text = n.Subject + n.Content
+		text = subject + content
 	}
-//line notifier.ego:225
+//line notifier.ego:230
 	_, err := httpclient.Send[struct{}](ctx, c.Client, http.MethodPost, c.URL, map[string]string{"text": text})
 	return err
 }

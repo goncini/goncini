@@ -58,6 +58,7 @@ type pattern struct {
 	re          *regexp.Regexp
 	names       []string
 	translation string
+	literal     int // the length of its text but placeholders
 }
 
 // New returns the translator of the catalogs.
@@ -69,6 +70,8 @@ func New(c Config, catalogs Catalogs) *Translator {
 				t.patterns[lang] = append(t.patterns[lang], p)
 			}
 		}
+		// The most specific first: the one with the most text of its own.
+		slices.SortStableFunc(t.patterns[lang], (a, b pattern) => b.literal - a.literal)
 	}
 	return t
 }
@@ -92,7 +95,8 @@ func compile(msg, translation string) (pattern, bool) {
 		last = l[1]
 	}
 	b.WriteString(regexp.QuoteMeta(msg[last:]) + "$")
-	return pattern{regexp.MustCompile(b.String()), names, translation}, true
+	literal := len(placeholder.ReplaceAllString(msg, ""))
+	return pattern{regexp.MustCompile(b.String()), names, translation, literal}, true
 }
 
 // Translate returns msg in the language lang: its translation in lang's
@@ -105,11 +109,13 @@ func (t *Translator) Translate(lang, msg string) string {
 		}
 		for _, p := range t.patterns[l] {
 			if m := p.re.FindStringSubmatch(msg); m != nil {
-				out := p.translation
+				values := map[string]string{}
 				for i, name := range p.names {
-					out = strings.ReplaceAll(out, name, m[i+1])
+					values[name] = m[i+1]
 				}
-				return out
+				return placeholder.ReplaceAllStringFunc(p.translation, func(name string) string {
+					return values[name] ?? name
+				})
 			}
 		}
 	}
@@ -150,23 +156,23 @@ func (t *Translator) Language(r *http.Request) string {
 
 // Subscribe translates the kernel's problems into the request's language:
 // their titles, or their statuses' text, their details and their
-// violations' details, and sets Content-Language.
+// violations' details, and sets Content-Language. Each problem varies by
+// Accept-Language, for caches.
 func (t *Translator) Subscribe(d *event.Dispatcher) {
 	event.On(d, func(ctx context.Context, e *httpkernel.ErrorEvent) error {
+		p := &e.Problem
+		p.Header = p.Header.Clone() ?? http.Header{}
+		p.Header.Add("Vary", "Accept-Language")
 		lang := t.Language(e.Request)
 		if lang == t.Default {
 			return nil
 		}
-		p := &e.Problem
 		title := cmp.Or(p.Title, http.StatusText(p.Status))
 		p.Title = t.Translate(lang, title)
 		p.Detail = t.Translate(lang, p.Detail)
 		p.Errors = slices.Clone(p.Errors)
 		for i := range p.Errors {
 			p.Errors[i].Detail = t.Translate(lang, p.Errors[i].Detail)
-		}
-		if p.Header == nil {
-			p.Header = http.Header{}
 		}
 		p.Header.Set("Content-Language", lang)
 		return nil

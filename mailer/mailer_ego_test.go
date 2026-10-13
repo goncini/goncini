@@ -3,12 +3,17 @@
 package mailer_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/mail"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/mailer/mailertest"
@@ -16,7 +21,7 @@ import (
 	"github.com/goncini/goncini/mime"
 )
 
-//line mailer_test.ego:16
+//line mailer_test.ego:21
 func welcome() *mime.Email {
 	return &mime.Email{To: []mime.Address{{Email: "ann@example.com"}}, Bcc: []mime.Address{{Email: "audit@example.com"}}, Subject: "Welcome", Text: "Hi Ann."}
 }
@@ -28,11 +33,15 @@ func TestSMTP(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:24
-	if err := mailer.New(c, tr).Send(context.Background(), welcome()); err != nil {
+//line mailer_test.ego:29
+	e := welcome()
+	if err := mailer.New(c, tr).Send(context.Background(), e); err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:25
+//line mailer_test.ego:31
+	if e.From.Email != "" {
+		t.Errorf("Send changed the email's sender: %v", e.From)
+	}
 	got := server.Messages()
 	if len(got) != 1 || got[0].From != "hello@conduit.example" || len(got[0].To) != 2 {
 		t.Fatalf("received %+v", got)
@@ -41,7 +50,7 @@ func TestSMTP(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:30
+//line mailer_test.ego:39
 	if msg.Header.Get("Subject") != "Welcome" || msg.Header.Get("Bcc") != "" {
 		t.Errorf("header %v", msg.Header)
 	}
@@ -66,12 +75,12 @@ func TestDSNs(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:51
+//line mailer_test.ego:60
 	smtp := tr.(*mailer.SMTPTransport)
 	if smtp.Addr != "mail.example.com:465" || !smtp.TLS || smtp.Password != "p@ss" {
 		t.Errorf("%+v", smtp)
 	}
-	for _, bad := range []string{"smtp://", "carrier-pigeon://x"} {
+	for _, bad := range []string{"smtp://", "carrier-pigeon://x", "smtp://user:p@ss#w/rd@mail.example.com:587"} {
 		if _, err := mailer.NewTransport(mailer.Config{DSN: bad}, logger); err == nil {
 			t.Errorf("%q: no error", bad)
 		}
@@ -86,13 +95,13 @@ func TestAsync(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:67
+//line mailer_test.ego:76
 	bus := messenger.NewBus(messenger.Config{}, messenger.NewMemoryTransports(messenger.Config{}), []messenger.Handlers{mailer.NewHandler(c, tr)}, slog.New(slog.DiscardHandler))
 	ctx := context.Background()
 	if err := mailer.NewAsync(c, bus).Send(ctx, welcome()); err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:70
+//line mailer_test.ego:79
 	memory := tr.(*mailer.MemoryTransport)
 	if len(memory.Sent()) != 0 {
 		t.Fatal("sent in the request")
@@ -101,8 +110,78 @@ func TestAsync(t *testing.T) {
 	if err := w.Run(ctx); err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:76
+//line mailer_test.ego:85
 	if sent := memory.Sent(); len(sent) != 1 || sent[0].To[0] != "ann@example.com" {
 		t.Errorf("sent %+v", sent)
+	}
+}
+
+// rawServer is an SMTP server that accepts the email, then stalls before
+// answering its end if stall says so, or drops the connection on QUIT.
+func rawServer(t *testing.T, stall bool) string {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+//line mailer_test.ego:94
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		conn, err := l.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		r := bufio.NewReader(conn)
+		conn.Write([]byte("220 hi\r\n"))
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return
+			}
+			switch cmd := strings.ToUpper(strings.Fields(line + " x")[0]); cmd {
+			case "DATA":
+				conn.Write([]byte("354 go on\r\n"))
+				for line != ".\r\n" {
+					if line, err = r.ReadString('\n'); err != nil {
+						return
+					}
+				}
+				if stall {
+					time.Sleep(3 * time.Second)
+				}
+				conn.Write([]byte("250 queued\r\n"))
+			case "QUIT":
+				return // dropped, without its 221
+			default:
+				conn.Write([]byte("250 ok\r\n"))
+			}
+		}
+	}()
+	return "smtp://" + l.Addr().String()
+}
+
+// TestSMTPFailures checks that an email the server accepted is sent, even
+// if the server then drops the connection, and that a stalled server
+// doesn't outlast the context.
+func TestSMTPFailures(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+	send := func(dsn string, ctx context.Context) error {
+		c := mailer.Config{DSN: dsn, From: mime.Address{Email: "hello@conduit.example"}}
+		tr, err := mailer.NewTransport(c, logger)
+		if err != nil {
+			panic(err)
+		}
+//line mailer_test.ego:138
+		return mailer.New(c, tr).Send(ctx, welcome())
+	}
+	if err := send(rawServer(t, false), context.Background()); err != nil {
+		t.Errorf("an accepted email: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := send(rawServer(t, true), ctx)
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
+		t.Errorf("a stalled server: %v after %v", err, time.Since(start))
 	}
 }

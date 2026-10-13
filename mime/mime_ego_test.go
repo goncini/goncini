@@ -125,9 +125,67 @@ func TestInvalid(t *testing.T) {
 		{From: mime.Address{Email: "a@example.com"}, To: []mime.Address{{Email: "b@example.com"}}},
 		{From: mime.Address{Email: "a@example.com\r\nBcc: x@evil.example"}, To: []mime.Address{{Email: "b@example.com"}}, Text: "x"},
 		{From: mime.Address{Email: "a@example.com"}, To: []mime.Address{{Email: "b@example.com"}}, Text: "x", Header: map[string]string{"X": "a\r\nBcc: x@evil.example"}},
+		{From: mime.Address{Email: "a@example.com"}, To: []mime.Address{{Email: "b@example.com"}}, Text: "x", Header: map[string]string{"X Bad": "a"}},
+		{From: mime.Address{Email: "a@example.com"}, To: []mime.Address{{Email: "Eve <eve@example.com>"}}, Text: "x"},
+		{From: mime.Address{Email: "a@example.com"}, To: []mime.Address{{Email: "b@example.com"}}, ReplyTo: []mime.Address{{Email: "nope"}}, Text: "x"},
+		{From: mime.Address{Email: "a@example.com"}, To: []mime.Address{{Email: "b@example.com"}}, HTML: "x", Parts: []mime.Part{{Name: "a.png", ContentID: "x>\r\nContent-Type: text/html"}}},
 	} {
 		if _, err := e.Bytes(); err == nil {
 			t.Errorf("%+v: no error", e)
 		}
+	}
+}
+
+// TestLongAndPlain checks that long headers are folded, that a type with
+// parameters is kept, and that an inline image of an email without HTML
+// is attached.
+func TestLongAndPlain(t *testing.T) {
+	var to []mime.Address
+	for range 60 {
+		to = append(to, mime.Address{Email: "reader@example.com"})
+	}
+	e := &mime.Email{
+		From:    mime.Address{Email: "a@example.com"},
+		To:      to,
+		Subject: strings.Repeat("é", 300),
+		Text:    "x",
+		Parts: []mime.Part{
+			{Name: "notes.csv", Data: []byte("a,b")},
+			{Name: "logo.png", Data: []byte("png"), ContentID: "logo"},
+		},
+	}
+	b, err := e.Bytes()
+	if err != nil {
+		panic(err)
+	}
+//line mime_test.ego:120
+	raw := string(b)
+	for _, line := range strings.Split(raw, "\r\n") {
+		if len(line) > 78 {
+			t.Errorf("a line of %d: %.40s…", len(line), line)
+		}
+	}
+	msg, err := mail.ReadMessage(strings.NewReader(raw))
+	if err != nil {
+		panic(err)
+	}
+//line mime_test.ego:127
+	subject, err := new(stdmime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
+	if err != nil {
+		panic(err)
+	}
+//line mime_test.ego:128
+	addresses, err := msg.Header.AddressList("To")
+	if err != nil {
+		panic(err)
+	}
+//line mime_test.ego:129
+	got := map[string]string{}
+	parts(t, msg.Header.Get("Content-Type"), msg.Body, got)
+	if subject != e.Subject || len(addresses) != 60 || got["text/plain"] != "x" || got["text/csv"] != "a,b" || got["image/png"] != "png" {
+		t.Errorf("subject %q, parts %q", subject, got)
+	}
+	if !strings.Contains(raw, `Content-Type: text/csv; charset=utf-8; name=notes.csv`) {
+		t.Errorf("no type for notes.csv:\n%s", raw)
 	}
 }

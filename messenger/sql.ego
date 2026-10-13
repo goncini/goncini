@@ -14,6 +14,10 @@ import (
 // SQLTransport keeps the messages of a queue in a table of a SQLite or
 // PostgreSQL database, which the transports of other queues may share. It
 // creates the table the first time it needs it, unless told not to.
+//
+// A message sent within a transaction of the same pool, db.SQL's InTx, is
+// sent with it: it is queued if the transaction commits, and only then, as
+// an outbox.
 type SQLTransport struct {
 	pool    *sql.DB
 	dialect db.Dialect
@@ -72,17 +76,23 @@ func (t *SQLTransport) ready(ctx context.Context) error {
 		return nil
 	}
 	for _, stmt := range t.Schema() {
-		check t.pool.ExecContext(ctx, stmt) ""
+		check t.conn(ctx).ExecContext(ctx, stmt) ""
 	}
-	t.setUp = true
+	_, inTx := db.NewSQL(t.pool).Tx(ctx)
+	t.setUp = !inTx // a transaction rolled back would take the table with it
 	return nil
+}
+
+// conn is the transaction that ctx is in, or else the pool.
+func (t *SQLTransport) conn(ctx context.Context) db.Conn {
+	return db.NewSQL(t.pool).Conn(ctx)
 }
 
 // exec runs a statement written with ? placeholders, and returns how many
 // rows it changed.
 func (t *SQLTransport) exec(ctx context.Context, query string, args ...any) (int64, error) {
 	check t.ready(ctx) ""
-	res := check t.pool.ExecContext(ctx, t.dialect.Rebind(query), args...)
+	res := check t.conn(ctx).ExecContext(ctx, t.dialect.Rebind(query), args...)
 	return res.RowsAffected()
 }
 
@@ -104,7 +114,7 @@ func (t *SQLTransport) Receive(ctx context.Context, ttl time.Duration) (Lease, b
 	var m Message
 	var body string
 	var available int64
-	err := t.pool.QueryRowContext(ctx, t.dialect.Rebind(query), now.Add(ttl).UnixMilli(), token, t.queue, t.queue, now.UnixMilli(), now.UnixMilli(), now.UnixMilli()).
+	err := t.conn(ctx).QueryRowContext(ctx, t.dialect.Rebind(query), now.Add(ttl).UnixMilli(), token, t.queue, t.queue, now.UnixMilli(), now.UnixMilli(), now.UnixMilli()).
 		Scan(&m.ID, &m.Type, &body, &m.Attempts, &m.Error, &available)
 	if err == sql.ErrNoRows {
 		return nil, false, nil

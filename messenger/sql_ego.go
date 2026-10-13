@@ -17,7 +17,11 @@ import (
 // PostgreSQL database, which the transports of other queues may share. It
 // creates the table the first time it needs it, unless told not to.
 //
-//line sql.ego:17
+// A message sent within a transaction of the same pool, db.SQL's InTx, is
+// sent with it: it is queued if the transaction commits, and only then, as
+// an outbox.
+//
+//line sql.ego:21
 type SQLTransport struct {
 	pool    *sql.DB
 	dialect db.Dialect
@@ -54,7 +58,7 @@ func (t *SQLTransport) table() string {
 	return v
 }
 
-//line sql.ego:47
+//line sql.ego:51
 func (t *SQLTransport) now() time.Time {
 	v := t.Now
 	if v == nil {
@@ -66,7 +70,7 @@ func (t *SQLTransport) now() time.Time {
 // Schema returns the statements that create the transport's table, for an
 // app's migrations.
 //
-//line sql.ego:53
+//line sql.ego:57
 func (t *SQLTransport) Schema() []string {
 	tb := t.table()
 	return []string{
@@ -89,13 +93,19 @@ func (t *SQLTransport) ready(ctx context.Context) error {
 		return nil
 	}
 	for _, stmt := range t.Schema() {
-		if _, err := t.pool.ExecContext(ctx, stmt); err != nil {
+		if _, err := t.conn(ctx).ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}
-//line sql.ego:77
-	t.setUp = true
+//line sql.ego:81
+	_, inTx := db.NewSQL(t.pool).Tx(ctx)
+	t.setUp = !inTx // a transaction rolled back would take the table with it
 	return nil
+}
+
+// conn is the transaction that ctx is in, or else the pool.
+func (t *SQLTransport) conn(ctx context.Context) db.Conn {
+	return db.NewSQL(t.pool).Conn(ctx)
 }
 
 // exec runs a statement written with ? placeholders, and returns how many
@@ -104,12 +114,12 @@ func (t *SQLTransport) exec(ctx context.Context, query string, args ...any) (int
 	if err := t.ready(ctx); err != nil {
 		return 0, err
 	}
-//line sql.ego:85
-	res, err := t.pool.ExecContext(ctx, t.dialect.Rebind(query), args...)
+//line sql.ego:95
+	res, err := t.conn(ctx).ExecContext(ctx, t.dialect.Rebind(query), args...)
 	if err != nil {
-		return 0, fmt.Errorf("pool.ExecContext: %w", err)
+		return 0, fmt.Errorf("conn.ExecContext: %w", err)
 	}
-//line sql.ego:86
+//line sql.ego:96
 	return res.RowsAffected()
 }
 
@@ -123,7 +133,7 @@ func (t *SQLTransport) Receive(ctx context.Context, ttl time.Duration) (Lease, b
 	if err2 := t.ready(ctx); err2 != nil {
 		return nil, false, err2
 	}
-//line sql.ego:97
+//line sql.ego:107
 	now := t.now()
 	tb := t.table()
 	var skipLocked string
@@ -134,13 +144,13 @@ func (t *SQLTransport) Receive(ctx context.Context, ttl time.Duration) (Lease, b
 	}
 	// One statement leases the next available message: SQLite runs it
 	// alone, and PostgreSQL's workers skip the rows others are leasing.
-//line sql.ego:102
+//line sql.ego:112
 	query := fmt.Sprintf("UPDATE %s SET leased_until = ?, lease = ? WHERE queue = ? AND id = (SELECT id FROM %s WHERE queue = ? AND available_at <= ? AND leased_until <= ? ORDER BY available_at, id LIMIT 1%s) AND leased_until <= ? RETURNING id, type, body, attempts, error, available_at", tb, tb, skipLocked)
 	token := uid.NewV4().String()
 	var m Message
 	var body string
 	var available int64
-	err := t.pool.QueryRowContext(ctx, t.dialect.Rebind(query), now.Add(ttl).UnixMilli(), token, t.queue, t.queue, now.UnixMilli(), now.UnixMilli(), now.UnixMilli()).
+	err := t.conn(ctx).QueryRowContext(ctx, t.dialect.Rebind(query), now.Add(ttl).UnixMilli(), token, t.queue, t.queue, now.UnixMilli(), now.UnixMilli(), now.UnixMilli()).
 		Scan(&m.ID, &m.Type, &body, &m.Attempts, &m.Error, &available)
 	if err == sql.ErrNoRows {
 		return nil, false, nil
@@ -148,7 +158,7 @@ func (t *SQLTransport) Receive(ctx context.Context, ttl time.Duration) (Lease, b
 	if err != nil {
 		return nil, false, err
 	}
-//line sql.ego:113
+//line sql.ego:123
 	m.Body, m.AvailableAt = []byte(body), time.UnixMilli(available)
 	return &sqlLease{t: t, msg: m, token: token}, true, nil
 }
@@ -157,7 +167,7 @@ func (t *SQLTransport) List(ctx context.Context) ([]Message, error) {
 	if err := t.ready(ctx); err != nil {
 		return nil, err
 	}
-//line sql.ego:119
+//line sql.ego:129
 	return db.All(ctx, t.pool, scanMessage, t.dialect.Rebind(fmt.Sprintf("SELECT id, type, body, attempts, error, available_at FROM %s WHERE queue = ? ORDER BY available_at, id", t.table())), t.queue)
 }
 
@@ -190,7 +200,7 @@ func (l *sqlLease) Extend(ctx context.Context, ttl time.Duration) (bool, error) 
 	if err != nil {
 		return false, fmt.Errorf("t.exec: %w", err)
 	}
-//line sql.ego:148
+//line sql.ego:158
 	return n == 1, nil
 }
 

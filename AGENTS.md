@@ -282,6 +282,10 @@ func (n *Notifications) Schedule(s *scheduler.Scheduler) {
 }
 ```
 
+A message dispatched inside `InTx`, to a queue in the same database
+(`messenger.SQL`), is queued only if the transaction commits: write what
+changed and dispatch its messages in one transaction.
+
 A test runs the worker for the messages it expects:
 `webtest.Run(t, a, "messenger:consume", "-drain")`, which stops once the
 queues are empty.
@@ -312,8 +316,8 @@ changes.
   the app's messages, such as `"must be at least {n}": "doit valoir au
   moins {n}"`.
 - A state machine is a `workflow.Definition`; `Apply` moves a subject,
-  checking the transition's guard, a security attribute, and returns the
-  new state to save.
+  checking the transition's guard, a security attribute, and saves its new
+  state with the function it is given.
 
 ## Wiring
 

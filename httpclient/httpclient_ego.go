@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -41,11 +42,12 @@ import (
 
 // Config configures a client of an API.
 //
-//line httpclient.ego:41
+//line httpclient.ego:42
 type Config struct {
 	// BaseURL is put before the paths of requests: https://api.example.com.
 	BaseURL string
-	// Header is sent with each request, unless the request has the header.
+	// Header is sent with each request to BaseURL's host, or to any host
+	// without a BaseURL, unless the request has the header.
 	Header map[string]string
 	// Timeout bounds each attempt; zero means 30 seconds.
 	Timeout time.Duration
@@ -76,7 +78,7 @@ func New(c Config) *Client {
 	} else {
 		retries = max(c.Retries, 0)
 	}
-//line httpclient.ego:70
+//line httpclient.ego:72
 	return &Client{Config: c, Retry: schedule.Max(schedule.Exponential(100*time.Millisecond), schedule.Recurs(retries))}
 }
 
@@ -84,27 +86,38 @@ func New(c Config) *Client {
 const Instrumentation = "github.com/goncini/goncini/httpclient"
 
 // Do sends req, with the client's base URL and headers, retrying it as the
-// package says. The response of the last attempt is returned whatever its
-// status: StatusError is for JSON's helpers. req's body must be replayable,
-// as http.NewRequest makes it for bytes and strings, for it to be retried.
+// package says, and following redirects as http.Client does. The response
+// of the last attempt is returned whatever its status: StatusError is for
+// JSON's helpers. req's body must be replayable, as http.NewRequest makes
+// it for bytes and strings, for it to be retried.
 func (c *Client) Do(req *http.Request) (*http.Response, error) {
+	ctx, span := otel.Tracer(Instrumentation).Start(req.Context(), req.Method, trace.WithSpanKind(trace.SpanKindClient))
+	defer span.End()
+	req = req.Clone(ctx)
+	if req.Header == nil {
+		req.Header = http.Header{}
+	}
+	base, err := url.Parse(c.Config.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+//line httpclient.ego:91
 	if c.Config.BaseURL != "" && req.URL.Host == "" {
 		u, err := req.URL.Parse(strings.TrimSuffix(c.Config.BaseURL, "/") + "/" + strings.TrimPrefix(req.URL.String(), "/"))
 		if err != nil {
 			return nil, err
 		}
-//line httpclient.ego:83
+//line httpclient.ego:93
 		req.URL, req.Host = u, u.Host
 	}
-	for name, value := range c.Config.Header {
-		if req.Header.Get(name) == "" {
-			req.Header.Set(name, value)
+	if c.Config.BaseURL == "" || strings.EqualFold(req.URL.Host, base.Host) && req.URL.Scheme == base.Scheme {
+		for name, value := range c.Config.Header {
+			if req.Header.Get(name) == "" {
+				req.Header.Set(name, value)
+			}
 		}
 	}
-	ctx, span := otel.Tracer(Instrumentation).Start(req.Context(), req.Method, trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(attribute.String("http.request.method", req.Method), attribute.String("url.full", req.URL.Redacted())))
-	defer span.End()
-	req = req.WithContext(ctx)
+	span.SetAttributes(attribute.String("http.request.method", req.Method), attribute.String("url.full", req.URL.Redacted()))
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 	for attempt := 1; ; attempt++ {
 		res, err := c.attempt(req)
@@ -143,7 +156,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 
 // attempt sends req once, within the timeout.
 //
-//line httpclient.ego:127
+//line httpclient.ego:136
 func (c *Client) attempt(req *http.Request) (*http.Response, error) {
 	var timeout time.Duration
 	if c.Config.Timeout > 0 {
@@ -151,14 +164,15 @@ func (c *Client) attempt(req *http.Request) (*http.Response, error) {
 	} else {
 		timeout = 30 * time.Second
 	}
-//line httpclient.ego:129
+//line httpclient.ego:138
 	ctx, cancel := context.WithTimeout(req.Context(), timeout)
 	v := c.Transport
 	if v == nil {
 		v = http.DefaultTransport
 	}
-	res, err := (v).RoundTrip(req.WithContext(ctx))
-//line httpclient.ego:131
+	client := &http.Client{Transport: v}
+//line httpclient.ego:140
+	res, err := client.Do(req.WithContext(ctx))
 	if err != nil {
 		cancel()
 		return nil, err
@@ -200,7 +214,7 @@ func (c *Client) retryable(req *http.Request, res *http.Response, err error, att
 		v = errors.New(res.Status)
 	}
 	wait, again := c.Retry.Next(attempt, v)
-//line httpclient.ego:168
+//line httpclient.ego:178
 	if !again {
 		return 0, false
 	}
@@ -212,7 +226,7 @@ func (c *Client) retryable(req *http.Request, res *http.Response, err error, att
 			} else {
 				limit = time.Minute
 			}
-//line httpclient.ego:174
+//line httpclient.ego:184
 			if after > limit {
 				return 0, false // the API asks for too long a pause
 			}
@@ -273,14 +287,14 @@ func Send[T any](ctx context.Context, c *Client, method, path string, body any) 
 		if err != nil {
 			return *new(T), err
 		}
-//line httpclient.ego:231
+//line httpclient.ego:241
 		r = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, path, r)
 	if err != nil {
 		return *new(T), err
 	}
-//line httpclient.ego:234
+//line httpclient.ego:244
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -289,7 +303,7 @@ func Send[T any](ctx context.Context, c *Client, method, path string, body any) 
 	if err != nil {
 		return *new(T), err
 	}
-//line httpclient.ego:239
+//line httpclient.ego:249
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		b, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
@@ -305,7 +319,8 @@ func Send[T any](ctx context.Context, c *Client, method, path string, body any) 
 }
 
 // Handler returns a transport that serves requests with h, in the process:
-// for tests, in place of the API called.
+// for tests, in place of the API called. A request whose context ends
+// before h returns fails, as over the network.
 func Handler(h http.Handler) http.RoundTripper {
 	return handlerTransport{h}
 }
@@ -323,7 +338,19 @@ func (t handlerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Body = http.NoBody // as a server gives handlers
 	}
 	rec := &recorder{header: http.Header{}}
-	t.h.ServeHTTP(rec, req)
+	served := make(chan any, 1)
+	go func() {
+		defer func() { served <- recover() }()
+		t.h.ServeHTTP(rec, req)
+	}()
+	select {
+	case p := <-served:
+		if p != nil {
+			panic(p)
+		}
+	case <-req.Context().Done():
+		return nil, context.Cause(req.Context())
+	}
 	status := cmp.Or(rec.status, http.StatusOK)
 	return &http.Response{
 		Status:        fmt.Sprintf("%d %s", status, http.StatusText(status)),

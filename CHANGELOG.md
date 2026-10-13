@@ -515,6 +515,47 @@ with their providers and what they need, which `debug:container` lists.
 
 ### Found while building
 
+- **M4's review:** two independent reviews found 19 defects, each
+  reproduced, then fixed with a regression test. Among them:
+  - the cache kept a value computed while its tag was invalidated, as
+    fresh; waiters failed with a cancelled computation, rather than compute
+    it again; and a negative TTL kept an item forever;
+  - `httpclient` sent its default headers, such as `Authorization`, to
+    other hosts, didn't follow redirects, and its test `Handler` ignored
+    timeouts;
+  - an email that the SMTP server had accepted failed when the server then
+    dropped the connection, so it was sent again; a stalled server held a
+    sending past its context; and a DSN with an unencoded `@` sent the
+    credentials to the wrong host;
+  - attachments whose type has parameters, such as `.txt` files, got an
+    empty `Content-Type`; addresses with a display name went through to
+    `RCPT`; long headers weren't folded;
+  - chat notifications posted their text raw, so an article's title could
+    ping a whole channel;
+  - translations matched a general pattern before a more specific one,
+    substituted values twice, and translated problems lacked
+    `Vary: Accept-Language`;
+  - RealWorld answered 503 after saving a user whose welcome email
+    couldn't be queued, and after deleting an article.
+
+  Decisions taken on the user's behalf:
+  - **The SQL transport joins the context's transaction,** as an outbox:
+    a message dispatched in `db.SQL.InTx` is queued if, and only if, the
+    transaction commits. M3's review left the outbox for an app that needs
+    it, and RealWorld now does: its writes and their messages are one
+    transaction.
+  - **`workflow.Workflow.Apply` checks the guard before the state,** so
+    that who may not apply a transition doesn't learn the state, **and
+    takes a `save` function,** called between `Transitioning` and
+    `Transitioned`, so that `Transitioned`'s listeners see a saved state.
+  - **Tag versions are nanosecond times:** invalidations by other
+    processes during a computation are told by the clock, as far as clocks
+    agree; this process's are tracked exactly.
+
+  What was left, deliberately: `STARTTLS` stays opportunistic without
+  credentials, as Symfony's is; a cache invalidation that fails after a
+  commit is still a 503; a notification's email gets a new `Message-ID` on
+  each retry.
 - **M3's review:** two independent reviews found 13 defects, each
   reproduced, then fixed with a regression test. Among them:
   - a message that failed for good couldn't move to the SQL failure queue,

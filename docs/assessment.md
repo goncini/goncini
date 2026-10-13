@@ -196,7 +196,7 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 |---|---|---|
 | **M2: API contract and security** | OpenAPI 3.1 from endpoint types (`/openapi.json`, a docs page in dev, `openapi:dump`); responses checked against the contract in `webtest`; CORS; RateLimiter; voters; firewalls per route group; Uid; pagination and filtering helpers | Below |
 | **M3: async** | EventDispatcher (typed events, kernel events); Messenger (memory and SQL transports, retries as schedules, a failure transport, `messenger:consume` workers as fibers); Scheduler; Lock | Killing a worker mid-message loses nothing; SIGTERM drains within the deadline |
-| **M4: integrations** | Cache (memory, Redis in an adapter module, tags); HttpClient (retries, tracing); Mailer and Mime; Notifier; Translation of error messages; Workflow | To propose before M4 |
+| **M4: integrations** | Cache (memory, Redis in an adapter module, tags); HttpClient (retries, tracing); Mailer and Mime; Notifier; Translation of error messages; Workflow | Done (2026-10-13) |
 | **M5: developer experience** | A profiler built from spans (`debug:requests`, OTLP export); `goncini new` and `make:*`; bundles | To propose before M5 |
 
 ### 4.1 Milestone 2
@@ -260,7 +260,7 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 5. **Errors speak the client's language.** In the articles example, `Accept-Language: fr` gives French problem titles and violation messages from a catalog, falling back to English, and `translation:lint` lists the messages a catalog lacks.
 6. **Workflows guard their transitions.** The articles example gets a review workflow, draft to reviewed to published: a transition that the article's state doesn't allow is a 409, a guard is a security voter, each transition dispatches events, and `workflow:dump` draws the graph in Mermaid.
 
-> **Status (2026-10-07):** built: [`cache`](../cache) and [`cache/rediscache`](../cache/rediscache), [`httpclient`](../httpclient), [`mime`](../mime) and [`mailer`](../mailer), [`notifier`](../notifier), [`translation`](../translation) and [`workflow`](../workflow). The six gates pass: RealWorld's `TestCaching` with the Hurl suite through the cache and `rediscache`'s suite on Redis; `httpclient`'s tests; `TestWelcomeEmail`; `TestRemovalNotices`; the articles example's `TestFrench` and `TestReview`.
+> **Status (2026-10-07):** built: [`cache`](../cache) and [`cache/rediscache`](../cache/rediscache), [`httpclient`](../httpclient), [`mime`](../mime) and [`mailer`](../mailer), [`notifier`](../notifier), [`translation`](../translation) and [`workflow`](../workflow). The six gates pass: RealWorld's `TestCaching` with the Hurl suite through the cache and `rediscache`'s suite on Redis; `httpclient`'s tests; `TestWelcomeEmail`; `TestRemovalNotices`; the articles example's `TestFrench` and `TestReview`. M4's review (2026-10-13) found 19 defects, fixed with regression tests; see [CHANGELOG.md](../CHANGELOG.md). M4 is done; M5 is next.
 
 **Decisions taken on the user's behalf:**
 
@@ -270,6 +270,17 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 - Workflows are state machines, a subject in one place at a time; Symfony's workflows of several places at once wait for an app that needs them.
 
 **Order of work:** `cache` (memory, tags, stampede protection), `cache/rediscache`; `httpclient`; `mime` and `mailer` (SMTP and in-memory transports, sending through Messenger); `notifier`; `translation`; `workflow`; then the gates.
+
+### 4.4 Milestone 5
+
+**Gates** (proposed 2026-10-07):
+
+1. **The profiler shows what a request did.** In dev, each request's profile keeps its route, status and duration, the spans of the endpoint, the store's queries and outgoing HTTP calls, and its log records. `/_profiler` lists the profiles as JSON, and `debug:requests`, a process of its own, prints the last ones. With an OTLP endpoint configured, the same spans reach a collector, which a test runs in the process.
+2. **A new API in one command.** `goncini new acme` writes a module in goncini's layout whose `go test ./...` passes and whose `go run . serve` answers, with nothing to edit first.
+3. **Makers write features that work.** In that new app, `goncini make:feature notes` writes a feature (its error set, endpoints, store, migration and test) that `goncini generate` wires, whose test passes, and whose endpoints the OpenAPI document lists; `make:endpoint`, `make:message`, `make:command` and `make:migration` add to it.
+4. **A bundle plugs in with one line.** A third-party bundle, a package exporting a `layer.Set`, a config section, routes, commands and a subscriber, adds them all to the articles example when its set joins the app's `Services`: no other wiring, and its config section has a default when the app's config has none.
+
+**Order of work:** the profiler (`profiler`, in dev, with a file store) and OTLP export (`otel/otlp`, an adapter module); `goncini new`; `make:*`; bundles, with `goncini generate` giving any provider's missing config section a default; then the gates.
 
 ## 5. Risks
 

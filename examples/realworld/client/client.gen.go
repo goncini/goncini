@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Article Article is an article, as a viewer sees it.
@@ -197,9 +198,9 @@ type UserUpdateJSONBody struct {
 // UserRegisterJSONBody defines parameters for UserRegister.
 type UserRegisterJSONBody struct {
 	User struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Username string `json:"username"`
+		Email    openapi_types.Email `json:"email"`
+		Password string              `json:"password"`
+		Username string              `json:"username"`
 	} `json:"user"`
 }
 

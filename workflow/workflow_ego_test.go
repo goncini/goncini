@@ -71,13 +71,17 @@ func TestApply(t *testing.T) {
 	ctx := context.Background()
 	editor := context.WithValue(ctx, editorKey{}, true)
 	a := &article{}
+	// The guard first: who may not publish doesn't learn the state.
+	if _, err := w.Apply(ctx, a, w.Initial, "publish", nil); httpkernel.ProblemFor(err).Status == 409 {
+		t.Errorf("publishing a draft without an editor: %v", err)
+	}
 
-	state, err2 := w.Apply(ctx, a, w.Initial, "submit")
+	state, err2 := w.Apply(ctx, a, w.Initial, "submit", nil)
 	if err2 != nil {
 		panic(err2)
 	}
-//line workflow_test.ego:62
-	if _, err := w.Apply(ctx, a, state, "publish"); err == nil {
+//line workflow_test.ego:66
+	if _, err := w.Apply(ctx, a, state, "publish", nil); err == nil {
 		t.Error("published without an editor")
 	}
 	if w.Can(ctx, a, state, "publish") || !w.Can(editor, a, state, "publish") {
@@ -86,27 +90,42 @@ func TestApply(t *testing.T) {
 	if got := len(w.Enabled(editor, a, state)); got != 2 {
 		t.Errorf("%d transitions enabled", got)
 	}
-	v, err3 := w.Apply(editor, a, state, "publish")
+	v, err3 := w.Apply(editor, a, state, "publish", nil)
 	if err3 != nil {
 		panic(err3)
 	}
 	state = v
-//line workflow_test.ego:72
+//line workflow_test.ego:76
 	if state != "published" {
 		t.Errorf("state %s", state)
 	}
-	_, err := w.Apply(editor, a, state, "submit")
+	_, err := w.Apply(editor, a, state, "submit", nil)
 	if e, ok := errors.AsType[workflow.NotAllowed](err); !ok || httpkernel.ProblemFor(e).Status != 409 {
 		t.Errorf("submitting a published article: %v", err)
 	}
-	if _, err := w.Apply(editor, a, state, "burn"); httpkernel.ProblemFor(err).Status != 404 {
+	if _, err := w.Apply(editor, a, state, "burn", nil); httpkernel.ProblemFor(err).Status != 404 {
 		t.Errorf("an unknown transition: %v", err)
 	}
 	a.locked = true
-	if _, err := w.Apply(editor, a, state, "reject"); err == nil || !strings.Contains(err.Error(), "locked") {
+	if _, err := w.Apply(editor, a, state, "reject", nil); err == nil || !strings.Contains(err.Error(), "locked") {
 		t.Errorf("a listener's refusal: %v", err)
 	}
-	if strings.Join(log, ", ") != "draft submit, in_review publish" {
+	a.locked = false
+	saveFailed := errors.New("the save failed")
+	if _, err := w.Apply(editor, a, state, "reject", func(ctx context.Context, to string) error { return saveFailed }); err != saveFailed {
+		t.Errorf("a save's failure: %v", err)
+	}
+	var saved string
+	v2, err4 := w.Apply(editor, a, state, "reject", func(ctx context.Context, to string) error { saved = to; return nil })
+	if err4 != nil {
+		panic(err4)
+	}
+	state = v2
+//line workflow_test.ego:97
+	if saved != "draft" || state != "draft" {
+		t.Errorf("saved %q, state %q", saved, state)
+	}
+	if strings.Join(log, ", ") != "draft submit, in_review publish, published reject" {
 		t.Errorf("transitioned %v", log)
 	}
 }
@@ -130,7 +149,7 @@ func TestDump(t *testing.T) {
 	if err := cmd.Run(context.Background(), &out, []string{"review"}); err != nil {
 		panic(err)
 	}
-//line workflow_test.ego:108
+//line workflow_test.ego:122
 	want := "stateDiagram-v2\n" +
 		"    [*] --> draft\n" +
 		"    draft --> in_review: submit\n" +

@@ -30,11 +30,20 @@ func TestWelcomeEmail(t *testing.T) {
 	a := webtest.Boot(t, config.Load, app.Build)
 	webtest.Run(t, a, "db:migrate")
 	c := webtest.NewClient(t, a)
+	// An address no email can go to is refused before the user is saved.
+	c.Post("/api/users", `{"user":{"username":"zoé","email":"not an email","password":"a password"}}`).Status(422)
 	c.Post("/api/users", `{"user":{"username":"zoé","email":"zoe@example.com","password":"a password"}}`).Status(201)
 	if len(smtp.Messages()) != 0 {
 		t.Fatal("sent in the request")
 	}
 	webtest.Run(t, a, "messenger:consume", "-drain")
+	var u struct {
+		User struct {
+			Token string `json:"token"`
+		} `json:"user"`
+	}
+	c.Post("/api/users/login", `{"user":{"email":"zoe@example.com","password":"a password"}}`).Status(200).JSON(&u)
+	c.WithHeader("Authorization", "Token "+u.User.Token).Put("/api/user", `{"user":{"email":"zoe at home"}}`).Status(422)
 	got := smtp.Messages()
 	if len(got) != 1 || got[0].From != "hello@conduit.example" || got[0].To[0] != "zoe@example.com" {
 		t.Fatalf("received %+v", got)
@@ -43,12 +52,12 @@ func TestWelcomeEmail(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line welcome_test.ego:39
+//line welcome_test.ego:48
 	subject, err := new(stdmime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
 	if err != nil {
 		panic(err)
 	}
-//line welcome_test.ego:40
+//line welcome_test.ego:49
 	if subject != "Welcome to Conduit, zoé" {
 		t.Errorf("subject %q", subject)
 	}
@@ -56,7 +65,7 @@ func TestWelcomeEmail(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line welcome_test.ego:44
+//line welcome_test.ego:53
 	r := multipart.NewReader(msg.Body, params["boundary"])
 	bodies := map[string]string{}
 	for {
@@ -68,12 +77,12 @@ func TestWelcomeEmail(t *testing.T) {
 		if err2 != nil {
 			panic(err2)
 		}
-//line welcome_test.ego:52
+//line welcome_test.ego:61
 		b, err3 := io.ReadAll(quotedprintable.NewReader(p))
 		if err3 != nil {
 			panic(err3)
 		}
-//line welcome_test.ego:53
+//line welcome_test.ego:62
 		bodies[media] = string(b)
 	}
 	text := strings.ReplaceAll(bodies["text/plain"], "\r\n", "\n") // SMTP's line endings

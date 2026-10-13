@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/messenger"
 )
 
@@ -123,5 +124,31 @@ func TestSetupIsRetried(t *testing.T) {
 	}
 	if _, _, err := ts["async"].Receive(context.Background(), time.Minute); err != nil {
 		t.Errorf("after a failed setup: %v", err)
+	}
+}
+
+// TestSQLOutbox checks that a message dispatched in a transaction of the
+// queues' pool is queued with it: only if it commits.
+func TestSQLOutbox(t *testing.T) {
+	pool := must sql.Open("sqlite", "file::memory:")
+	pool.SetMaxOpenConns(1) // a send outside the transaction would wait for it forever
+	t.Cleanup(() => { pool.Close() })
+	c := messenger.Config{}
+	ts := must messenger.NewSQLTransports(pool, c)
+	b := messenger.NewBus(c, ts, nil, slog.New(slog.DiscardHandler))
+	messenger.Route[welcome](b, "async")
+	tx := db.NewSQL(pool)
+	ctx := context.Background()
+	err := tx.InTx(ctx, func(ctx context.Context) error {
+		must messenger.Dispatch(ctx, b, welcome{"rolled back"})
+		return errors.New("rollback")
+	})
+	if err == nil {
+		t.Fatal("no rollback")
+	}
+	must tx.InTx(ctx, func(ctx context.Context) error { return messenger.Dispatch(ctx, b, welcome{"ann"}) })
+	queued := must ts["async"].(messenger.Browser).List(ctx)
+	if len(queued) != 1 || !strings.Contains(string(queued[0].Body), "ann") {
+		t.Errorf("queued %+v", queued)
 	}
 }

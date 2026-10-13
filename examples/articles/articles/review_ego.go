@@ -5,6 +5,7 @@ package articles
 import (
 	"context"
 	"errors"
+
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/security"
 	"github.com/goncini/goncini/workflow"
@@ -15,7 +16,7 @@ import (
 // Review is how articles get published: an author submits a draft, which
 // an editor publishes, or rejects back to draft, as a published one can be.
 //
-//line review.ego:11
+//line review.ego:13
 var Review = workflow.Definition{
 	Name:    "review",
 	Places:  []string{"draft", "in_review", "published"},
@@ -33,7 +34,7 @@ func NewWorkflows(access *security.Access, events *event.Dispatcher) (workflow.R
 	if err != nil {
 		return nil, err
 	}
-//line review.ego:25
+//line review.ego:27
 	return workflow.Registry{"review": review}, nil
 }
 
@@ -46,7 +47,7 @@ type TransitionInput struct {
 func (a *Articles) Transition(ctx context.Context, in TransitionInput) (_ Article, err error) {
 	ctx, span := trace.Start(ctx, "articles.Articles.Transition")
 	defer trace.End(span, &err)
-//line review.ego:35
+//line review.ego:37
 	art, ok, err := a.store.Get(ctx, in.Slug)
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
@@ -54,30 +55,29 @@ func (a *Articles) Transition(ctx context.Context, in TransitionInput) (_ Articl
 		}
 		return Article{}, Unavailable{Cause: err}
 	}
-//line review.ego:36
+//line review.ego:38
 	if !ok {
 		return Article{}, NotFound{Slug: in.Slug}
 	}
-	state, err := a.review.Apply(ctx, &art, art.State, in.Transition)
+	v, err := a.review.Apply(ctx, &art, art.State, in.Transition, func(ctx context.Context, to string) error {
+		moved, err := a.store.SetState(ctx, art.Slug, art.State, to)
+		if err != nil {
+			return Unavailable{Cause: err}
+		}
+//line review.ego:43
+		if !moved {
+			// Another request moved it meanwhile.
+			return Refused{Cause: workflow.NotAllowed{Workflow: a.review.Name, Transition: in.Transition, State: art.State}}
+		}
+		return nil
+	})
 	if err != nil {
 		if _, ok := errors.AsType[ArticleError](err); ok {
 			return Article{}, err
 		}
 		return Article{}, Refused{Cause: err}
 	}
-//line review.ego:40
-	moved, err := a.store.SetState(ctx, art.Slug, art.State, state)
-	if err != nil {
-		if _, ok := errors.AsType[ArticleError](err); ok {
-			return Article{}, err
-		}
-		return Article{}, Unavailable{Cause: err}
-	}
-//line review.ego:41
-	if !moved {
-		// Another request moved it meanwhile.
-		return Article{}, Refused{Cause: workflow.NotAllowed{Workflow: a.review.Name, Transition: in.Transition, State: art.State}}
-	}
-	art.State = state
+	art.State = v
+//line review.ego:49
 	return art, nil
 }

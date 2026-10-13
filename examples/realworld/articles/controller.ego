@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/goncini/goncini/cache"
+	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/routing"
@@ -17,11 +18,12 @@ type Articles struct {
 	store  *Store
 	access *security.Access
 	events *event.Dispatcher
-	cache  *cache.Cache // what anonymous readers get, tagged "articles"
+	cache  *cache.Cache  // what anonymous readers get, tagged "articles"
+	tx     db.Transactor // an article's save and its events' messages are one
 }
 
-func NewArticles(store *Store, access *security.Access, events *event.Dispatcher, c *cache.Cache) *Articles {
-	return &Articles{store: store, access: access, events: events, cache: c}
+func NewArticles(store *Store, access *security.Access, events *event.Dispatcher, c *cache.Cache, tx db.Transactor) *Articles {
+	return &Articles{store: store, access: access, events: events, cache: c, tx: tx}
 }
 
 // Deleted is the event of an article deleted, by its author or a
@@ -152,10 +154,13 @@ type CreateInput struct {
 effect (a *Articles) Create(in CreateInput) (httpkernel.Created[ArticleBody], ArticleError) {
 	b := in.Body.Article
 	art := Article{Summary{Title: b.Title, Description: b.Description, AuthorID: users.Viewer(ctx)}, b.Body}
-	slug := check a.store.Save(art, b.TagList ?? []string{}) as Unavailable
+	var created Article
+	check a.tx.InTx(ctx, func(ctx context.Context) error {
+		slug := check a.store.Save(ctx, art, b.TagList ?? []string{}) ""
+		created = check a.find(ctx, slug) ""
+		return event.Dispatch(ctx, a.events, &Published{ID: created.ID, Slug: slug, AuthorID: created.AuthorID})
+	}) as Unavailable
 	check a.cache.Invalidate(ctx, "articles") as Unavailable
-	created := check a.find(slug) ""
-	check event.Dispatch(ctx, a.events, &Published{ID: created.ID, Slug: slug, AuthorID: created.AuthorID}) as Unavailable
 	return httpkernel.Created[ArticleBody]{Body: ArticleBody{created}}, nil
 }
 
@@ -217,9 +222,11 @@ effect (a *Articles) Update(in UpdateInput) (ArticleBody, ArticleError) {
 // a moderator.
 effect (a *Articles) Delete(in SlugInput) (httpkernel.NoContent, ArticleError) {
 	art := check a.findGranted(in.Slug, "delete") ""
-	check a.store.Delete(art.ID) as Unavailable
+	check a.tx.InTx(ctx, func(ctx context.Context) error {
+		check a.store.Delete(ctx, art.ID) ""
+		return event.Dispatch(ctx, a.events, &Deleted{ID: art.ID, Title: art.Title, AuthorID: art.AuthorID})
+	}) as Unavailable
 	check a.cache.Invalidate(ctx, "articles") as Unavailable
-	check event.Dispatch(ctx, a.events, &Deleted{ID: art.ID, Title: art.Title, AuthorID: art.AuthorID}) as Unavailable
 	return httpkernel.NoContent{}, nil
 }
 

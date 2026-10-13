@@ -1,10 +1,13 @@
 package users
 
 import (
+	"context"
 	"html"
+	"net/mail"
 	"strconv"
 	"strings"
 
+	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/mailer"
@@ -22,15 +25,16 @@ type Users struct {
 	logins *ratelimit.Limiter // by email and client address
 	events *event.Dispatcher
 	mailer *mailer.Mailer
+	tx     db.Transactor // a user's save and its messages are one
 	// dummy is the hash that a login with an unknown email checks, so that
 	// it takes as long as with a known one: the time doesn't tell which
 	// emails have users.
 	dummy string
 }
 
-func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins *ratelimit.Limiter, events *event.Dispatcher, m *mailer.Mailer) (*Users, error) {
+func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins *ratelimit.Limiter, events *event.Dispatcher, m *mailer.Mailer, tx db.Transactor) (*Users, error) {
 	dummy := check hasher.Hash("no user has this password") ""
-	return &Users{store: store, hasher: hasher, tokens: tokens, logins: logins, events: events, mailer: m, dummy: dummy}, nil
+	return &Users{store: store, hasher: hasher, tokens: tokens, logins: logins, events: events, mailer: m, tx: tx, dummy: dummy}, nil
 }
 
 // Updated is the event of a user's profile changed, for the features that
@@ -74,7 +78,7 @@ type RegisterInput struct {
 	Body struct {
 		User struct {
 			Username string `json:"username" validate:"required"`
-			Email    string `json:"email" validate:"required"`
+			Email    string `json:"email" validate:"required,email"`
 			Password string `json:"password" validate:"required"`
 		} `json:"user"`
 	}
@@ -85,11 +89,13 @@ effect (u *Users) Register(in RegisterInput) (httpkernel.Created[UserBody], User
 	b := in.Body.User
 	hash := check u.hasher.Hash(b.Password) as Unavailable
 	user := &User{Username: b.Username, Email: b.Email, PasswordHash: hash}
-	taken := check u.store.Save(user) as Unavailable
-	if taken != "" {
-		fail Taken{Field: taken}
-	}
-	check u.mailer.Send(ctx, welcome(user)) as Unavailable // sent by a worker
+	check u.tx.InTx(ctx, func(ctx context.Context) error {
+		taken := check u.store.Save(ctx, user) ""
+		if taken != "" {
+			return Taken{Field: taken}
+		}
+		return u.mailer.Send(ctx, welcome(user)) // queued with the user, and sent by a worker
+	}) as Unavailable
 	body := check u.body(user) as Unavailable
 	return httpkernel.Created[UserBody]{Body: body}, nil
 }
@@ -151,6 +157,11 @@ func (in *UpdateInput) Validate() error {
 			vs = append(vs, httpkernel.Violation{Pointer: "#/user/" + name, Detail: "can't be blank"})
 		}
 	}
+	if b.Email.Present() && b.Email.Value != "" {
+		if a, err := mail.ParseAddress(b.Email.Value); err != nil || a.Address != b.Email.Value {
+			vs = append(vs, httpkernel.Violation{Pointer: "#/user/email", Detail: "is invalid"})
+		}
+	}
 	if b.Password.Present() && b.Password.Value != "" && len([]rune(b.Password.Value)) < 8 {
 		vs = append(vs, httpkernel.Violation{Pointer: "#/user/password", Detail: "is too short (minimum is 8 characters)"})
 	}
@@ -179,11 +190,13 @@ effect (u *Users) Update(in UpdateInput) (UserBody, UserError) {
 	if b.Image.Set {
 		user.Image = orNull(b.Image)
 	}
-	taken := check u.store.Save(&user) as Unavailable
-	if taken != "" {
-		fail Taken{Field: taken}
-	}
-	check event.Dispatch(ctx, u.events, &Updated{ID: user.ID}) as Unavailable
+	check u.tx.InTx(ctx, func(ctx context.Context) error {
+		taken := check u.store.Save(ctx, &user) ""
+		if taken != "" {
+			return Taken{Field: taken}
+		}
+		return event.Dispatch(ctx, u.events, &Updated{ID: user.ID})
+	}) as Unavailable
 	body := check u.body(&user) as Unavailable
 	return body, nil
 }

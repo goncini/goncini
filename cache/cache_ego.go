@@ -17,28 +17,33 @@
 // rediscache's, or any other. Values are encoded as JSON.
 //
 // Concurrent misses of a key in a process compute it once: the others wait
-// for that value.
+// for that value, or compute it again if its computation was cancelled. A
+// value whose tags are invalidated, or whose key is deleted in this process,
+// while it is computed isn't kept: invalidations by other processes are told
+// by their versions' times, as far as the clocks agree.
 package cache
 
 import (
+	"cmp"
 	"context"
+	"crypto/rand"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/effect-go/effect-go/layer"
-
-	"github.com/goncini/goncini/uid"
 )
 
 // Store keeps bytes by key, for a while.
 //
-//line cache.ego:38
+//line cache.ego:43
 type Store interface {
 	// Get returns the values of the keys that it has, by key.
 	Get(ctx context.Context, keys ...string) (map[string][]byte, error)
@@ -55,7 +60,7 @@ type Config struct {
 	// store don't share their values.
 	Prefix string
 	// TTL is how long an item is kept when its computation doesn't say;
-	// zero means an hour.
+	// zero means an hour, and a negative one not to keep items.
 	TTL time.Duration
 	// Disabled computes every value, keeping none: for tests of what's
 	// behind a cache.
@@ -83,7 +88,8 @@ func New(c Config, s Store) *Cache {
 
 // Item is how a computed value is kept: its computation sets them.
 type Item struct {
-	// TTL is how long it is kept; zero means the cache's.
+	// TTL is how long it is kept; zero means the cache's, and a negative
+	// one not to keep it.
 	TTL time.Duration
 	// Tags are what it depends on: invalidating one forgets it.
 	Tags []string
@@ -104,17 +110,33 @@ type call struct {
 	done  chan struct{}
 	value []byte
 	err   error
+	// abandoned means that the computation's context ended: its waiters
+	// compute again rather than fail with it.
+	abandoned bool
+	// stale means that the key was deleted while it was computed, and
+	// invalidated are the tags invalidated meanwhile: its value isn't kept if
+	// it depends on them.
+	stale       bool
+	invalidated map[string]bool
 }
+
+// errPanicked is what waiters get when the computation they waited for
+// panicked.
+var errPanicked = errors.New("cache: the computation panicked")
 
 // Get returns the value of key: the one kept, if its tags haven't been
 // invalidated since, or else compute's, which it keeps as compute's item
 // says. A store that fails is bypassed: the value is computed.
 func Get[T any](ctx context.Context, c *Cache, key string, compute func(ctx context.Context, item *Item) (T, error)) (T, error) {
-	var zero T
 	if c.Config.Disabled {
 		return compute(ctx, &Item{})
 	}
-	key = c.Config.Prefix + key
+	return get(ctx, c, c.Config.Prefix+key, compute)
+}
+
+// get is Get, for a prefixed key.
+func get[T any](ctx context.Context, c *Cache, key string, compute func(ctx context.Context, item *Item) (T, error)) (T, error) {
+	var zero T
 	if b, ok := c.read(ctx, key); ok {
 		var v T
 		if json.Unmarshal(b, &v) == nil {
@@ -130,6 +152,9 @@ func Get[T any](ctx context.Context, c *Cache, key string, compute func(ctx cont
 		case <-ctx.Done():
 			return zero, context.Cause(ctx)
 		}
+		if cl.abandoned {
+			return get(ctx, c, key, compute)
+		}
 		if cl.err != nil {
 			return zero, cl.err
 		}
@@ -137,10 +162,10 @@ func Get[T any](ctx context.Context, c *Cache, key string, compute func(ctx cont
 		if err := json.Unmarshal(cl.value, &v); err != nil {
 			return *new(T), err
 		}
-//line cache.ego:134
+//line cache.ego:159
 		return v, nil
 	}
-	cl := &call{done: make(chan struct{})}
+	cl := &call{done: make(chan struct{}), err: errPanicked}
 	if c.inflight == nil {
 		c.inflight = map[string]*call{}
 	}
@@ -152,10 +177,11 @@ func Get[T any](ctx context.Context, c *Cache, key string, compute func(ctx cont
 		c.mu.Unlock()
 		close(cl.done)
 	}()
+	start := time.Now()
 	item := &Item{}
 	v, err := compute(ctx, item)
 	if err != nil {
-		cl.err = err
+		cl.err, cl.abandoned = err, ctx.Err() != nil
 		return zero, err
 	}
 	cl.value, cl.err = json.Marshal(v)
@@ -163,7 +189,7 @@ func Get[T any](ctx context.Context, c *Cache, key string, compute func(ctx cont
 		return zero, fmt.Errorf("cache: encoding %s: %w", key, cl.err)
 	}
 	if !item.NoCache {
-		c.write(ctx, key, cl.value, item)
+		c.write(ctx, key, cl.value, item, start)
 	}
 	return v, nil
 }
@@ -179,7 +205,7 @@ func (c *Cache) read(ctx context.Context, key string) ([]byte, bool) {
 		return nil, false
 	}
 	if len(e.Tags) > 0 {
-		versions, err := c.versions(ctx, slices.Collect(maps.Keys(e.Tags)), false)
+		versions, _, err := c.versions(ctx, slices.Collect(maps.Keys(e.Tags)), false)
 		if err != nil {
 			return nil, false
 		}
@@ -192,13 +218,25 @@ func (c *Cache) read(ctx context.Context, key string) ([]byte, bool) {
 	return e.Value, true
 }
 
-// write keeps value for key, with the current versions of the item's tags.
-func (c *Cache) write(ctx context.Context, key string, value []byte, item *Item) {
+// write keeps value for key, computed since start, with the current
+// versions of the item's tags, unless it is stale already: one of its tags
+// was invalidated since start, by this process or another, or its key was
+// deleted.
+func (c *Cache) write(ctx context.Context, key string, value []byte, item *Item, start time.Time) {
+	ttl := cmp.Or(item.TTL, c.Config.TTL, time.Hour)
+	if ttl < 0 {
+		return
+	}
 	e := entry{Value: value}
 	if len(item.Tags) > 0 {
-		versions, err := c.versions(ctx, item.Tags, true)
+		versions, created, err := c.versions(ctx, item.Tags, true)
 		if err != nil {
 			return
+		}
+		for _, v := range versions {
+			if at, ok := versionTime(v); ok && at.After(start) && !created[v] {
+				return // invalidated since start
+			}
 		}
 		e.Tags = versions
 	}
@@ -206,41 +244,54 @@ func (c *Cache) write(ctx context.Context, key string, value []byte, item *Item)
 	if err != nil {
 		return
 	}
-	ttl := item.TTL
-	if ttl == 0 {
-		ttl = c.Config.TTL
+	c.mu.Lock()
+	cl := c.inflight[key]
+	stale := cl != nil && (cl.stale || slices.ContainsFunc(item.Tags, func(t string) bool { return cl.invalidated[t] }))
+	c.mu.Unlock()
+	if !stale {
+		c.Store.Set(ctx, key, b, ttl)
 	}
-	if ttl == 0 {
-		ttl = time.Hour
-	}
-	c.Store.Set(ctx, key, b, ttl)
 }
 
 // versions returns the versions of the tags, giving those without one a
-// new one if create says so.
-func (c *Cache) versions(ctx context.Context, tags []string, create bool) (map[string]string, error) {
+// new one if create says so, and the versions it created.
+func (c *Cache) versions(ctx context.Context, tags []string, create bool) (map[string]string, map[string]bool, error) {
 	keys := make([]string, len(tags))
 	for i, t := range tags {
 		keys[i] = c.tagKey(t)
 	}
 	got, err := c.Store.Get(ctx, keys...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-//line cache.ego:220
-	out := map[string]string{}
+//line cache.ego:257
+	out, created := map[string]string{}, map[string]bool{}
 	for i, t := range tags {
 		v := string(got[keys[i]])
 		if v == "" && create {
-			v = uid.NewV7().String()
+			v = newVersion()
 			if err := c.Store.Set(ctx, keys[i], []byte(v), 0); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
+//line cache.ego:263
+			created[v] = true
 		}
-//line cache.ego:227
 		out[t] = v
 	}
-	return out, nil
+	return out, created, nil
+}
+
+// newVersion returns a tag's new version: when it was made, in
+// nanoseconds, and random bits, so that versions made at once differ.
+func newVersion() string {
+	return strconv.FormatInt(time.Now().UnixNano(), 36) + "." + rand.Text()[:8]
+}
+
+// versionTime returns when a version was made.
+func versionTime(v string) (time.Time, bool) {
+	ns, _, _ := strings.Cut(v, ".")
+	n, err := strconv.ParseInt(ns, 36, 64)
+	return time.Unix(0, n), err == nil
 }
 
 func (c *Cache) tagKey(tag string) string {
@@ -250,9 +301,19 @@ func (c *Cache) tagKey(tag string) string {
 // Invalidate forgets the values that depend on the tags: they are computed
 // again at their next Get.
 func (c *Cache) Invalidate(ctx context.Context, tags ...string) error {
+	c.mu.Lock()
+	for _, cl := range c.inflight {
+		if cl.invalidated == nil {
+			cl.invalidated = map[string]bool{}
+		}
+		for _, t := range tags {
+			cl.invalidated[t] = true
+		}
+	}
+	c.mu.Unlock()
 	var errs []error
 	for _, t := range tags {
-		errs = append(errs, c.Store.Set(ctx, c.tagKey(t), []byte(uid.NewV7().String()), 0))
+		errs = append(errs, c.Store.Set(ctx, c.tagKey(t), []byte(newVersion()), 0))
 	}
 	return errors.Join(errs...)
 }
@@ -263,5 +324,12 @@ func (c *Cache) Delete(ctx context.Context, keys ...string) error {
 	for i, k := range keys {
 		prefixed[i] = c.Config.Prefix + k
 	}
+	c.mu.Lock()
+	for _, k := range prefixed {
+		if cl := c.inflight[k]; cl != nil {
+			cl.stale = true
+		}
+	}
+	c.mu.Unlock()
 	return c.Store.Delete(ctx, prefixed...)
 }

@@ -1,6 +1,8 @@
 package articles
 
 import (
+	"context"
+
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/security"
 	"github.com/goncini/goncini/workflow"
@@ -36,12 +38,13 @@ effect (a *Articles) Transition(in TransitionInput) (Article, ArticleError) {
 	if !ok {
 		fail NotFound{Slug: in.Slug}
 	}
-	state := check a.review.Apply(ctx, &art, art.State, in.Transition) as Refused
-	moved := check a.store.SetState(art.Slug, art.State, state) as Unavailable
-	if !moved {
-		// Another request moved it meanwhile.
-		fail Refused{Cause: workflow.NotAllowed{Workflow: a.review.Name, Transition: in.Transition, State: art.State}}
-	}
-	art.State = state
+	art.State = check a.review.Apply(ctx, &art, art.State, in.Transition, func(ctx context.Context, to string) error {
+		moved := check a.store.SetState(ctx, art.Slug, art.State, to) as Unavailable
+		if !moved {
+			// Another request moved it meanwhile.
+			return Refused{Cause: workflow.NotAllowed{Workflow: a.review.Name, Transition: in.Transition, State: art.State}}
+		}
+		return nil
+	}) as Refused
 	return art, nil
 }

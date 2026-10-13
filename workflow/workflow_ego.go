@@ -15,13 +15,13 @@
 //		},
 //	}, access, events)
 //
-//	art.State = check review.Apply(ctx, art, art.State, "publish") ""
+//	art.State = check review.Apply(ctx, art, art.State, "publish", store.SaveState) ""
 //
 // A guard is a security attribute, which the Access's voters decide with
 // the subject: a role, or "publish" for an Authorship voter. Applying a
-// transition dispatches Transitioning, whose listeners may refuse it, then
-// Transitioned. The subject keeps its state where the app wants, such as a
-// column: Apply returns the new one.
+// transition dispatches Transitioning, whose listeners may refuse it, saves
+// the new state with the function the app gives, as to a column, then
+// dispatches Transitioned.
 package workflow
 
 import (
@@ -131,7 +131,8 @@ type Transitioning struct {
 	From       string
 }
 
-// Transitioned is dispatched once a transition is applied.
+// Transitioned is dispatched once a transition is applied, and its state
+// saved.
 type Transitioned struct {
 	Workflow   string
 	Transition Transition
@@ -172,7 +173,7 @@ func New(d Definition, access *security.Access, events *event.Dispatcher) (*Work
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-//line workflow.ego:133
+//line workflow.ego:134
 	return &Workflow{Definition: d, access: access, events: events}, nil
 }
 
@@ -209,15 +210,16 @@ func (w *Workflow) Enabled(ctx context.Context, subject any, state string) []Tra
 }
 
 // Apply applies the transition to subject, in state, and returns its new
-// state. It fails with UnknownTransition, NotAllowed, security's 401 or 403
-// when its guard isn't granted, or a Transitioning listener's error.
-func (w *Workflow) Apply(ctx context.Context, subject any, state, transition string) (string, error) {
+// state. It checks that the transition's guard is granted, then that it
+// starts from state, so that who may not apply it doesn't learn the state.
+// It dispatches Transitioning, calls save, if it isn't nil, with the new
+// state, then dispatches Transitioned: Transitioned's listeners see a
+// transition that was saved. It fails with UnknownTransition, security's
+// 401 or 403, NotAllowed, a Transitioning listener's error, or save's.
+func (w *Workflow) Apply(ctx context.Context, subject any, state, transition string, save func(ctx context.Context, to string) error) (string, error) {
 	t, ok := w.transition(transition)
 	if !ok {
 		return "", UnknownTransition{Workflow: w.Name, Transition: transition}
-	}
-	if !slices.Contains(t.From, state) {
-		return "", NotAllowed{Workflow: w.Name, Transition: transition, State: state}
 	}
 	if t.Guard != "" {
 		if w.access == nil {
@@ -227,11 +229,20 @@ func (w *Workflow) Apply(ctx context.Context, subject any, state, transition str
 			return "", err
 		}
 	}
-//line workflow.ego:185
+//line workflow.ego:187
+	if !slices.Contains(t.From, state) {
+		return "", NotAllowed{Workflow: w.Name, Transition: transition, State: state}
+	}
 	if err := event.Dispatch(ctx, w.events, &Transitioning{Workflow: w.Name, Transition: t, Subject: subject, From: state}); err != nil {
 		return "", err
 	}
-//line workflow.ego:186
+//line workflow.ego:191
+	if save != nil {
+		if err := save(ctx, t.To); err != nil {
+			return "", err
+		}
+	}
+//line workflow.ego:194
 	event.Dispatch(ctx, w.events, &Transitioned{Workflow: w.Name, Transition: t, Subject: subject, From: state})
 	return t.To, nil
 }

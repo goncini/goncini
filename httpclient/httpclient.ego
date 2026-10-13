@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -41,7 +42,8 @@ import (
 type Config struct {
 	// BaseURL is put before the paths of requests: https://api.example.com.
 	BaseURL string
-	// Header is sent with each request, unless the request has the header.
+	// Header is sent with each request to BaseURL's host, or to any host
+	// without a BaseURL, unless the request has the header.
 	Header map[string]string
 	// Timeout bounds each attempt; zero means 30 seconds.
 	Timeout time.Duration
@@ -74,23 +76,30 @@ func New(c Config) *Client {
 const Instrumentation = "github.com/goncini/goncini/httpclient"
 
 // Do sends req, with the client's base URL and headers, retrying it as the
-// package says. The response of the last attempt is returned whatever its
-// status: StatusError is for JSON's helpers. req's body must be replayable,
-// as http.NewRequest makes it for bytes and strings, for it to be retried.
+// package says, and following redirects as http.Client does. The response
+// of the last attempt is returned whatever its status: StatusError is for
+// JSON's helpers. req's body must be replayable, as http.NewRequest makes
+// it for bytes and strings, for it to be retried.
 func (c *Client) Do(req *http.Request) (*http.Response, error) {
+	ctx, span := otel.Tracer(Instrumentation).Start(req.Context(), req.Method, trace.WithSpanKind(trace.SpanKindClient))
+	defer span.End()
+	req = req.Clone(ctx)
+	if req.Header == nil {
+		req.Header = http.Header{}
+	}
+	base := check url.Parse(c.Config.BaseURL) ""
 	if c.Config.BaseURL != "" && req.URL.Host == "" {
 		u := check req.URL.Parse(strings.TrimSuffix(c.Config.BaseURL, "/") + "/" + strings.TrimPrefix(req.URL.String(), "/")) ""
 		req.URL, req.Host = u, u.Host
 	}
-	for name, value := range c.Config.Header {
-		if req.Header.Get(name) == "" {
-			req.Header.Set(name, value)
+	if c.Config.BaseURL == "" || strings.EqualFold(req.URL.Host, base.Host) && req.URL.Scheme == base.Scheme {
+		for name, value := range c.Config.Header {
+			if req.Header.Get(name) == "" {
+				req.Header.Set(name, value)
+			}
 		}
 	}
-	ctx, span := otel.Tracer(Instrumentation).Start(req.Context(), req.Method, trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(attribute.String("http.request.method", req.Method), attribute.String("url.full", req.URL.Redacted())))
-	defer span.End()
-	req = req.WithContext(ctx)
+	span.SetAttributes(attribute.String("http.request.method", req.Method), attribute.String("url.full", req.URL.Redacted()))
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
 	for attempt := 1; ; attempt++ {
 		res, err := c.attempt(req)
@@ -127,7 +136,8 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 func (c *Client) attempt(req *http.Request) (*http.Response, error) {
 	timeout := if c.Config.Timeout > 0 { c.Config.Timeout } else { 30 * time.Second }
 	ctx, cancel := context.WithTimeout(req.Context(), timeout)
-	res, err := (c.Transport ?? http.DefaultTransport).RoundTrip(req.WithContext(ctx))
+	client := &http.Client{Transport: c.Transport ?? http.DefaultTransport}
+	res, err := client.Do(req.WithContext(ctx))
 	if err != nil {
 		cancel()
 		return nil, err
@@ -251,7 +261,8 @@ func Send[T any](ctx context.Context, c *Client, method, path string, body any) 
 }
 
 // Handler returns a transport that serves requests with h, in the process:
-// for tests, in place of the API called.
+// for tests, in place of the API called. A request whose context ends
+// before h returns fails, as over the network.
 func Handler(h http.Handler) http.RoundTripper {
 	return handlerTransport{h}
 }
@@ -269,7 +280,19 @@ func (t handlerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Body = http.NoBody // as a server gives handlers
 	}
 	rec := &recorder{header: http.Header{}}
-	t.h.ServeHTTP(rec, req)
+	served := make(chan any, 1)
+	go func() {
+		defer func() { served <- recover() }()
+		t.h.ServeHTTP(rec, req)
+	}()
+	select {
+	case p := <-served:
+		if p != nil {
+			panic(p)
+		}
+	case <-req.Context().Done():
+		return nil, context.Cause(req.Context())
+	}
 	status := cmp.Or(rec.status, http.StatusOK)
 	return &http.Response{
 		Status:        f"{status} {http.StatusText(status)}",

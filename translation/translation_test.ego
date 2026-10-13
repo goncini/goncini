@@ -39,6 +39,24 @@ func TestTranslate(t *testing.T) {
 			t.Errorf("%s %q: %q, want %q", c.lang, c.msg, got, c.want)
 		}
 	}
+	// The most specific pattern wins, and values are put in once.
+	tr = translation.New(translation.Config{}, translation.Catalogs{"fr": {
+		"must be at least {n}":            "doit valoir au moins {n}",
+		"must be at least {n} characters": "doit faire au moins {n} caractères",
+		"no article {slug} in {list}":     "aucun article {slug} dans {list}",
+	}})
+	for msg, want := range map[string]string{
+		"must be at least 3 characters": "doit faire au moins 3 caractères",
+		"no article {list} in mine":     "aucun article {list} dans mine",
+	} {
+		if got := tr.Translate("fr", msg); got != want {
+			t.Errorf("%q: %q, want %q", msg, got, want)
+		}
+	}
+}
+
+func TestLanguages(t *testing.T) {
+	tr := translation.New(translation.Config{}, catalogs)
 	if got := strings.Join(tr.Languages(), " "); got != "en de fr fr-CA" {
 		t.Errorf("languages %s", got)
 	}
@@ -61,8 +79,8 @@ func TestProblems(t *testing.T) {
 		r.Header.Set("Accept-Language", lang)
 		w := httptest.NewRecorder()
 		k.ServeHTTP(w, r)
-		if !strings.Contains(w.Body.String(), want) {
-			t.Errorf("%q: %s", lang, w.Body)
+		if !strings.Contains(w.Body.String(), want) || w.Header().Get("Vary") != "Accept-Language" {
+			t.Errorf("%q: %s %v", lang, w.Body, w.Header())
 		}
 		if lang == "fr-FR,fr;q=0.9" && (!strings.Contains(w.Body.String(), `"detail":"ne peut pas être vide"`) || !strings.Contains(w.Body.String(), `"detail":"doit valoir au moins 1"`) || w.Header().Get("Content-Language") != "fr") {
 			t.Errorf("fr: %s %v", w.Body, w.Header())

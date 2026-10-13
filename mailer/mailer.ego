@@ -29,6 +29,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/effect-go/effect-go/layer"
 
@@ -88,7 +89,9 @@ type SendEmail struct {
 // Send sends e, from Config.From if it has no sender.
 func (m *Mailer) Send(ctx context.Context, e *mime.Email) error {
 	if e.From.Email == "" {
-		e.From = m.Config.From
+		withFrom := *e
+		withFrom.From = m.Config.From
+		e = &withFrom
 	}
 	raw := check e.Bytes() ""
 	if m.bus != nil {
@@ -145,6 +148,8 @@ type SMTPTransport struct {
 	// TLS connects over TLS at once (smtps); otherwise STARTTLS is used when
 	// the server offers it.
 	TLS bool
+	// Timeout bounds a sending; zero means 30 seconds.
+	Timeout time.Duration
 }
 
 func newSMTP(u *url.URL) (*SMTPTransport, error) {
@@ -157,24 +162,39 @@ func newSMTP(u *url.URL) (*SMTPTransport, error) {
 	if u.Hostname() == "" {
 		return nil, errors.New("mailer: the SMTP DSN has no host")
 	}
+	if strings.Trim(u.Path, "/") != "" || u.Fragment != "" || u.RawQuery != "" {
+		return nil, errors.New("mailer: the SMTP DSN has more than a host: percent-encode the @, # and / of its credentials")
+	}
 	t.Addr = net.JoinHostPort(u.Hostname(), port)
 	return t, nil
 }
 
 func (t *SMTPTransport) Send(ctx context.Context, from string, to []string, raw []byte) error {
+	if err := t.send(ctx, from, to, raw); err != nil {
+		if ctx.Err() != nil {
+			err = context.Cause(ctx) // the deadline, rather than a read's error
+		}
+		return fmt.Errorf("mailer: SMTP %s: %w", t.Addr, err)
+	}
+	return nil
+}
+
+func (t *SMTPTransport) send(ctx context.Context, from string, to []string, raw []byte) error {
 	host, _, _ := net.SplitHostPort(t.Addr)
 	var d net.Dialer
 	conn := check d.DialContext(ctx, "tcp", t.Addr) ""
-	if deadline, ok := ctx.Deadline(); ok {
+	conn.SetDeadline(time.Now().Add(cmp.Or(t.Timeout, 30*time.Second)))
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(time.Now().Add(cmp.Or(t.Timeout, 30*time.Second))) {
 		conn.SetDeadline(deadline)
 	}
+	defer context.AfterFunc(ctx, () => conn.SetDeadline(time.Now()))()
 	if t.TLS {
 		conn = tls.Client(conn, &tls.Config{ServerName: host})
 	}
 	c, err := smtp.NewClient(conn, host)
 	if err != nil {
 		conn.Close()
-		return fmt.Errorf("mailer: %w", err)
+		return err
 	}
 	defer c.Close()
 	if ok, _ := c.Extension("STARTTLS"); ok && !t.TLS {
@@ -190,7 +210,8 @@ func (t *SMTPTransport) Send(ctx context.Context, from string, to []string, raw 
 	w := check c.Data() ""
 	check w.Write(raw) ""
 	check w.Close() ""
-	return c.Quit()
+	c.Quit() // the server accepted the email: a failure to say goodbye isn't the email's
+	return nil
 }
 
 // LogTransport logs the emails it's given instead of sending them.

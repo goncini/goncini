@@ -16,14 +16,15 @@ const editorKey = "a test editor's key that is long enough"
 
 // TestReview is M4's sixth gate: an article goes through its review as
 // the workflow allows, its guard lets only editors publish, a transition
-// its state doesn't allow is a 409, and workflow:dump draws the workflow.
+// its state doesn't allow is a 409 to whom the guard lets through, and workflow:dump draws the workflow.
 func TestReview(t *testing.T) {
 	a := boot(t)
 	c := webtest.NewClient(t, a)
 	editor := c.WithHeader("Authorization", "Bearer "+editorKey)
 	c.Post("/articles", `{"title":"Review me","body":"Draft"}`).Status(201).Contains(`"state":"draft"`)
 
-	c.Post("/articles/review-me/transitions/publish", nil).Problem(409).HasDetail("review: can't publish from draft")
+	c.Post("/articles/review-me/transitions/publish", nil).Problem(401) // the guard first: no state for strangers
+	editor.Post("/articles/review-me/transitions/publish", nil).Problem(409).HasDetail("review: can't publish from draft")
 	c.Post("/articles/review-me/transitions/submit", nil).Status(200).Contains(`"state":"in_review"`)
 	c.Post("/articles/review-me/transitions/publish", nil).Problem(401) // an editor's job
 	c.WithHeader("Authorization", "Bearer nope").Post("/articles/review-me/transitions/publish", nil).Problem(401)

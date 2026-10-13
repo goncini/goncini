@@ -180,3 +180,118 @@ func TestStampede(t *testing.T) {
 		}
 	}
 }
+
+// TestChangedWhileComputing checks that a value whose tag is invalidated,
+// here or by another process, or whose key is deleted, while it is computed
+// isn't kept.
+func TestChangedWhileComputing(t *testing.T) {
+	ctx := context.Background()
+	store := cache.NewMemoryStore()
+	c, other := cache.New(cache.Config{}, store), cache.New(cache.Config{}, store)
+	for name, change := range map[string]func(){
+		"invalidated": func() {
+			if err := c.Invalidate(ctx, "t"); err != nil {
+				panic(err)
+			}
+		},
+		"invalidated elsewhere": func() {
+			time.Sleep(time.Millisecond)
+			if err := other.Invalidate(ctx, "t"); err != nil {
+				panic(err)
+			}
+		}, // told by the clock
+		"deleted": func() {
+			if err := c.Delete(ctx, "k"); err != nil {
+				panic(err)
+			}
+		},
+	} {
+//line cache_test.ego:139
+		calls := 0
+		compute := func(ctx context.Context, item *cache.Item) (int, error) {
+			calls++
+			item.Tags = []string{"t"}
+			if calls == 1 {
+				change()
+			}
+			return calls, nil
+		}
+		if _, err := cache.Get(ctx, c, "k", compute); err != nil {
+			panic(err)
+		}
+//line cache_test.ego:149
+		got, err := cache.Get(ctx, c, "k", compute)
+		if err != nil {
+			panic(err)
+		}
+//line cache_test.ego:150
+		if got != 2 {
+			t.Errorf("%s: got %d, want the value computed again", name, got)
+		}
+		if err := c.Delete(ctx, "k"); err != nil {
+			panic(err)
+		}
+	}
+}
+
+//line cache_test.ego:157
+func TestNegativeTTL(t *testing.T) {
+	c := cache.New(cache.Config{}, cache.NewMemoryStore())
+	calls := 0
+	compute := func(ctx context.Context, item *cache.Item) (int, error) {
+		calls++
+		item.TTL = -time.Second
+		return calls, nil
+	}
+	if _, err := cache.Get(context.Background(), c, "k", compute); err != nil {
+		panic(err)
+	}
+//line cache_test.ego:166
+	got, err := cache.Get(context.Background(), c, "k", compute)
+	if err != nil {
+		panic(err)
+	}
+//line cache_test.ego:167
+	if got != 2 {
+		t.Errorf("got %d: a negative TTL kept the value", got)
+	}
+}
+
+// TestLeaderGone checks that waiters don't fail with the computation they
+// waited for when its context ends, or when it panics.
+func TestLeaderGone(t *testing.T) {
+	c := cache.New(cache.Config{}, cache.NewMemoryStore())
+	for name, leader := range map[string]func(ctx context.Context) (int, error){
+		"cancelled": func(ctx context.Context) (int, error) { <-ctx.Done(); return 0, context.Cause(ctx) },
+		"panicked":  func(ctx context.Context) (int, error) { panic("boom") },
+	} {
+		started, release := make(chan struct{}), make(chan struct{})
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			defer func() { recover() }()
+			cache.Get(ctx, c, name, func(ctx context.Context, item *cache.Item) (int, error) {
+				close(started)
+				<-release
+				return leader(ctx)
+			})
+		}()
+		<-started
+		done := make(chan struct{})
+		var got int
+		var err error
+		go func() {
+			defer close(done)
+			got, err = cache.Get(context.Background(), c, name, func(ctx context.Context, item *cache.Item) (int, error) { return 7, nil })
+		}()
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+		close(release)
+		<-done
+		if name == "cancelled" && (err != nil || got != 7) {
+			t.Errorf("%s: got %d, %v", name, got, err)
+		}
+		if name == "panicked" && err == nil {
+			t.Errorf("%s: got %d, no error", name, got)
+		}
+	}
+}

@@ -14,28 +14,29 @@ import (
 	"time"
 
 	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/messenger"
 )
 
 // sqliteBus returns a bus whose queues are in a SQLite database in memory.
 //
-//line regressions_test.ego:19
+//line regressions_test.ego:20
 func sqliteBus(t *testing.T, c messenger.Config) (*messenger.Bus, messenger.Transports) {
 	pool, err := sql.Open("sqlite", "file::memory:")
 	if err != nil {
 		panic(err)
 	}
-//line regressions_test.ego:21
+//line regressions_test.ego:22
 	pool.SetMaxOpenConns(1)
 	t.Cleanup(func() {
 		pool.Close()
 	})
-//line regressions_test.ego:23
+//line regressions_test.ego:24
 	ts, err := messenger.NewSQLTransports(pool, c)
 	if err != nil {
 		panic(err)
 	}
-//line regressions_test.ego:24
+//line regressions_test.ego:25
 	return messenger.NewBus(c, ts, nil, slog.New(slog.DiscardHandler)), ts
 }
 
@@ -50,22 +51,22 @@ func TestSQLFailureTransport(t *testing.T) {
 	if err := messenger.Dispatch(ctx, b, welcome{"ann"}); err != nil {
 		panic(err)
 	}
-//line regressions_test.ego:36
+//line regressions_test.ego:37
 	w := worker(b, 1)
 	if err := w.Run(ctx); err != nil {
 		panic(err)
 	}
-//line regressions_test.ego:38
+//line regressions_test.ego:39
 	failed, err := ts["failed"].(messenger.Browser).List(ctx)
 	if err != nil {
 		panic(err)
 	}
-//line regressions_test.ego:39
+//line regressions_test.ego:40
 	async, err := ts["async"].(messenger.Browser).List(ctx)
 	if err != nil {
 		panic(err)
 	}
-//line regressions_test.ego:40
+//line regressions_test.ego:41
 	if len(failed) != 1 || failed[0].Attempts != 1 || len(async) != 0 {
 		t.Fatalf("failed %+v, async %+v", failed, async)
 	}
@@ -73,19 +74,19 @@ func TestSQLFailureTransport(t *testing.T) {
 	if err := console.Run(ctx, &out, messenger.Commands(b), "", []string{"messenger:failed:retry"}); err != nil {
 		panic(err)
 	}
-//line regressions_test.ego:45
+//line regressions_test.ego:46
 	v, err := ts["failed"].(messenger.Browser).List(ctx)
 	if err != nil {
 		panic(err)
 	}
 	failed = v
-//line regressions_test.ego:46
+//line regressions_test.ego:47
 	v2, err := ts["async"].(messenger.Browser).List(ctx)
 	if err != nil {
 		panic(err)
 	}
 	async = v2
-//line regressions_test.ego:47
+//line regressions_test.ego:48
 	if len(failed) != 0 || len(async) != 1 || async[0].ID == "" {
 		t.Errorf("failed %+v, async %+v", failed, async)
 	}
@@ -129,7 +130,7 @@ func TestStopTimeoutBoundsHandlers(t *testing.T) {
 
 // flaky is a transport whose receives fail some of the time.
 //
-//line regressions_test.ego:84
+//line regressions_test.ego:85
 type flaky struct {
 	messenger.Transport
 	calls atomic.Int32
@@ -168,7 +169,7 @@ func TestReceiveErrorsPass(t *testing.T) {
 // TestSetupIsRetried checks that a transport whose table creation failed
 // creates it at the next call.
 //
-//line regressions_test.ego:117
+//line regressions_test.ego:118
 func TestSetupIsRetried(t *testing.T) {
 	_, ts := sqliteBus(t, messenger.Config{})
 	cancelled, cancel := context.WithCancel(context.Background())
@@ -178,5 +179,52 @@ func TestSetupIsRetried(t *testing.T) {
 	}
 	if _, _, err := ts["async"].Receive(context.Background(), time.Minute); err != nil {
 		t.Errorf("after a failed setup: %v", err)
+	}
+}
+
+// TestSQLOutbox checks that a message dispatched in a transaction of the
+// queues' pool is queued with it: only if it commits.
+func TestSQLOutbox(t *testing.T) {
+	pool, err2 := sql.Open("sqlite", "file::memory:")
+	if err2 != nil {
+		panic(err2)
+	}
+//line regressions_test.ego:134
+	pool.SetMaxOpenConns(1) // a send outside the transaction would wait for it forever
+	t.Cleanup(func() {
+		pool.Close()
+	})
+//line regressions_test.ego:136
+	c := messenger.Config{}
+	ts, err3 := messenger.NewSQLTransports(pool, c)
+	if err3 != nil {
+		panic(err3)
+	}
+//line regressions_test.ego:138
+	b := messenger.NewBus(c, ts, nil, slog.New(slog.DiscardHandler))
+	messenger.Route[welcome](b, "async")
+	tx := db.NewSQL(pool)
+	ctx := context.Background()
+	err := tx.InTx(ctx, func(ctx context.Context) error {
+		if err := messenger.Dispatch(ctx, b, welcome{"rolled back"}); err != nil {
+			panic(err)
+		}
+//line regressions_test.ego:144
+		return errors.New("rollback")
+	})
+	if err == nil {
+		t.Fatal("no rollback")
+	}
+	if err4 := tx.InTx(ctx, func(ctx context.Context) error { return messenger.Dispatch(ctx, b, welcome{"ann"}) }); err4 != nil {
+		panic(err4)
+	}
+//line regressions_test.ego:150
+	queued, err5 := ts["async"].(messenger.Browser).List(ctx)
+	if err5 != nil {
+		panic(err5)
+	}
+//line regressions_test.ego:151
+	if len(queued) != 1 || !strings.Contains(string(queued[0].Body), "ann") {
+		t.Errorf("queued %+v", queued)
 	}
 }

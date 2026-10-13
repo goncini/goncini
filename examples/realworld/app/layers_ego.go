@@ -82,7 +82,7 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v3 := autoSubscribers(invalidator, notices, subscriber)
 	dispatcher := goncini.NewDispatcher(v3)
 	mailer2 := mailer.NewAsync(config7, bus)
-	users2, err := users.NewUsers(store, hasher2, tokens, limiter, dispatcher, mailer2)
+	users2, err := users.NewUsers(store, hasher2, tokens, limiter, dispatcher, mailer2, sql2)
 	if err != nil {
 		return nil, fmt.Errorf("users.NewUsers: %w", err)
 	}
@@ -90,7 +90,7 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	authorship := articles.NewAuthorship()
 	v4 := autoVoters(authorship)
 	access := security.NewAccess(config2, v4)
-	articles2 := articles.NewArticles(store2, access, dispatcher, cache2)
+	articles2 := articles.NewArticles(store2, access, dispatcher, cache2, sql2)
 	moderation2 := moderation.NewModeration(articles2, access)
 	v5 := routes(firewall2, firewall3, users2, articles2, notifications2, moderation2)
 	router := goncini.NewRouter(v5)
@@ -184,7 +184,7 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config) (*Test, e
 	v3 := autoSubscribers(invalidator, notices, subscriber)
 	dispatcher := goncini.NewDispatcher(v3)
 	mailer2 := mailer.NewAsync(config7, bus)
-	users2, err := users.NewUsers(store, hasher2, tokens, limiter, dispatcher, mailer2)
+	users2, err := users.NewUsers(store, hasher2, tokens, limiter, dispatcher, mailer2, sql2)
 	if err != nil {
 		return nil, fmt.Errorf("users.NewUsers: %w", err)
 	}
@@ -192,7 +192,7 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config) (*Test, e
 	authorship := articles.NewAuthorship()
 	v4 := autoVoters(authorship)
 	access := security.NewAccess(config2, v4)
-	articles2 := articles.NewArticles(store2, access, dispatcher, cache2)
+	articles2 := articles.NewArticles(store2, access, dispatcher, cache2, sql2)
 	moderation2 := moderation.NewModeration(articles2, access)
 	v5 := routes(firewall2, firewall3, users2, articles2, notifications2, moderation2)
 	router := goncini.NewRouter(v5)

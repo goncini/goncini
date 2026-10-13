@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	openapi_types "github.com/oapi-codegen/runtime/types"
+
 	"github.com/goncini/goncini/webtest"
 
 	"github.com/goncini/goncini/examples/realworld/app"
@@ -22,7 +24,7 @@ import (
 	"github.com/goncini/goncini/examples/realworld/config"
 )
 
-//line client_test.ego:23
+//line client_test.ego:25
 var update = flag.Bool("update", false, "rewrite testdata/openapi/conduit.json and the client")
 
 // TestDocumentIsDumped checks that testdata/openapi/conduit.json, which the
@@ -34,14 +36,14 @@ func TestDocumentIsDumped(t *testing.T) {
 	if err2 != nil {
 		panic(err2)
 	}
-//line client_test.ego:31
+//line client_test.ego:33
 	got = append(got, '\n')
 	file := "testdata/openapi/conduit.json"
 	if *update {
 		if err3 := os.WriteFile(file, got, 0o644); err3 != nil {
 			panic(err3)
 		}
-//line client_test.ego:35
+//line client_test.ego:37
 		out, err := exec.Command("go", "generate", "./client").CombinedOutput()
 		if err != nil {
 			t.Fatalf("go generate: %v\n%s", err, out)
@@ -52,7 +54,7 @@ func TestDocumentIsDumped(t *testing.T) {
 	if err4 != nil {
 		panic(err4)
 	}
-//line client_test.ego:42
+//line client_test.ego:44
 	if !bytes.Equal(got, want) {
 		t.Errorf("%s isn't the app's document: run go test -update", file)
 	}
@@ -65,12 +67,12 @@ func TestDocumentIsDumped(t *testing.T) {
 	if err5 != nil {
 		panic(err5)
 	}
-//line client_test.ego:51
+//line client_test.ego:53
 	committed, err6 := os.ReadFile("client/client.gen.go")
 	if err6 != nil {
 		panic(err6)
 	}
-//line client_test.ego:52
+//line client_test.ego:54
 	if !bytes.Equal(fresh, committed) {
 		t.Errorf("client/client.gen.go isn't generated from %s: run go test -update", file)
 	}
@@ -88,7 +90,7 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:66
+//line client_test.ego:68
 	ctx := t.Context()
 	status := func(what string, got, want int) {
 		if got != want {
@@ -97,15 +99,15 @@ func TestClient(t *testing.T) {
 	}
 
 	type user = struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Username string `json:"username"`
+		Email    openapi_types.Email `json:"email"`
+		Password string              `json:"password"`
+		Username string              `json:"username"`
 	}
 	register, err := c.UserRegisterWithResponse(ctx, client.UserRegisterJSONRequestBody{User: user{"bob@example.com", "bob's password", "bob"}})
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:79
+//line client_test.ego:81
 	status("register", register.StatusCode(), 201)
 	bob := withToken(register.JSON201.User.Token)
 	v, err := c.UserRegisterWithResponse(ctx, client.UserRegisterJSONRequestBody{User: user{"alice@example.com", "alice's password", "alice"}})
@@ -113,7 +115,7 @@ func TestClient(t *testing.T) {
 		panic(err)
 	}
 	register = v
-//line client_test.ego:82
+//line client_test.ego:84
 	status("register", register.StatusCode(), 201)
 	login, err := c.UserLoginWithResponse(ctx, client.UserLoginJSONRequestBody{User: struct {
 		Email    string `json:"email"`
@@ -122,7 +124,7 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:87
+//line client_test.ego:89
 	status("login", login.StatusCode(), 200)
 	alice := withToken(login.JSON200.User.Token)
 
@@ -130,7 +132,7 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:91
+//line client_test.ego:93
 	status("current user", current.StatusCode(), 200)
 	if current.JSON200.User.Username != "alice" {
 		t.Errorf("the current user is %q", current.JSON200.User.Username)
@@ -139,12 +141,12 @@ func TestClient(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"user":{"bio":"Writes tests."}}`), &update); err != nil {
 		panic(err)
 	}
-//line client_test.ego:97
+//line client_test.ego:99
 	updated, err := c.UserUpdateWithResponse(ctx, update, alice)
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:98
+//line client_test.ego:100
 	status("update the user", updated.StatusCode(), 200)
 	if b := updated.JSON200.User.Bio; b == nil || *b != "Writes tests." {
 		t.Errorf("bio %v", b)
@@ -154,13 +156,13 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:104
+//line client_test.ego:106
 	status("follow", follow.StatusCode(), 200)
 	profile, err := c.ProfileShowWithResponse(ctx, "bob", alice)
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:106
+//line client_test.ego:108
 	status("profile", profile.StatusCode(), 200)
 	if !profile.JSON200.Profile.Following {
 		t.Error("alice doesn't follow bob")
@@ -173,7 +175,7 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:115
+//line client_test.ego:117
 	status("create an article", created.StatusCode(), 201)
 	slug := created.JSON201.Article.Slug
 
@@ -181,13 +183,13 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:119
+//line client_test.ego:121
 	status("list articles", list.StatusCode(), 200)
 	feed, err := c.ArticleFeedWithResponse(ctx, &client.ArticleFeedParams{}, alice)
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:121
+//line client_test.ego:123
 	status("feed", feed.StatusCode(), 200)
 	if list.JSON200.ArticlesCount != 1 || feed.JSON200.ArticlesCount != 1 {
 		t.Errorf("%d articles tagged go, %d in alice's feed", list.JSON200.ArticlesCount, feed.JSON200.ArticlesCount)
@@ -196,18 +198,18 @@ func TestClient(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"article":{"title":"Typed clients, generated"}}`), &edit); err != nil {
 		panic(err)
 	}
-//line client_test.ego:127
+//line client_test.ego:129
 	edited, err := c.ArticleUpdateWithResponse(ctx, slug, edit, bob)
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:128
+//line client_test.ego:130
 	status("update the article", edited.StatusCode(), 200)
 	show, err := c.ArticleShowWithResponse(ctx, slug)
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:130
+//line client_test.ego:132
 	status("show the article", show.StatusCode(), 200)
 	if got := show.JSON200.Article; got.Title != "Typed clients, generated" || got.Body != "They compile." {
 		t.Errorf("article %+v", got)
@@ -217,7 +219,7 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:136
+//line client_test.ego:138
 	status("favorite", favorite.StatusCode(), 200)
 	if !favorite.JSON200.Article.Favorited || favorite.JSON200.Article.FavoritesCount != 1 {
 		t.Errorf("favorited %+v", favorite.JSON200.Article)
@@ -226,7 +228,7 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:141
+//line client_test.ego:143
 	status("unfavorite", unfavorite.StatusCode(), 200)
 
 	comment := client.CommentAddJSONRequestBody{}
@@ -235,13 +237,13 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:146
+//line client_test.ego:148
 	status("comment", added.StatusCode(), 201)
 	comments, err := c.CommentListWithResponse(ctx, slug)
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:148
+//line client_test.ego:150
 	status("list the comments", comments.StatusCode(), 200)
 	if len(comments.JSON200.Comments) != 1 {
 		t.Errorf("%d comments", len(comments.JSON200.Comments))
@@ -250,14 +252,14 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:153
+//line client_test.ego:155
 	status("delete the comment", deletedComment.StatusCode(), 204)
 
 	tags, err := c.TagListWithResponse(ctx)
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:156
+//line client_test.ego:158
 	status("tags", tags.StatusCode(), 200)
 	if len(tags.JSON200.Tags) != 1 || tags.JSON200.Tags[0] != "go" {
 		t.Errorf("tags %q", tags.JSON200.Tags)
@@ -267,7 +269,7 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:162
+//line client_test.ego:164
 	status("delete bob's article as alice", forbidden.StatusCode(), 403)
 	if got := forbidden.JSON403.Errors["article"]; len(got) != 1 || got[0] != "forbidden" {
 		t.Errorf("errors %v", forbidden.JSON403.Errors)
@@ -276,26 +278,26 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:167
+//line client_test.ego:169
 	status("delete the article", deleted.StatusCode(), 204)
 	missing, err := c.ArticleShowWithResponse(ctx, slug)
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:169
+//line client_test.ego:171
 	status("show a deleted article", missing.StatusCode(), 404)
 
 	unfollow, err := c.ProfileUnfollowWithResponse(ctx, "bob", alice)
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:172
+//line client_test.ego:174
 	status("unfollow", unfollow.StatusCode(), 200)
 	anonymous, err := c.UserCurrentWithResponse(ctx)
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:174
+//line client_test.ego:176
 	status("current user without a token", anonymous.StatusCode(), 401)
 }
 

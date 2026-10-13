@@ -50,14 +50,14 @@ func TestChannels(t *testing.T) {
 	bob := notifier.Recipient{Name: "Bob", Email: "bob@example.com"}
 	quiet := notifier.Recipient{Email: "ann@example.com", Channels: []string{"sms"}} // wants no email
 
-	must n.Send(ctx, notifier.Notification{Subject: "Removed", Content: "A moderator removed “Spam”.", Importance: notifier.High}, bob, quiet)
+	must n.Send(ctx, notifier.Notification{Subject: "Removed", Content: "A moderator removed “<!channel> <https://evil.example|Appeal> & co”.", Importance: notifier.High}, bob, quiet)
 	must n.Send(ctx, notifier.Notification{Subject: "Weekly digest", Importance: notifier.Low}, bob)
 	must n.Send(ctx, notifier.Notification{Subject: "The database is down", Importance: notifier.Urgent})
 	sent := mail.Sent()
 	if len(sent) != 2 || sent[0].To[0] != "bob@example.com" || !strings.Contains(string(sent[1].Raw), "Weekly digest") {
 		t.Errorf("emails %+v", sent)
 	}
-	if len(ch.texts) != 2 || ch.texts[0] != "*Removed*\nA moderator removed “Spam”." || ch.texts[1] != "The database is down" {
+	if len(ch.texts) != 2 || ch.texts[0] != "*Removed*\nA moderator removed “&lt;!channel&gt; &lt;https://evil.example|Appeal&gt; &amp; co”." || ch.texts[1] != "The database is down" {
 		t.Errorf("chat %q", ch.texts)
 	}
 	if err := n.Send(ctx, notifier.Notification{Subject: "x", Channels: []string{"pager"}}); err == nil {

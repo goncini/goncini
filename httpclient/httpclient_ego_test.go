@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -19,7 +20,7 @@ import (
 	"github.com/goncini/goncini/httpclient"
 )
 
-//line httpclient_test.ego:20
+//line httpclient_test.ego:21
 type repo struct {
 	Name string `json:"name"`
 }
@@ -63,7 +64,7 @@ func TestGet(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line httpclient_test.ego:60
+//line httpclient_test.ego:61
 	got := a.got[0]
 	if r.Name != "goncini" || got.URL.String() != "https://api.example.com/v3/repos/goncini" || got.Header.Get("User-Agent") != "goncini-test" || got.Header.Get("Accept") != "application/json" {
 		t.Errorf("%+v, %s %v", r, got.URL, got.Header)
@@ -132,7 +133,7 @@ func TestPOSTs(t *testing.T) {
 // failing is a transport whose first round trip fails, as a connection
 // refused.
 //
-//line httpclient_test.ego:121
+//line httpclient_test.ego:122
 type failing struct {
 	http.RoundTripper
 	failed bool
@@ -160,7 +161,7 @@ func TestConnectionFailures(t *testing.T) {
 	})
 }
 
-//line httpclient_test.ego:146
+//line httpclient_test.ego:147
 func TestTracePropagates(t *testing.T) {
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	tp := sdktrace.NewTracerProvider()
@@ -168,15 +169,72 @@ func TestTracePropagates(t *testing.T) {
 	t.Cleanup(func() {
 		tp.Shutdown(context.Background())
 	})
-//line httpclient_test.ego:151
+//line httpclient_test.ego:152
 	ctx, span := tp.Tracer("test").Start(context.Background(), "caller")
 	defer span.End()
 	a := &api{}
 	if _, err := httpclient.Get[repo](ctx, client(a), "/"); err != nil {
 		panic(err)
 	}
-//line httpclient_test.ego:155
+//line httpclient_test.ego:156
 	if tp := a.got[0].Header.Get("Traceparent"); !strings.Contains(tp, span.SpanContext().TraceID().String()) {
 		t.Errorf("traceparent %q", tp)
 	}
+}
+
+// TestRedirectsAndHosts checks that redirects are followed, and that the
+// default headers go only to the base URL's host.
+func TestRedirectsAndHosts(t *testing.T) {
+	var auths []string
+	c := httpclient.New(httpclient.Config{BaseURL: "https://api.example.com", Header: map[string]string{"Authorization": "Bearer secret"}})
+	c.Transport = httpclient.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auths = append(auths, r.URL.Host+" "+r.Header.Get("Authorization"))
+		if r.URL.Path == "/old" {
+			http.Redirect(w, r, "/new", http.StatusMovedPermanently)
+			return
+		}
+		w.Write([]byte(`{"name":"goncini"}`))
+	}))
+	r, err := httpclient.Get[repo](context.Background(), c, "/old")
+	if err != nil {
+		panic(err)
+	}
+//line httpclient_test.ego:175
+	if _, err := httpclient.Get[repo](context.Background(), c, "https://elsewhere.example.com/x"); err != nil {
+		panic(err)
+	}
+//line httpclient_test.ego:176
+	u, err := url.Parse("/new")
+	if err != nil {
+		panic(err)
+	}
+//line httpclient_test.ego:177
+	req := &http.Request{Method: http.MethodGet, URL: u} // no Header
+	res, err := c.Do(req)
+	if err != nil {
+		panic(err)
+	}
+//line httpclient_test.ego:179
+	res.Body.Close()
+	want := "api.example.com Bearer secret, api.example.com Bearer secret, elsewhere.example.com , api.example.com Bearer secret"
+	if r.Name != "goncini" || strings.Join(auths, ", ") != want {
+		t.Errorf("got %v, %v", r, auths)
+	}
+	if req.Header != nil || req.URL.Host != "" {
+		t.Errorf("Do changed the request: %v", req.URL)
+	}
+}
+
+// TestHandlerTimeout checks that a handler slower than the timeout fails
+// the request.
+func TestHandlerTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := httpclient.New(httpclient.Config{Timeout: time.Second, Retries: -1})
+		c.Transport = httpclient.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(time.Minute) }))
+		_, err := httpclient.Get[repo](context.Background(), c, "https://api.example.com/slow")
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("got %v", err)
+		}
+		time.Sleep(time.Minute)
+	})
 }

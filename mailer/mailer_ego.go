@@ -31,6 +31,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/effect-go/effect-go/layer"
 
@@ -40,7 +41,7 @@ import (
 
 // Config configures a mailer.
 //
-//line mailer.ego:40
+//line mailer.ego:41
 type Config struct {
 	// DSN chooses the transport; empty means log://. It holds a password:
 	// read it with env.Secret.
@@ -92,13 +93,15 @@ type SendEmail struct {
 // Send sends e, from Config.From if it has no sender.
 func (m *Mailer) Send(ctx context.Context, e *mime.Email) error {
 	if e.From.Email == "" {
-		e.From = m.Config.From
+		withFrom := *e
+		withFrom.From = m.Config.From
+		e = &withFrom
 	}
 	raw, err := e.Bytes()
 	if err != nil {
 		return err
 	}
-//line mailer.ego:94
+//line mailer.ego:97
 	if m.bus != nil {
 		return messenger.Dispatch(ctx, m.bus, SendEmail{From: e.From.Email, To: e.Recipients(), Raw: raw})
 	}
@@ -153,6 +156,8 @@ type SMTPTransport struct {
 	// TLS connects over TLS at once (smtps); otherwise STARTTLS is used when
 	// the server offers it.
 	TLS bool
+	// Timeout bounds a sending; zero means 30 seconds.
+	Timeout time.Duration
 }
 
 func newSMTP(u *url.URL) (*SMTPTransport, error) {
@@ -166,32 +171,47 @@ func newSMTP(u *url.URL) (*SMTPTransport, error) {
 			port = "587"
 		}
 	}
-//line mailer.ego:157
+//line mailer.ego:162
 	if u.Hostname() == "" {
 		return nil, errors.New("mailer: the SMTP DSN has no host")
+	}
+	if strings.Trim(u.Path, "/") != "" || u.Fragment != "" || u.RawQuery != "" {
+		return nil, errors.New("mailer: the SMTP DSN has more than a host: percent-encode the @, # and / of its credentials")
 	}
 	t.Addr = net.JoinHostPort(u.Hostname(), port)
 	return t, nil
 }
 
 func (t *SMTPTransport) Send(ctx context.Context, from string, to []string, raw []byte) error {
+	if err := t.send(ctx, from, to, raw); err != nil {
+		if ctx.Err() != nil {
+			err = context.Cause(ctx) // the deadline, rather than a read's error
+		}
+		return fmt.Errorf("mailer: SMTP %s: %w", t.Addr, err)
+	}
+	return nil
+}
+
+func (t *SMTPTransport) send(ctx context.Context, from string, to []string, raw []byte) error {
 	host, _, _ := net.SplitHostPort(t.Addr)
 	var d net.Dialer
 	conn, err2 := d.DialContext(ctx, "tcp", t.Addr)
 	if err2 != nil {
 		return err2
 	}
-//line mailer.ego:168
-	if deadline, ok := ctx.Deadline(); ok {
+//line mailer.ego:186
+	conn.SetDeadline(time.Now().Add(cmp.Or(t.Timeout, 30*time.Second)))
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(time.Now().Add(cmp.Or(t.Timeout, 30*time.Second))) {
 		conn.SetDeadline(deadline)
 	}
+	defer context.AfterFunc(ctx, func() { conn.SetDeadline(time.Now()) })()
 	if t.TLS {
 		conn = tls.Client(conn, &tls.Config{ServerName: host})
 	}
 	c, err := smtp.NewClient(conn, host)
 	if err != nil {
 		conn.Close()
-		return fmt.Errorf("mailer: %w", err)
+		return err
 	}
 	defer c.Close()
 	if ok, _ := c.Extension("STARTTLS"); ok && !t.TLS {
@@ -199,37 +219,38 @@ func (t *SMTPTransport) Send(ctx context.Context, from string, to []string, raw 
 			return err3
 		}
 	}
-//line mailer.ego:183
+//line mailer.ego:203
 	if t.Username != "" {
 		if err4 := c.Auth(smtp.PlainAuth("", t.Username, t.Password, host)); err4 != nil {
 			return err4
 		}
 	}
-//line mailer.ego:186
+//line mailer.ego:206
 	if err5 := c.Mail(from); err5 != nil {
 		return err5
 	}
-//line mailer.ego:187
+//line mailer.ego:207
 	for _, rcpt := range to {
 		if err6 := c.Rcpt(rcpt); err6 != nil {
 			return err6
 		}
 	}
-//line mailer.ego:190
+//line mailer.ego:210
 	w, err7 := c.Data()
 	if err7 != nil {
 		return err7
 	}
-//line mailer.ego:191
+//line mailer.ego:211
 	if _, err8 := w.Write(raw); err8 != nil {
 		return err8
 	}
-//line mailer.ego:192
+//line mailer.ego:212
 	if err9 := w.Close(); err9 != nil {
 		return err9
 	}
-//line mailer.ego:193
-	return c.Quit()
+//line mailer.ego:213
+	c.Quit() // the server accepted the email: a failure to say goodbye isn't the email's
+	return nil
 }
 
 // LogTransport logs the emails it's given instead of sending them.
@@ -244,7 +265,7 @@ func (t *LogTransport) Send(ctx context.Context, from string, to []string, raw [
 		v = slog.Default()
 	}
 	(v).InfoContext(ctx, "an email, not sent", slog.String("from", from), slog.Any("to", to), slog.String("header", head))
-//line mailer.ego:204
+//line mailer.ego:225
 	return nil
 }
 

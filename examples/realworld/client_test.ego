@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	openapi_types "github.com/oapi-codegen/runtime/types"
+
 	"github.com/goncini/goncini/webtest"
 
 	"github.com/goncini/goncini/examples/realworld/app"
@@ -71,9 +73,9 @@ func TestClient(t *testing.T) {
 	}
 
 	type user = struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Username string `json:"username"`
+		Email    openapi_types.Email `json:"email"`
+		Password string              `json:"password"`
+		Username string              `json:"username"`
 	}
 	register := must c.UserRegisterWithResponse(ctx, client.UserRegisterJSONRequestBody{User: user{"bob@example.com", "bob's password", "bob"}})
 	status("register", register.StatusCode(), 201)

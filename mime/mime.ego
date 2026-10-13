@@ -23,11 +23,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	stdmime "mime"
 	"mime/multipart"
 	"mime/quotedprintable"
 	"net/mail"
 	"net/textproto"
+	"slices"
 	"strings"
 	"time"
 )
@@ -83,7 +85,9 @@ func (e *Email) Recipients() []string {
 	return out
 }
 
-// Validate reports what the email lacks: a sender, a recipient, or a body.
+// Validate reports what the email lacks, a sender, a recipient or a body,
+// or what it has wrong: an address that isn't one, a header or a ContentID
+// that would break the message.
 func (e *Email) Validate() error {
 	switch {
 	case e.From.Email == "":
@@ -93,12 +97,30 @@ func (e *Email) Validate() error {
 	case e.Text == "" && e.HTML == "":
 		return errors.New("mime: the email has no text and no HTML")
 	}
-	for _, a := range append(append([]Address{e.From}, e.To...), append(e.Cc, e.Bcc...)...) {
-		if _, err := mail.ParseAddress(a.Email); err != nil || strings.ContainsAny(a.Email, "\r\n") {
-			return fmt.Errorf("mime: invalid address %q", a.Email)
+	for _, list := range [][]Address{{e.From}, e.To, e.Cc, e.Bcc, e.ReplyTo} {
+		for _, a := range list {
+			parsed, err := mail.ParseAddress(a.Email)
+			if err != nil || parsed.Name != "" || parsed.Address != a.Email {
+				return fmt.Errorf("mime: invalid address %q", a.Email)
+			}
+		}
+	}
+	for name, value := range e.Header {
+		if !token(name) || strings.ContainsAny(value, "\r\n") {
+			return fmt.Errorf("mime: invalid header %q", name)
+		}
+	}
+	for _, p := range e.Parts {
+		if strings.ContainsAny(p.ContentID, "<>\r\n \t") {
+			return fmt.Errorf("mime: invalid content ID %q", p.ContentID)
 		}
 	}
 	return nil
+}
+
+// token reports whether name is a header's name.
+func token(name string) bool {
+	return name != "" && !strings.ContainsFunc(name, r => r <= ' ' || r >= 0x7f || r == ':')
 }
 
 // Bytes writes the email as an RFC 5322 message, without Bcc.
@@ -116,14 +138,11 @@ func (e *Email) Bytes() ([]byte, error) {
 	h.Set("Message-ID", "<"+randomID()+"@"+domain(e.From.Email)+">")
 	h.Set("MIME-Version", "1.0")
 	for name, value := range e.Header {
-		if strings.ContainsAny(name+value, "\r\n") {
-			return nil, fmt.Errorf("mime: header %q has a line break", name)
-		}
 		h.Set(name, stdmime.QEncoding.Encode("utf-8", value))
 	}
 	var attachments, inline []Part
 	for _, p := range e.Parts {
-		if p.ContentID != "" {
+		if p.ContentID != "" && e.HTML != "" { // without HTML, nothing shows it inline
 			inline = append(inline, p)
 		} else {
 			attachments = append(attachments, p)
@@ -198,12 +217,14 @@ func filePart(p Part, disposition string) part {
 	if contentType == "" {
 		i := strings.LastIndexByte(p.Name, '.')
 		contentType = if i >= 0 { stdmime.TypeByExtension(p.Name[i:]) } else { "" }
-		if contentType == "" {
-			contentType = "application/octet-stream"
-		}
 	}
+	mediaType, params, err := stdmime.ParseMediaType(contentType)
+	if err != nil {
+		mediaType, params = "application/octet-stream", map[string]string{}
+	}
+	params["name"] = p.Name
 	h := textproto.MIMEHeader{}
-	h.Set("Content-Type", stdmime.FormatMediaType(contentType, map[string]string{"name": p.Name}))
+	h.Set("Content-Type", stdmime.FormatMediaType(mediaType, params))
 	h.Set("Content-Disposition", stdmime.FormatMediaType(disposition, map[string]string{"filename": p.Name}))
 	h.Set("Content-Transfer-Encoding", "base64")
 	if p.ContentID != "" {
@@ -251,19 +272,40 @@ func writeHeader(b *bytes.Buffer, h textproto.MIMEHeader) {
 	written := map[string]bool{}
 	write := (name string) => {
 		for _, v := range h[name] {
-			fmt.Fprintf(b, "%s: %s\r\n", name, v)
+			b.WriteString(fold(name + ": " + v))
 		}
 		written[name] = true
 	}
 	for _, name := range order {
 		write(name)
 	}
-	for name := range h {
+	for _, name := range slices.Sorted(maps.Keys(h)) {
 		if !written[name] {
 			write(name)
 		}
 	}
 	b.WriteString("\r\n")
+}
+
+// fold writes a header's line, folded at spaces so that its lines stay
+// within 78 characters where they can: a long encoded subject, many
+// recipients.
+func fold(line string) string {
+	var b strings.Builder
+	for len(line) > 78 {
+		// After the first, lines start with the space they were folded at.
+		i := strings.LastIndexByte(line[1:78], ' ') + 1
+		if i == 0 {
+			i = strings.IndexByte(line[1:], ' ') + 1 // a word longer than a line
+			if i == 0 {
+				break
+			}
+		}
+		b.WriteString(line[:i] + "\r\n")
+		line = line[i:] // the space starts the next line
+	}
+	b.WriteString(line + "\r\n")
+	return b.String()
 }
 
 func randomID() string {
