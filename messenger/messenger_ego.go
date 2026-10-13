@@ -18,7 +18,13 @@
 //
 // A worker leases each message it receives: if the worker dies, the lease
 // runs out and another worker receives the message. Messages are handled
-// at least once, so handlers should be idempotent.
+// at least once, so handlers should be idempotent. Leases and delays are
+// timed by the workers' clocks, which should agree to well within a
+// third of the lease.
+//
+// Messages are encoded with encoding/json/v2, whose member names match
+// case-sensitively, and which has no default form for time.Duration: give
+// such a field a format tag, such as `json:",format:nano"`.
 package messenger
 
 import (
@@ -43,7 +49,7 @@ import (
 // Message is a message as transports keep it: its type's name and its
 // body, encoded.
 //
-//line messenger.ego:43
+//line messenger.ego:49
 type Message struct {
 	// ID identifies the message, a UUID made when it was dispatched.
 	ID string
@@ -61,7 +67,10 @@ type Message struct {
 
 // Transport keeps messages for workers.
 type Transport interface {
-	// Send keeps m until a worker receives it, from m.AvailableAt.
+	// Send keeps m until a worker receives it, from m.AvailableAt. A
+	// message of the same ID that the transport keeps already is replaced,
+	// and its lease with it: sending is idempotent, so that a move from a
+	// queue to another can be done again.
 	Send(ctx context.Context, m Message) error
 	// Receive leases the next message that is available, for ttl, and
 	// reports whether there was one. A message whose lease runs out without
@@ -162,7 +171,7 @@ func NewSQLTransports(pool *sql.DB, c Config) (Transports, error) {
 		}
 		ts[name] = v
 	}
-//line messenger.ego:157
+//line messenger.ego:166
 	return ts, nil
 }
 
@@ -194,19 +203,26 @@ func (c Config) queues() []string {
 // Background runs a worker of the queues until ctx is done, if
 // Config.Consume says so: serve runs it beside the server.
 //
-//line messenger.ego:180
+//line messenger.ego:189
 func (b *Bus) Background(ctx context.Context) error {
 	if !b.Config.Consume {
 		return nil
 	}
+	w := &Worker{Bus: b, Transports: b.queues(), Concurrency: b.Config.Concurrency, Lease: b.Config.Lease, StopTimeout: b.Config.StopTimeout, Logger: b.Logger}
+	return w.Run(ctx)
+}
+
+// queues returns the names of the bus's transports but the failure
+// transport, sorted: what a worker consumes when not told which.
+func (b *Bus) queues() []string {
 	var queues []string
-	for _, name := range b.Config.queues() {
+	for name := range b.Transports {
 		if name != b.Failed {
 			queues = append(queues, name)
 		}
 	}
-	w := &Worker{Bus: b, Transports: queues, Concurrency: b.Config.Concurrency, Lease: b.Config.Lease, StopTimeout: b.Config.StopTimeout, Logger: b.Logger}
-	return w.Run(ctx)
+	slices.Sort(queues)
+	return queues
 }
 
 // NewBus returns a bus with the transports, whose retries and failure
@@ -218,14 +234,14 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 	} else {
 		retries = max(c.Retries, 0)
 	}
-//line messenger.ego:198
+//line messenger.ego:214
 	var delay time.Duration
 	if c.Delay == 0 {
 		delay = time.Second
 	} else {
 		delay = c.Delay
 	}
-//line messenger.ego:199
+//line messenger.ego:215
 	var v string
 	if c.Failed == "" {
 		v = "failed"
@@ -239,7 +255,7 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 		Config:     c,
 		Logger:     logger,
 	}
-//line messenger.ego:206
+//line messenger.ego:222
 	for _, h := range handlers {
 		h.Handlers(b)
 	}
@@ -303,7 +319,7 @@ func Delay(d time.Duration) Option {
 // Dispatch handles m now, if its type has no route, or sends it to its
 // transport.
 //
-//line messenger.ego:266
+//line messenger.ego:282
 func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
 	t := reflect.TypeFor[M]()
 	b.mu.RLock()
@@ -321,7 +337,7 @@ func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
 	if err != nil {
 		return err
 	}
-//line messenger.ego:280
+//line messenger.ego:296
 	msg := Message{ID: uid.NewV7().String(), Type: name, Body: body, AvailableAt: b.now()}
 	for _, o := range opts {
 		o(&msg)
@@ -342,7 +358,7 @@ func (b *Bus) handle(ctx context.Context, t reflect.Type, m any) error {
 			return err
 		}
 	}
-//line messenger.ego:298
+//line messenger.ego:314
 	return nil
 }
 

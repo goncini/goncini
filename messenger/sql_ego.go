@@ -81,26 +81,62 @@ func (t *SQLTransport) Schema() []string {
 	}
 }
 
-// ready creates the table once, unless NoSetup says not to: until it
-// succeeded, each call tries again.
+// ready creates the table, unless NoSetup says not to, until it is known
+// to be there. In a transaction, it creates it only if it isn't there:
+// CREATE INDEX IF NOT EXISTS would lock the table until the transaction
+// ends, on PostgreSQL. No lock of the process is held while a statement
+// waits on the transaction's.
 func (t *SQLTransport) ready(ctx context.Context) error {
 	if t.NoSetup {
 		return nil
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.setUp {
+	setUp := t.setUp
+	t.mu.Unlock()
+	if setUp {
 		return nil
 	}
-	for _, stmt := range t.Schema() {
-		if _, err := t.conn(ctx).ExecContext(ctx, stmt); err != nil {
+	if _, inTx := db.NewSQL(t.pool).Tx(ctx); inTx {
+		there, err := t.exists(ctx)
+		if err != nil {
 			return err
 		}
+//line sql.ego:84
+		if !there {
+			// Created in the transaction, the table goes if it rolls back:
+			// the next call looks again.
+			for _, stmt := range t.Schema() {
+				if _, err := t.conn(ctx).ExecContext(ctx, stmt); err != nil {
+					return err
+				}
+			}
+//line sql.ego:90
+			return nil
+		}
+	} else {
+		for _, stmt := range t.Schema() {
+			if _, err := t.pool.ExecContext(ctx, stmt); err != nil {
+				return err
+			}
+		}
 	}
-//line sql.ego:81
-	_, inTx := db.NewSQL(t.pool).Tx(ctx)
-	t.setUp = !inTx // a transaction rolled back would take the table with it
+//line sql.ego:97
+	t.mu.Lock()
+	t.setUp = true
+	t.mu.Unlock()
 	return nil
+}
+
+// exists reports whether the table is there, as ctx's transaction sees it.
+func (t *SQLTransport) exists(ctx context.Context) (bool, error) {
+	var query string
+	if t.dialect == db.PostgreSQL {
+		query = "SELECT to_regclass(?) IS NOT NULL"
+	} else {
+		query = "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?"
+	}
+//line sql.ego:106
+	return db.Value[bool](ctx, t.conn(ctx), t.dialect.Rebind(query), t.table())
 }
 
 // conn is the transaction that ctx is in, or else the pool.
@@ -114,17 +150,17 @@ func (t *SQLTransport) exec(ctx context.Context, query string, args ...any) (int
 	if err := t.ready(ctx); err != nil {
 		return 0, err
 	}
-//line sql.ego:95
+//line sql.ego:118
 	res, err := t.conn(ctx).ExecContext(ctx, t.dialect.Rebind(query), args...)
 	if err != nil {
 		return 0, fmt.Errorf("conn.ExecContext: %w", err)
 	}
-//line sql.ego:96
+//line sql.ego:119
 	return res.RowsAffected()
 }
 
 func (t *SQLTransport) Send(ctx context.Context, m Message) error {
-	_, err := t.exec(ctx, fmt.Sprintf("INSERT INTO %s (id, queue, type, body, attempts, error, available_at, leased_until, lease) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '')", t.table()),
+	_, err := t.exec(ctx, fmt.Sprintf("INSERT INTO %s (id, queue, type, body, attempts, error, available_at, leased_until, lease) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '') ON CONFLICT (queue, id) DO UPDATE SET type = excluded.type, body = excluded.body, attempts = excluded.attempts, error = excluded.error, available_at = excluded.available_at, leased_until = 0, lease = ''", t.table()),
 		m.ID, t.queue, m.Type, string(m.Body), m.Attempts, m.Error, m.AvailableAt.UnixMilli())
 	return err
 }
@@ -133,7 +169,7 @@ func (t *SQLTransport) Receive(ctx context.Context, ttl time.Duration) (Lease, b
 	if err2 := t.ready(ctx); err2 != nil {
 		return nil, false, err2
 	}
-//line sql.ego:107
+//line sql.ego:130
 	now := t.now()
 	tb := t.table()
 	var skipLocked string
@@ -144,7 +180,7 @@ func (t *SQLTransport) Receive(ctx context.Context, ttl time.Duration) (Lease, b
 	}
 	// One statement leases the next available message: SQLite runs it
 	// alone, and PostgreSQL's workers skip the rows others are leasing.
-//line sql.ego:112
+//line sql.ego:135
 	query := fmt.Sprintf("UPDATE %s SET leased_until = ?, lease = ? WHERE queue = ? AND id = (SELECT id FROM %s WHERE queue = ? AND available_at <= ? AND leased_until <= ? ORDER BY available_at, id LIMIT 1%s) AND leased_until <= ? RETURNING id, type, body, attempts, error, available_at", tb, tb, skipLocked)
 	token := uid.NewV4().String()
 	var m Message
@@ -158,7 +194,7 @@ func (t *SQLTransport) Receive(ctx context.Context, ttl time.Duration) (Lease, b
 	if err != nil {
 		return nil, false, err
 	}
-//line sql.ego:123
+//line sql.ego:146
 	m.Body, m.AvailableAt = []byte(body), time.UnixMilli(available)
 	return &sqlLease{t: t, msg: m, token: token}, true, nil
 }
@@ -167,8 +203,8 @@ func (t *SQLTransport) List(ctx context.Context) ([]Message, error) {
 	if err := t.ready(ctx); err != nil {
 		return nil, err
 	}
-//line sql.ego:129
-	return db.All(ctx, t.pool, scanMessage, t.dialect.Rebind(fmt.Sprintf("SELECT id, type, body, attempts, error, available_at FROM %s WHERE queue = ? ORDER BY available_at, id", t.table())), t.queue)
+//line sql.ego:152
+	return db.All(ctx, t.conn(ctx), scanMessage, t.dialect.Rebind(fmt.Sprintf("SELECT id, type, body, attempts, error, available_at FROM %s WHERE queue = ? ORDER BY available_at, id", t.table())), t.queue)
 }
 
 func (t *SQLTransport) Remove(ctx context.Context, id string) error {
@@ -200,7 +236,7 @@ func (l *sqlLease) Extend(ctx context.Context, ttl time.Duration) (bool, error) 
 	if err != nil {
 		return false, fmt.Errorf("t.exec: %w", err)
 	}
-//line sql.ego:158
+//line sql.ego:181
 	return n == 1, nil
 }
 

@@ -16,7 +16,13 @@
 //
 // A worker leases each message it receives: if the worker dies, the lease
 // runs out and another worker receives the message. Messages are handled
-// at least once, so handlers should be idempotent.
+// at least once, so handlers should be idempotent. Leases and delays are
+// timed by the workers' clocks, which should agree to well within a
+// third of the lease.
+//
+// Messages are encoded with encoding/json/v2, whose member names match
+// case-sensitively, and which has no default form for time.Duration: give
+// such a field a format tag, such as `json:",format:nano"`.
 package messenger
 
 import (
@@ -57,7 +63,10 @@ type Message struct {
 
 // Transport keeps messages for workers.
 type Transport interface {
-	// Send keeps m until a worker receives it, from m.AvailableAt.
+	// Send keeps m until a worker receives it, from m.AvailableAt. A
+	// message of the same ID that the transport keeps already is replaced,
+	// and its lease with it: sending is idempotent, so that a move from a
+	// queue to another can be done again.
 	Send(ctx context.Context, m Message) error
 	// Receive leases the next message that is available, for ttl, and
 	// reports whether there was one. A message whose lease runs out without
@@ -181,14 +190,21 @@ func (b *Bus) Background(ctx context.Context) error {
 	if !b.Config.Consume {
 		return nil
 	}
+	w := &Worker{Bus: b, Transports: b.queues(), Concurrency: b.Config.Concurrency, Lease: b.Config.Lease, StopTimeout: b.Config.StopTimeout, Logger: b.Logger}
+	return w.Run(ctx)
+}
+
+// queues returns the names of the bus's transports but the failure
+// transport, sorted: what a worker consumes when not told which.
+func (b *Bus) queues() []string {
 	var queues []string
-	for _, name := range b.Config.queues() {
+	for name := range b.Transports {
 		if name != b.Failed {
 			queues = append(queues, name)
 		}
 	}
-	w := &Worker{Bus: b, Transports: queues, Concurrency: b.Config.Concurrency, Lease: b.Config.Lease, StopTimeout: b.Config.StopTimeout, Logger: b.Logger}
-	return w.Run(ctx)
+	slices.Sort(queues)
+	return queues
 }
 
 // NewBus returns a bus with the transports, whose retries and failure

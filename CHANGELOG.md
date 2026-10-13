@@ -714,13 +714,40 @@ with their providers and what they need, which `debug:container` lists.
     was logged without its stack; a `February 29th` cron gave up after 5
     years, before 2104's;
   - the event dispatcher looked its listeners up by reflection at each
-    dispatch: it keys them by a generic type now.
+    dispatch: it keys them by a generic type now;
+  - on PostgreSQL, a SQL transport that hadn't set up its table ran
+    `CREATE INDEX IF NOT EXISTS` in each transaction that dispatched,
+    holding a process lock while it waited on the others: transactions
+    that dispatched locked each other out. In a transaction, it now only
+    looks whether the table is there;
+  - with `pgxdb.Layer`, a message dispatched in a transaction was queued
+    even if it rolled back: pgxdb's transactions now run on a connection
+    of its `*sql.DB`, which `db.Join` hands to database/sql's users, so the
+    outbox holds with pgx too;
+  - a message moved to the failure queue, whose acknowledgement then
+    failed, was handled again at each lease, its move refused as a
+    duplicate: `Send` replaces a message of the same ID now, in both
+    transports, and `messenger:failed:retry` carries on past a failure;
+  - `messenger:consume -drain` polled forever a transport that failed;
+    serve's worker consumed `Config.Queues`, not the app's own transports;
+    a worker could consume the failure transport, which failed over to
+    itself; lease extensions that failed weren't logged.
 
   Worth knowing, now documented: a tick runs once across instances only
   with a lock store they share; the ticks missed while no scheduler runs
   are skipped; `scheduler.Tick(ctx)` is the time a run was due at; SQL
-  locks are taken outside the context's transaction; and `ErrorEvent`
-  isn't dispatched for an error after the response has started.
+  locks are taken outside the context's transaction; `ErrorEvent` isn't
+  dispatched for an error after the response has started; `-drain` leaves
+  the messages whose delay isn't due; messages are json/v2, which needs a
+  format for a `time.Duration`.
+
+  Decisions taken on the user's behalf: `pgxdb.New` takes the `*sql.DB`
+  whose users join its transactions, and `db.SQL.Tx` returns a `db.Conn`,
+  which may be a joined connection rather than a `*sql.Tx`.
+
+  What was left, deliberately: leases are timed by each worker's clock,
+  as lock expiry is; the memory transport refuses to extend a lease that
+  ran out even if no one took the message, where SQL's extends it.
 - **M3's review:** two independent reviews found 13 defects, each
   reproduced, then fixed with a regression test. Among them:
   - a message that failed for good couldn't move to the SQL failure queue,

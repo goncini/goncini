@@ -48,12 +48,7 @@ func (c *consumeCommand) Flags(fs *flag.FlagSet) {
 // lets the messages it handles finish, up to the stop timeout.
 func (c *consumeCommand) Run(ctx context.Context, out io.Writer, transports []string) error {
 	if len(transports) == 0 {
-		for name := range c.bus.Transports {
-			if name != c.bus.Failed {
-				transports = append(transports, name)
-			}
-		}
-		slices.Sort(transports)
+		transports = c.bus.queues()
 	}
 	if len(transports) == 0 {
 		return errors.New("messenger: no transport to consume")
@@ -93,10 +88,11 @@ func (b *Bus) showFailed(ctx context.Context, out io.Writer) error {
 }
 
 // retryFailed sends the failed messages with the IDs, or all of them, to
-// their types' transports, as new.
+// their types' transports, as new; one that fails doesn't stop the others.
 func (b *Bus) retryFailed(ctx context.Context, out io.Writer, ids []string) error {
 	tr := check b.failed() ""
 	list := check tr.List(ctx) ""
+	var errs []error
 	for _, m := range list {
 		if len(ids) > 0 && !slices.Contains(ids, m.ID) {
 			continue
@@ -106,14 +102,21 @@ func (b *Bus) retryFailed(ctx context.Context, out io.Writer, ids []string) erro
 		b.mu.RUnlock()
 		dest := b.Transports[transport]
 		if dest == nil {
-			return fmt.Errorf("messenger: %s %s has no transport to go back to", m.Type, m.ID)
+			errs = append(errs, fmt.Errorf("messenger: %s %s has no transport to go back to", m.Type, m.ID))
+			continue
 		}
 		m.Attempts, m.Error, m.AvailableAt = 0, "", b.now()
-		check dest.Send(ctx, m) ""
-		check tr.Remove(ctx, m.ID) ""
+		if err := dest.Send(ctx, m); err != nil {
+			errs = append(errs, fmt.Errorf("messenger: sending %s %s back: %w", m.Type, m.ID, err))
+			continue
+		}
+		if err := tr.Remove(ctx, m.ID); err != nil {
+			errs = append(errs, fmt.Errorf("messenger: removing %s %s, sent back: %w", m.Type, m.ID, err))
+			continue
+		}
 		fmt.Fprintf(out, "Sent %s %s to %s\n", m.Type, m.ID, transport)
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (b *Bus) removeFailed(ctx context.Context, out io.Writer, ids []string) error {

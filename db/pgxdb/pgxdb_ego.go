@@ -11,7 +11,9 @@
 //
 // Layer provides them all: the pool, its Transactor, and a *sql.DB on the
 // same pool for what needs database/sql, such as goose, messenger.SQL and
-// lock.SQL:
+// lock.SQL; what queries that *sql.DB through db.SQL, as messenger.SQL
+// does, takes part in the Transactor's transactions, so that a message
+// dispatched in one is queued if it commits, and only then:
 //
 //	var Services = layer.Set(pgxdb.Layer, messenger.SQL, lock.SQL, …)
 package pgxdb
@@ -40,7 +42,7 @@ import (
 // database work without it; the app checks it before serving with
 // pool.Ping, as a goncini.Check.
 //
-//line pgxdb.ego:40
+//line pgxdb.ego:42
 func Open(ctx context.Context, c db.Config) (*pgxpool.Pool, func(), error) {
 	cfg, err := pgxpool.ParseConfig(c.URL)
 	if err != nil {
@@ -91,16 +93,65 @@ type Transactor struct {
 	// TxOptions sets the isolation level and access mode of the
 	// transactions.
 	TxOptions pgx.TxOptions
+	// SQL, if not nil, is a *sql.DB on Pool, as DB returns: the
+	// transactions run on one of its connections, which db.SQL's users
+	// find in their ctx, with db.Join.
+	SQL *sql.DB
 }
 
 var _ db.Isolator = (*Transactor)(nil)
 
-// New returns the Transactor of pool.
-func New(pool *pgxpool.Pool) *Transactor {
-	return &Transactor{Pool: pool}
+// New returns the Transactor of pool, whose transactions sqlDB's users
+// join; sqlDB may be nil.
+func New(pool *pgxpool.Pool, sqlDB *sql.DB) *Transactor {
+	return &Transactor{Pool: pool, SQL: sqlDB}
+}
+
+// begin begins a transaction, and returns a context with it, and the
+// function that gives its connection back once it is over.
+func (t *Transactor) begin(ctx context.Context) (context.Context, pgx.Tx, func(), error) {
+	if t.SQL == nil {
+		tx, err := t.Pool.BeginTx(ctx, t.TxOptions)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("pgxdb: beginning a transaction: %w", err)
+		}
+		return context.WithValue(ctx, txKey{t.Pool}, tx), tx, func() {
+		}, nil
+	}
+//line pgxdb.ego:116
+	conn, err := t.SQL.Conn(ctx)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("pgxdb: beginning a transaction: %w", err)
+	}
+	// The pgx connection under database/sql's, which conn keeps for this
+	// transaction until it is closed.
+	var pc *pgx.Conn
+	err = conn.Raw(func(dc any) error {
+		c, ok := dc.(*stdlib.Conn)
+		if !ok {
+			return fmt.Errorf("SQL's driver is %T, not pgx's", dc)
+		}
+		pc = c.Conn()
+		return nil
+	})
+	if err != nil {
+		conn.Close()
+		return nil, nil, nil, fmt.Errorf("pgxdb: beginning a transaction: %w", err)
+	}
+	tx, err := pc.BeginTx(ctx, t.TxOptions)
+	if err != nil {
+		conn.Close()
+		return nil, nil, nil, fmt.Errorf("pgxdb: beginning a transaction: %w", err)
+	}
+	ctx = db.Join(context.WithValue(ctx, txKey{t.Pool}, tx), t.SQL, conn)
+	return ctx, tx, func() {
+		conn.Close()
+	}, nil
 }
 
 // txKey is the context key of a pool's transaction.
+//
+//line pgxdb.ego:145
 type txKey struct{ pool *pgxpool.Pool }
 
 // Conn returns what to query with: the transaction that ctx is in, or else
@@ -121,11 +172,15 @@ func (t *Transactor) Tx(ctx context.Context) (pgx.Tx, bool) {
 // Isolate begins a transaction, and returns a context with it and the
 // function that rolls it back, as db.Isolator says.
 func (t *Transactor) Isolate(ctx context.Context) (context.Context, func() error, error) {
-	tx, err := t.Pool.BeginTx(ctx, t.TxOptions)
+	txCtx, tx, done, err := t.begin(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pgxdb: beginning a transaction: %w", err)
+		return nil, nil, err
 	}
-	return context.WithValue(ctx, txKey{t.Pool}, tx), func() error { return tx.Rollback(context.WithoutCancel(ctx)) }, nil
+//line pgxdb.ego:166
+	return txCtx, func() error {
+		defer done()
+		return tx.Rollback(context.WithoutCancel(ctx))
+	}, nil
 }
 
 // InTx runs fn in a transaction of the pool, as db.Transactor says.
@@ -133,10 +188,12 @@ func (t *Transactor) InTx(ctx context.Context, fn func(ctx context.Context) erro
 	if _, ok := t.Tx(ctx); ok {
 		return fn(ctx)
 	}
-	tx, err := t.Pool.BeginTx(ctx, t.TxOptions)
-	if err != nil {
-		return fmt.Errorf("pgxdb: beginning a transaction: %w", err)
+	txCtx, tx, done, err2 := t.begin(ctx)
+	if err2 != nil {
+		return err2
 	}
+//line pgxdb.ego:178
+	defer done()
 	committed := false
 	defer func() {
 		if !committed {
@@ -147,7 +204,7 @@ func (t *Transactor) InTx(ctx context.Context, fn func(ctx context.Context) erro
 			}
 		}
 	}()
-	if err := fn(context.WithValue(ctx, txKey{t.Pool}, tx)); err != nil {
+	if err := fn(txCtx); err != nil {
 		return err
 	}
 	committed = true

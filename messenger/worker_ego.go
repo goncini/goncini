@@ -40,8 +40,9 @@ type Worker struct {
 	// Limit stops the worker after it handled that many messages; zero
 	// means no limit.
 	Limit int
-	// Drain stops the worker once its transports have no message available:
-	// for tests, and for runs from cron.
+	// Drain stops the worker once its transports have no message available,
+	// or one fails to give one: for tests, and for runs from cron. Messages
+	// whose delay or retry isn't due stay queued.
 	Drain bool
 	// Logger logs what goes wrong; nil means slog.Default().
 	Logger *slog.Logger
@@ -53,6 +54,10 @@ func (w *Worker) Run(ctx context.Context) error {
 	for _, name := range w.Transports {
 		if w.Bus.Transports[name] == nil {
 			return fmt.Errorf("messenger: no transport %q", name)
+		}
+		if name == w.Bus.Failed {
+			// Its messages would fail over to it again, and again.
+			return fmt.Errorf("messenger: %q is the failure transport, whose messages messenger:failed:retry sends back", name)
 		}
 	}
 	// Handlers run in a context that outlives ctx by StopTimeout, so that
@@ -112,10 +117,14 @@ func (w *Worker) stopTimeout() time.Duration {
 
 // loop receives and handles messages until ctx is done or take refuses.
 //
-//line worker.ego:104
+//line worker.ego:109
 func (w *Worker) loop(ctx, handling context.Context, take func() (bool, bool), done func()) error {
 	for ctx.Err() == nil {
 		lease, ok, err := w.receive(ctx)
+		if err != nil && w.Drain {
+			done()
+			return err
+		}
 		if err != nil {
 			// A database that is busy, or away for a while: try again
 			// after a poll, rather than stop consuming.
@@ -125,8 +134,8 @@ func (w *Worker) loop(ctx, handling context.Context, take func() (bool, bool), d
 			}
 			(v).ErrorContext(ctx, "receiving a message failed", slog.Any("error", err))
 		}
-//line worker.ego:112
-		if !ok && w.Drain && err == nil {
+//line worker.ego:121
+		if !ok && w.Drain {
 			done()
 			return nil
 		}
@@ -137,7 +146,7 @@ func (w *Worker) loop(ctx, handling context.Context, take func() (bool, bool), d
 			} else {
 				poll = time.Second
 			}
-//line worker.ego:118
+//line worker.ego:127
 			select {
 			case <-ctx.Done():
 			case <-time.After(poll):
@@ -187,7 +196,7 @@ func (w *Worker) lease() time.Duration {
 // process handles a leased message, extending its lease meanwhile, then
 // acknowledges it, retries it later, or fails it over.
 //
-//line worker.ego:160
+//line worker.ego:169
 func (w *Worker) process(ctx context.Context, lease Lease) {
 	msg := lease.Message()
 	v := w.Logger
@@ -195,7 +204,7 @@ func (w *Worker) process(ctx context.Context, lease Lease) {
 		v = slog.Default()
 	}
 	log := (v).With(slog.String("message", msg.Type), slog.String("id", msg.ID))
-//line worker.ego:163
+//line worker.ego:172
 	hctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	extended := make(chan struct{})
@@ -213,8 +222,11 @@ func (w *Worker) process(ctx context.Context, lease Lease) {
 					cancel(errLeaseLost)
 					return
 				}
-				// An error may be passing: the next tick tries again, and
-				// the lease runs out if they all fail.
+				if err != nil {
+					// It may be passing: the next tick tries again, and the
+					// lease runs out if they all fail.
+					log.WarnContext(ctx, "extending a message's lease failed", slog.Any("error", err))
+				}
 			}
 		}
 	}()

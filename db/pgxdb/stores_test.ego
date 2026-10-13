@@ -2,7 +2,10 @@ package pgxdb_test
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,4 +67,76 @@ func TestMessengerTransport(t *testing.T) {
 		t.Cleanup(() => { sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_messages") })
 		return tr
 	})
+}
+
+type welcome struct {
+	User string `json:"user"`
+}
+
+// TestOutbox checks that a message dispatched in a transaction of pgx's
+// Transactor, to a SQL queue on the same pool, is queued if it commits,
+// and only then; and that transactions that dispatch, in a process whose
+// transport hasn't set up its table yet, don't lock each other out.
+func TestOutbox(t *testing.T) {
+	url := os.Getenv("PGXDB_TEST_URL")
+	if url == "" {
+		t.Skip("PGXDB_TEST_URL names no PostgreSQL database to test with")
+	}
+	ctx := context.Background()
+	pool, closePool := must pgxdb.Open(ctx, db.Config{URL: url, MaxOpenConns: 8})
+	t.Cleanup(closePool)
+	sqlDB, closeDB := must pgxdb.DB(pool)
+	t.Cleanup(() => { closeDB() })
+	tr := pgxdb.New(pool, sqlDB)
+	newBus := func() (*messenger.Bus, *messenger.SQLTransport) {
+		q := must messenger.NewSQLTransport(sqlDB, "async")
+		q.Table = "pgxdb_test_outbox"
+		b := messenger.NewBus(messenger.Config{}, messenger.Transports{"async": q}, nil, slog.New(slog.DiscardHandler))
+		messenger.Route[welcome](b, "async")
+		return b, q
+	}
+	must sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_outbox")
+	t.Cleanup(() => { sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_outbox") })
+	b, q := newBus()
+	rolledBack := errors.New("rolled back")
+	err := tr.InTx(ctx, func(ctx context.Context) error {
+		check messenger.Dispatch(ctx, b, welcome{"ann"}) ""
+		return rolledBack
+	})
+	must tr.InTx(ctx, ctx => messenger.Dispatch(ctx, b, welcome{"bob"}))
+	queued := must q.List(ctx)
+	if !errors.Is(err, rolledBack) || len(queued) != 1 || !strings.Contains(string(queued[0].Body), "bob") {
+		t.Fatalf("err %v, queued %+v", err, queued)
+	}
+
+	// A new process: two transactions, the first of which dispatches again
+	// once the second has dispatched.
+	b, _ = newBus()
+	first, second := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 2)
+	go func() {
+		done <- tr.InTx(ctx, func(ctx context.Context) error {
+			check messenger.Dispatch(ctx, b, welcome{"a1"}) ""
+			close(first)
+			<-second
+			return messenger.Dispatch(ctx, b, welcome{"a2"})
+		})
+	}()
+	go func() {
+		<-first
+		done <- tr.InTx(ctx, func(ctx context.Context) error {
+			defer close(second)
+			return messenger.Dispatch(ctx, b, welcome{"b"})
+		})
+	}()
+	for range 2 {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("the transactions lock each other out")
+		}
+	}
 }

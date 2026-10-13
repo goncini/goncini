@@ -228,3 +228,120 @@ func TestSQLOutbox(t *testing.T) {
 		t.Errorf("queued %+v", queued)
 	}
 }
+
+// TestFailedMoveAgain checks that a message whose move to the failure queue
+// wasn't acknowledged, and so is in both queues, moves again once handled
+// again, and that failed:retry sends back a message still queued.
+func TestFailedMoveAgain(t *testing.T) {
+	b, ts := sqliteBus(t, messenger.Config{Retries: -1})
+	messenger.Handle(b, func(ctx context.Context, m welcome) error { return errors.New("down") })
+	messenger.Route[welcome](b, "async")
+	ctx := context.Background()
+	async, failed := ts["async"].(messenger.Browser), ts["failed"].(messenger.Browser)
+	if err := messenger.Dispatch(ctx, b, welcome{"ann"}); err != nil {
+		panic(err)
+	}
+//line regressions_test.ego:166
+	queued, err := async.List(ctx)
+	if err != nil {
+		panic(err)
+	}
+//line regressions_test.ego:167
+	if err := ts["failed"].Send(ctx, queued[0]); err != nil {
+		panic(err)
+	} // moved, but the Ack failed
+//line regressions_test.ego:168
+	if err := worker(b, 1).Run(ctx); err != nil {
+		panic(err)
+	}
+//line regressions_test.ego:169
+	inFailed, err := failed.List(ctx)
+	if err != nil {
+		panic(err)
+	}
+//line regressions_test.ego:170
+	inAsync, err := async.List(ctx)
+	if err != nil {
+		panic(err)
+	}
+//line regressions_test.ego:171
+	if len(inFailed) != 1 || inFailed[0].Attempts != 1 || len(inAsync) != 0 {
+		t.Fatalf("failed %+v, async %+v", inFailed, inAsync)
+	}
+	if err := ts["async"].Send(ctx, inFailed[0]); err != nil {
+		panic(err)
+	} // in both again
+//line regressions_test.ego:175
+	var out strings.Builder
+	if err := console.Run(ctx, &out, messenger.Commands(b), "", []string{"messenger:failed:retry"}); err != nil {
+		panic(err)
+	}
+//line regressions_test.ego:177
+	v, err := failed.List(ctx)
+	if err != nil {
+		panic(err)
+	}
+	inFailed = v
+//line regressions_test.ego:178
+	v2, err := async.List(ctx)
+	if err != nil {
+		panic(err)
+	}
+	inAsync = v2
+//line regressions_test.ego:179
+	if len(inFailed) != 0 || len(inAsync) != 1 || inAsync[0].Attempts != 0 {
+		t.Errorf("failed %+v, async %+v", inFailed, inAsync)
+	}
+}
+
+// down is a transport whose database is away.
+type down struct{}
+
+func (down) Send(ctx context.Context, m messenger.Message) error { return errors.New("down") }
+
+func (down) Receive(ctx context.Context, ttl time.Duration) (messenger.Lease, bool, error) {
+	return nil, false, errors.New("down")
+}
+
+// TestWorkerErrors checks that a draining worker stops on a transport that
+// fails, rather than poll it forever, and that a worker refuses to consume
+// the failure transport, whose messages would fail over to it again.
+func TestWorkerErrors(t *testing.T) {
+	b := messenger.NewBus(messenger.Config{}, messenger.Transports{"async": down{}, "failed": &messenger.MemoryTransport{}}, nil, slog.New(slog.DiscardHandler))
+	w := worker(b, 0)
+	w.Drain = true
+	if err := w.Run(context.Background()); err == nil || !strings.Contains(err.Error(), "down") {
+		t.Errorf("draining a transport that is down: %v", err)
+	}
+	w = worker(b, 0)
+	w.Transports = []string{"failed"}
+	if err := w.Run(context.Background()); err == nil {
+		t.Error("the worker consumed the failure transport")
+	}
+}
+
+// TestBackground checks that serve's worker consumes the bus's transports,
+// named as the app likes, but the failure transport.
+func TestBackground(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		emails := &messenger.MemoryTransport{}
+		b := messenger.NewBus(messenger.Config{Consume: true}, messenger.Transports{"emails": emails, "failed": &messenger.MemoryTransport{}}, nil, slog.New(slog.DiscardHandler))
+		var handled atomic.Int32
+		messenger.Handle(b, func(ctx context.Context, m welcome) error {
+			handled.Add(1)
+			return nil
+		})
+		messenger.Route[welcome](b, "emails")
+		if err := messenger.Dispatch(context.Background(), b, welcome{"ann"}); err != nil {
+			panic(err)
+		}
+		ctx, stop := context.WithTimeout(context.Background(), time.Minute)
+		defer stop()
+		if err := b.Background(ctx); err != nil {
+			panic(err)
+		}
+		if handled.Load() != 1 {
+			t.Errorf("%d handled", handled.Load())
+		}
+	})
+}

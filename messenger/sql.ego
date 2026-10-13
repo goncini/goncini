@@ -64,23 +64,46 @@ func (t *SQLTransport) Schema() []string {
 	}
 }
 
-// ready creates the table once, unless NoSetup says not to: until it
-// succeeded, each call tries again.
+// ready creates the table, unless NoSetup says not to, until it is known
+// to be there. In a transaction, it creates it only if it isn't there:
+// CREATE INDEX IF NOT EXISTS would lock the table until the transaction
+// ends, on PostgreSQL. No lock of the process is held while a statement
+// waits on the transaction's.
 func (t *SQLTransport) ready(ctx context.Context) error {
 	if t.NoSetup {
 		return nil
 	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.setUp {
+	setUp := t.setUp
+	t.mu.Unlock()
+	if setUp {
 		return nil
 	}
-	for _, stmt := range t.Schema() {
-		check t.conn(ctx).ExecContext(ctx, stmt) ""
+	if _, inTx := db.NewSQL(t.pool).Tx(ctx); inTx {
+		there := check t.exists(ctx) ""
+		if !there {
+			// Created in the transaction, the table goes if it rolls back:
+			// the next call looks again.
+			for _, stmt := range t.Schema() {
+				check t.conn(ctx).ExecContext(ctx, stmt) ""
+			}
+			return nil
+		}
+	} else {
+		for _, stmt := range t.Schema() {
+			check t.pool.ExecContext(ctx, stmt) ""
+		}
 	}
-	_, inTx := db.NewSQL(t.pool).Tx(ctx)
-	t.setUp = !inTx // a transaction rolled back would take the table with it
+	t.mu.Lock()
+	t.setUp = true
+	t.mu.Unlock()
 	return nil
+}
+
+// exists reports whether the table is there, as ctx's transaction sees it.
+func (t *SQLTransport) exists(ctx context.Context) (bool, error) {
+	query := if t.dialect == db.PostgreSQL { "SELECT to_regclass(?) IS NOT NULL" } else { "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = ?" }
+	return db.Value[bool](ctx, t.conn(ctx), t.dialect.Rebind(query), t.table())
 }
 
 // conn is the transaction that ctx is in, or else the pool.
@@ -97,7 +120,7 @@ func (t *SQLTransport) exec(ctx context.Context, query string, args ...any) (int
 }
 
 func (t *SQLTransport) Send(ctx context.Context, m Message) error {
-	_, err := t.exec(ctx, f"INSERT INTO {t.table()} (id, queue, type, body, attempts, error, available_at, leased_until, lease) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '')",
+	_, err := t.exec(ctx, f"INSERT INTO {t.table()} (id, queue, type, body, attempts, error, available_at, leased_until, lease) VALUES (?, ?, ?, ?, ?, ?, ?, 0, '') ON CONFLICT (queue, id) DO UPDATE SET type = excluded.type, body = excluded.body, attempts = excluded.attempts, error = excluded.error, available_at = excluded.available_at, leased_until = 0, lease = ''",
 		m.ID, t.queue, m.Type, string(m.Body), m.Attempts, m.Error, m.AvailableAt.UnixMilli())
 	return err
 }
@@ -126,7 +149,7 @@ func (t *SQLTransport) Receive(ctx context.Context, ttl time.Duration) (Lease, b
 
 func (t *SQLTransport) List(ctx context.Context) ([]Message, error) {
 	check t.ready(ctx) ""
-	return db.All(ctx, t.pool, scanMessage, t.dialect.Rebind(f"SELECT id, type, body, attempts, error, available_at FROM {t.table()} WHERE queue = ? ORDER BY available_at, id"), t.queue)
+	return db.All(ctx, t.conn(ctx), scanMessage, t.dialect.Rebind(f"SELECT id, type, body, attempts, error, available_at FROM {t.table()} WHERE queue = ? ORDER BY available_at, id"), t.queue)
 }
 
 func (t *SQLTransport) Remove(ctx context.Context, id string) error {

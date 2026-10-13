@@ -303,8 +303,8 @@ A message dispatched inside `InTx`, to a queue in the same database
 changed and dispatch its messages in one transaction.
 
 A test runs the worker for the messages it expects:
-`webtest.Run(t, a, "messenger:consume", "-drain")`, which stops once the
-queues are empty.
+`webtest.Run(t, a, "messenger:consume", "-drain")`, which stops once no
+message is available: those whose delay or retry isn't due stay queued.
 
 ## Caching
 

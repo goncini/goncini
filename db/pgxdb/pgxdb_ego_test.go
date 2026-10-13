@@ -38,7 +38,16 @@ func open(t *testing.T) *pgxdb.Transactor {
 		pool.Exec(context.Background(), "DROP TABLE pgxdb_articles")
 	})
 //line pgxdb_test.ego:27
-	return pgxdb.New(pool)
+	sqlDB, closeDB, err := pgxdb.DB(pool)
+	if err != nil {
+		panic(err)
+	}
+//line pgxdb_test.ego:28
+	t.Cleanup(func() {
+		closeDB()
+	})
+//line pgxdb_test.ego:29
+	return pgxdb.New(pool, sqlDB)
 }
 
 func TestInTx(t *testing.T) {
@@ -53,14 +62,14 @@ func TestInTx(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line pgxdb_test.ego:39
+//line pgxdb_test.ego:41
 		var all []string
 		for rows.Next() {
 			var s string
 			if err := rows.Scan(&s); err != nil {
 				panic(err)
 			}
-//line pgxdb_test.ego:43
+//line pgxdb_test.ego:45
 			all = append(all, s)
 		}
 		return strings.Join(all, " ")
@@ -70,7 +79,7 @@ func TestInTx(t *testing.T) {
 	if err2 := tr.InTx(ctx, func(ctx context.Context) error { return insert(ctx, "a") }); err2 != nil {
 		panic(err2)
 	}
-//line pgxdb_test.ego:50
+//line pgxdb_test.ego:52
 	if err := tr.InTx(ctx, func(ctx context.Context) error { insert(ctx, "b"); return failed }); !errors.Is(err, failed) {
 		t.Errorf("failure: %v", err)
 	}
@@ -79,7 +88,7 @@ func TestInTx(t *testing.T) {
 	}); err3 != nil {
 		panic(err3)
 	} // nested: one transaction
-//line pgxdb_test.ego:54
+//line pgxdb_test.ego:56
 	err := tr.InTx(ctx, func(ctx context.Context) error {
 		insert(ctx, "d")
 		return tr.InTx(ctx, func(_ context.Context) error { return failed }) // the inner failure rolls back the outer insert
@@ -103,7 +112,7 @@ func TestOpen(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line pgxdb_test.ego:74
+//line pgxdb_test.ego:76
 	defer closePool()
 	if err := pool.Ping(ctx); err == nil {
 		t.Error("Ping succeeded")
@@ -133,12 +142,12 @@ func TestIsolate(t *testing.T) {
 			t.Errorf("%d rows inside the test", n)
 		}
 	})
-//line pgxdb_test.ego:99
+//line pgxdb_test.ego:101
 	var n int
 	if err := tr.Pool.QueryRow(context.Background(), "SELECT count(*) FROM pgxdb_articles").Scan(&n); err != nil {
 		panic(err)
 	}
-//line pgxdb_test.ego:101
+//line pgxdb_test.ego:103
 	if n != 0 {
 		t.Errorf("%d rows after the test", n)
 	}

@@ -2,7 +2,8 @@
 
 // Package transporttest checks that a messenger.Transport behaves as
 // workers need: messages in order, leases that exclude each other and run
-// out, and the acknowledgements and retries of a lost lease ignored.
+// out, the acknowledgements and retries of a lost lease ignored, and a
+// message sent again replacing itself.
 //
 //	func TestTransport(t *testing.T) {
 //		transporttest.Run(t, (t *testing.T, now func() time.Time) => newTransport(t, now))
@@ -20,7 +21,7 @@ import (
 
 // Clock is a fake clock that the tests move.
 //
-//line transporttest.ego:20
+//line transporttest.ego:21
 type Clock struct {
 	now time.Time
 }
@@ -110,6 +111,28 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 		if again.Message().Attempts != 0 {
 			t.Errorf("attempts %d", again.Message().Attempts)
 		}
+	})
+
+	t.Run("sending again", func(t *testing.T) {
+		tr, c := setup(t)
+		tr.Send(ctx, msg("a", c.now))
+		old := receive(t, tr, "a")
+		again := msg("a", c.now)
+		again.Attempts = 5
+		if err := tr.Send(ctx, again); err != nil {
+			t.Fatal(err)
+		}
+		got := receive(t, tr, "a")
+		receive(t, tr, "")
+		old.Ack(ctx)
+		if got.Message().Attempts != 5 {
+			t.Errorf("attempts %d", got.Message().Attempts)
+		}
+		if err := got.Ack(ctx); err != nil {
+			t.Fatal(err)
+		}
+		c.now = c.now.Add(time.Hour)
+		receive(t, tr, "")
 	})
 
 	t.Run("retrying", func(t *testing.T) {

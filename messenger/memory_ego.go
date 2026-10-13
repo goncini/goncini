@@ -51,6 +51,7 @@ func (t *MemoryTransport) now() time.Time {
 func (t *MemoryTransport) Send(ctx context.Context, m Message) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.messages = slices.DeleteFunc(t.messages, func(k *kept) bool { return k.msg.ID == m.ID })
 	t.messages = append(t.messages, &kept{msg: m})
 	return nil
 }

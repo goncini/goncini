@@ -116,23 +116,33 @@ func NewSQL(pool *sql.DB) *SQL {
 	return &SQL{DB: pool}
 }
 
-// txKey is the context key of a pool's transaction.
+// txKey is the context key of a pool's transaction: a *sql.Tx, or the
+// *sql.Conn that another library's transaction runs on.
 type txKey struct{ db *sql.DB }
+
+// Join returns a context in which the SQL of pool queries conn, a
+// connection of pool in a transaction that another library began, such as
+// pgxdb's: what queries through database/sql, such as messenger.SQL, takes
+// part in it.
+func Join(ctx context.Context, pool *sql.DB, conn *sql.Conn) context.Context {
+	return context.WithValue(ctx, txKey{pool}, Conn(conn))
+}
 
 // Conn returns what to query with: the transaction that ctx is in, or else
 // the pool, making a span of each statement.
 //
 //	queries := sqlcgen.New(s.sql.Conn(ctx))
 func (s *SQL) Conn(ctx context.Context) Conn {
-	if tx, ok := ctx.Value(txKey{s.DB}).(*sql.Tx); ok {
+	if tx, ok := s.Tx(ctx); ok {
 		return traced{tx, s}
 	}
 	return traced{s.DB, s}
 }
 
-// Tx returns the transaction that ctx is in, if any.
-func (s *SQL) Tx(ctx context.Context) (*sql.Tx, bool) {
-	tx, ok := ctx.Value(txKey{s.DB}).(*sql.Tx)
+// Tx returns the transaction that ctx is in, if any: a *sql.Tx, or the
+// connection that Join gave.
+func (s *SQL) Tx(ctx context.Context) (Conn, bool) {
+	tx, ok := ctx.Value(txKey{s.DB}).(Conn)
 	return tx, ok
 }
 
@@ -143,7 +153,7 @@ func (s *SQL) Isolate(ctx context.Context) (context.Context, func() error, error
 	if err != nil {
 		return nil, nil, fmt.Errorf("db: beginning a transaction: %w", err)
 	}
-	return context.WithValue(ctx, txKey{s.DB}, tx), tx.Rollback, nil
+	return context.WithValue(ctx, txKey{s.DB}, Conn(tx)), tx.Rollback, nil
 }
 
 // InTx runs fn in a transaction of the pool, as Transactor says.
@@ -163,7 +173,7 @@ func (s *SQL) InTx(ctx context.Context, fn func(ctx context.Context) error) (err
 			}
 		}
 	}()
-	if err := fn(context.WithValue(ctx, txKey{s.DB}, tx)); err != nil {
+	if err := fn(context.WithValue(ctx, txKey{s.DB}, Conn(tx))); err != nil {
 		return err
 	}
 	committed = true

@@ -52,12 +52,7 @@ func (c *consumeCommand) Flags(fs *flag.FlagSet) {
 // lets the messages it handles finish, up to the stop timeout.
 func (c *consumeCommand) Run(ctx context.Context, out io.Writer, transports []string) error {
 	if len(transports) == 0 {
-		for name := range c.bus.Transports {
-			if name != c.bus.Failed {
-				transports = append(transports, name)
-			}
-		}
-		slices.Sort(transports)
+		transports = c.bus.queues()
 	}
 	if len(transports) == 0 {
 		return errors.New("messenger: no transport to consume")
@@ -78,7 +73,7 @@ func (c *consumeCommand) Run(ctx context.Context, out io.Writer, transports []st
 		Drain:       c.drain,
 		Logger:      c.bus.Logger,
 	}
-//line commands.ego:71
+//line commands.ego:66
 	fmt.Fprintf(out, "Consuming %v\n", transports)
 	return w.Run(ctx)
 }
@@ -97,12 +92,12 @@ func (b *Bus) showFailed(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-//line commands.ego:86
+//line commands.ego:81
 	list, err := tr.List(ctx)
 	if err != nil {
 		return err
 	}
-//line commands.ego:87
+//line commands.ego:82
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tTYPE\tATTEMPTS\tFAILED AT\tERROR")
 	for _, m := range list {
@@ -112,18 +107,19 @@ func (b *Bus) showFailed(ctx context.Context, out io.Writer) error {
 }
 
 // retryFailed sends the failed messages with the IDs, or all of them, to
-// their types' transports, as new.
+// their types' transports, as new; one that fails doesn't stop the others.
 func (b *Bus) retryFailed(ctx context.Context, out io.Writer, ids []string) error {
 	tr, err := b.failed()
 	if err != nil {
 		return err
 	}
-//line commands.ego:99
+//line commands.ego:94
 	list, err := tr.List(ctx)
 	if err != nil {
 		return err
 	}
-//line commands.ego:100
+//line commands.ego:95
+	var errs []error
 	for _, m := range list {
 		if len(ids) > 0 && !slices.Contains(ids, m.ID) {
 			continue
@@ -133,20 +129,21 @@ func (b *Bus) retryFailed(ctx context.Context, out io.Writer, ids []string) erro
 		b.mu.RUnlock()
 		dest := b.Transports[transport]
 		if dest == nil {
-			return fmt.Errorf("messenger: %s %s has no transport to go back to", m.Type, m.ID)
+			errs = append(errs, fmt.Errorf("messenger: %s %s has no transport to go back to", m.Type, m.ID))
+			continue
 		}
 		m.Attempts, m.Error, m.AvailableAt = 0, "", b.now()
 		if err := dest.Send(ctx, m); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("messenger: sending %s %s back: %w", m.Type, m.ID, err))
+			continue
 		}
-//line commands.ego:113
 		if err := tr.Remove(ctx, m.ID); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("messenger: removing %s %s, sent back: %w", m.Type, m.ID, err))
+			continue
 		}
-//line commands.ego:114
 		fmt.Fprintf(out, "Sent %s %s to %s\n", m.Type, m.ID, transport)
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (b *Bus) removeFailed(ctx context.Context, out io.Writer, ids []string) error {
@@ -157,12 +154,12 @@ func (b *Bus) removeFailed(ctx context.Context, out io.Writer, ids []string) err
 	if err != nil {
 		return err
 	}
-//line commands.ego:124
+//line commands.ego:127
 	for _, id := range ids {
 		if err := tr.Remove(ctx, id); err != nil {
 			return err
 		}
-//line commands.ego:126
+//line commands.ego:129
 		fmt.Fprintf(out, "Removed %s\n", id)
 	}
 	return nil

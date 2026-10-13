@@ -24,7 +24,9 @@ func open(t *testing.T) *pgxdb.Transactor {
 	t.Cleanup(closePool)
 	must pool.Exec(ctx, "DROP TABLE IF EXISTS pgxdb_articles; CREATE TABLE pgxdb_articles (slug text PRIMARY KEY)")
 	t.Cleanup(() => { pool.Exec(context.Background(), "DROP TABLE pgxdb_articles") })
-	return pgxdb.New(pool)
+	sqlDB, closeDB := must pgxdb.DB(pool)
+	t.Cleanup(() => { closeDB() })
+	return pgxdb.New(pool, sqlDB)
 }
 
 func TestInTx(t *testing.T) {
