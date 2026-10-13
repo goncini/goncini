@@ -353,6 +353,24 @@ Symfony's WebProfilerBundle, built from spans:
 Worth knowing: spans get the records that are logged, at the log's level.
 Query spans follow the tracer provider of their parent span.
 
+### goncini new (M5)
+
+Symfony's `symfony new`, for an API:
+`go run github.com/goncini/goncini/cmd/goncini@latest new example.com/acme`.
+
+- It writes a module in goncini's layout: `main.ego`, `app/`, `config/` with
+  dev, test and prod, `migrations/`, `.env`, `.env.test`, and a `home`
+  feature whose `GET /` says the API is up, with its test.
+- The app uses SQLite through goose, with the profiler on in dev.
+- It requires the version of goncini that the tool was built from, or the
+  latest when that isn't known. `-replace dir` requires a goncini checkout
+  instead.
+- It tidies the module and runs `goncini generate`. `go test ./...` passes,
+  and `go run .` serves, with nothing to edit first.
+
+Worth knowing: `goncini generate` now finds the app's package through
+symlinks, such as macOS's `/var`.
+
 ### workflow (M4)
 
 Symfony's Workflow, as state machines: a `Definition` has places, an

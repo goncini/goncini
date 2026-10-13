@@ -1,0 +1,127 @@
+package main
+
+import (
+	"bytes"
+	"embed"
+	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"runtime/debug"
+	"strings"
+	"text/template"
+)
+
+// skeleton is the files of a new app, as templates: file.tmpl becomes
+// file, and env.tmpl, env.test.tmpl and gitignore.tmpl the dotfiles.
+//
+//go:embed skeleton
+var skeleton embed.FS
+
+// skeletonData is what the skeleton's templates are given.
+type skeletonData struct {
+	Module  string // the module path, such as example.com/acme
+	Name    string // its last element: acme
+	Replace string // a goncini checkout to require instead of a version
+}
+
+// deps is the new app's dependencies, which a file of blank imports keeps
+// while the module is tidied, before its generated code exists; its tools,
+// ego and goncini, are kept by go.mod's tool directives.
+var deps = []string{
+	"github.com/effect-go/effect-go/layer",
+	"github.com/goncini/goncini",
+	"github.com/goncini/goncini/db",
+	"github.com/goncini/goncini/db/goosedb",
+	"github.com/goncini/goncini/httpkernel",
+	"github.com/goncini/goncini/profiler",
+	"github.com/goncini/goncini/routing",
+	"github.com/goncini/goncini/webtest",
+	"github.com/pressly/goose/v3",
+	"modernc.org/sqlite",
+}
+
+// newApp writes a new app of the module in dir, in goncini's layout,
+// requires its dependencies, and generates its wiring: its tests pass, and
+// it serves, as it is. replace, if not empty, is a goncini checkout that
+// the app requires instead of a released version.
+func newApp(module, dir, replace string) error {
+	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
+		return fmt.Errorf("%s isn't empty", dir)
+	}
+	if replace != "" {
+		abs := check filepath.Abs(replace) ""
+		replace = filepath.ToSlash(abs)
+	}
+	data := skeletonData{Module: module, Name: path.Base(module), Replace: replace}
+	// app/inject.go is Go that imports the app's packages, which are .ego
+	// until they are generated: it comes after the first tidy.
+	injector := (rel string) => rel == "app/inject.go"
+	check write(dir, data, injector) ""
+	// Blank imports keep the dependencies while the module is tidied:
+	// tidy doesn't read .ego files, and their Go isn't generated yet.
+	var imports strings.Builder
+	for _, d := range deps {
+		imports.WriteString(f"\t_ {d:q}\n")
+	}
+	depsFile := filepath.Join(dir, "deps.go")
+	check os.WriteFile(depsFile, []byte("//go:build tools\n\npackage main\n\nimport (\n"+imports.String()+")\n"), 0o644) ""
+	if replace != "" {
+		check run(dir, "go", "mod", "edit", "-require=github.com/goncini/goncini@v0.0.0", "-require=github.com/goncini/goncini/db/goosedb@v0.0.0") ""
+	} else {
+		v := version()
+		check run(dir, "go", "get", "github.com/goncini/goncini@"+v, "github.com/goncini/goncini/db/goosedb@"+v) ""
+	}
+	check run(dir, "go", "mod", "tidy") ""
+	check write(dir, data, rel => !injector(rel)) ""
+	check run(dir, "go", "tool", "goncini", "generate") ""
+	check os.Remove(depsFile) ""
+	check run(dir, "go", "mod", "tidy") ""
+	return nil
+}
+
+// write writes the skeleton's files in dir, but those that skip names.
+func write(dir string, data skeletonData, skip func(rel string) bool) error {
+	return fs.WalkDir(skeleton, "skeleton", func(name string, d fs.DirEntry, err error) error {
+		check err ""
+		if d.IsDir() {
+			return nil
+		}
+		rel := strings.TrimSuffix(strings.TrimPrefix(name, "skeleton/"), ".tmpl")
+		if skip(rel) {
+			return nil
+		}
+		if rel == "env" || rel == "env.test" || rel == "gitignore" {
+			rel = "." + rel
+		}
+		src := check skeleton.ReadFile(name) ""
+		t := check template.New(rel).Delims("<%", "%>").Parse(string(src)) ""
+		var out bytes.Buffer
+		check t.Execute(&out, data) ""
+		target := filepath.Join(dir, filepath.FromSlash(rel))
+		check os.MkdirAll(filepath.Dir(target), 0o755) ""
+		return os.WriteFile(target, out.Bytes(), 0o644)
+	})
+}
+
+// version is the version of goncini that this tool was built from, which
+// a new app requires: latest when it isn't known, as in a checkout.
+func version() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "latest"
+}
+
+// run runs a command in dir, and fails with its output.
+func run(dir string, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w\n%s", name, strings.Join(args, " "), err, out)
+	}
+	return nil
+}

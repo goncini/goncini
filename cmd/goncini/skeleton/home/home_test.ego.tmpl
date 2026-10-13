@@ -1,0 +1,17 @@
+package home_test
+
+import (
+	"testing"
+
+	"github.com/goncini/goncini/webtest"
+
+	"<%.Module%>/app"
+	"<%.Module%>/config"
+)
+
+func TestHome(t *testing.T) {
+	a := webtest.Boot(t, config.Load, app.Build)
+	webtest.Run(t, a, "db:migrate")
+	c := webtest.NewClient(t, a)
+	c.Get("/").Status(200).Contains(`"status":"ok"`)
+}

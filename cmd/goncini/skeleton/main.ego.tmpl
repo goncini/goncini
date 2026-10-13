@@ -1,0 +1,15 @@
+// Command <%.Name%> is an API built with goncini.
+//
+//	go run .              # serves it on :8080
+//	go run . list         # its commands
+//	go run . db:migrate   # applies the migrations
+package main
+
+import (
+	"github.com/goncini/goncini"
+
+	"<%.Module%>/app"
+	"<%.Module%>/config"
+)
+
+func main() { goncini.Main(config.Load, app.Build) }

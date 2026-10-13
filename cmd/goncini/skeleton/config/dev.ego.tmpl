@@ -1,0 +1,9 @@
+package config
+
+import "log/slog"
+
+func dev(c *Config) {
+	c.HTTP.Debug = true
+	c.Log.Level = slog.LevelDebug
+	c.Profiler.Enabled = true // /_profiler, and go run . debug:requests
+}

@@ -34,6 +34,12 @@ its OpenAPI document drives every operation. The plan is in
 [docs/assessment.md](docs/assessment.md), and the layout of an app in
 [docs/layout.md](docs/layout.md).
 
+A new API in goncini's layout, whose tests pass and which serves as it is:
+
+```bash
+go run github.com/goncini/goncini/cmd/goncini@latest new example.com/acme
+```
+
 ## A taste
 
 ```go

@@ -1,0 +1,64 @@
+package main
+
+import (
+	"context"
+	"io"
+	"net"
+	"net/http"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// TestNew is M5's second gate: goncini new writes an app whose tests pass,
+// and which serves, with nothing to edit first.
+func TestNew(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a new app")
+	}
+	dir := filepath.Join(t.TempDir(), "acme")
+	must newApp("example.com/acme", dir, "../..")
+
+	test := exec.Command("go", "test", "./...")
+	test.Dir = dir
+	if out, err := test.CombinedOutput(); err != nil {
+		t.Fatalf("go test: %v\n%s", err, out)
+	}
+
+	bin := filepath.Join(t.TempDir(), "acme")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Dir = dir
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	l := must net.Listen("tcp", "127.0.0.1:0")
+	addr := l.Addr().String()
+	l.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serve := exec.CommandContext(ctx, bin, "serve", "-addr", addr)
+	serve.Dir = dir // its .env
+	var logs strings.Builder
+	serve.Stdout, serve.Stderr = &logs, &logs
+	must serve.Start()
+	defer func() {
+		cancel()
+		serve.Wait()
+	}()
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		res, err := http.Get("http://" + addr + "/")
+		if err == nil {
+			body := must io.ReadAll(res.Body)
+			res.Body.Close()
+			if res.StatusCode != 200 || !strings.Contains(string(body), `"status":"ok"`) {
+				t.Errorf("GET /: %d %s", res.StatusCode, body)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the app doesn't answer: %v\n%s", err, logs.String())
+		}
+	}
+}

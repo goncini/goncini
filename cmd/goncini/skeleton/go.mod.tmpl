@@ -1,0 +1,15 @@
+module <%.Module%>
+
+go 1.27
+
+tool (
+	github.com/effect-go/effect-go/cmd/ego
+	github.com/goncini/goncini/cmd/goncini
+)
+<%- if .Replace%>
+
+replace (
+	github.com/goncini/goncini => <%.Replace%>
+	github.com/goncini/goncini/db/goosedb => <%.Replace%>/db/goosedb
+)
+<%- end%>

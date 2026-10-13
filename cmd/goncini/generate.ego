@@ -204,9 +204,11 @@ func load(root, appDir string) (*app, error) {
 	})
 	check errors.Join(errs...) ""
 	dir := check filepath.Abs(filepath.Join(root, appDir)) ""
+	// As go list reports it, through symlinks: macOS's /var is /private/var.
+	dir = check filepath.EvalSymlinks(dir) ""
 	a := &app{all: pkgs, imports: map[string]string{}}
 	for _, p := range pkgs {
-		if len(p.GoFiles) > 0 && filepath.Dir(p.GoFiles[0]) == dir {
+		if len(p.GoFiles) > 0 && sameDir(filepath.Dir(p.GoFiles[0]), dir) {
 			a.pkg = p
 		}
 	}
@@ -603,4 +605,13 @@ func describe(root, appDir string) ([]service, error) {
 		services = append(services, s)
 	}
 	return services, nil
+}
+
+// sameDir reports whether a and b are the same directory, through
+// symlinks.
+func sameDir(a, b string) bool {
+	if real, err := filepath.EvalSymlinks(a); err == nil {
+		a = real
+	}
+	return a == b
 }

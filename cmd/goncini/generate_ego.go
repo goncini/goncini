@@ -258,10 +258,17 @@ func load(root, appDir string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:207
+	// As go list reports it, through symlinks: macOS's /var is /private/var.
+//line generate.ego:208
+	v, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+	dir = v
+//line generate.ego:209
 	a := &app{all: pkgs, imports: map[string]string{}}
 	for _, p := range pkgs {
-		if len(p.GoFiles) > 0 && filepath.Dir(p.GoFiles[0]) == dir {
+		if len(p.GoFiles) > 0 && sameDir(filepath.Dir(p.GoFiles[0]), dir) {
 			a.pkg = p
 		}
 	}
@@ -271,7 +278,7 @@ func load(root, appDir string) (*app, error) {
 	if err := a.findProviders(); err != nil {
 		return nil, err
 	}
-//line generate.ego:217
+//line generate.ego:219
 	return a, nil
 }
 
@@ -343,7 +350,7 @@ func isFunc(info *types.Info, x ast.Expr, path, name string) bool {
 
 // ident is the name in x, an identifier or a selector, or nil.
 //
-//line generate.ego:281
+//line generate.ego:283
 func ident(x ast.Expr) *ast.Ident {
 	switch x := x.(type) {
 	case *ast.Ident:
@@ -449,7 +456,7 @@ func (a *app) lookup(name string) types.Type {
 	} else {
 		path = gonciniPath + "/" + pkgName
 	}
-//line generate.ego:381
+//line generate.ego:383
 	var found types.Type
 	packages.Visit(a.all, nil, func(p *egopackages.Package) {
 		if found == nil && p.PkgPath == path {
@@ -472,14 +479,14 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 	switch k.name {
 	case "autoProblems":
 
-//line generate.ego:402
+//line generate.ego:404
 		for _, v := range a.mappers(elem) {
 			items = append(items, a.qualify(v.Pkg())+"."+v.Name())
 		}
 
 	case "autoChecks":
 
-//line generate.ego:407
+//line generate.ego:409
 		for _, t := range a.provided {
 			if m := pinger(t); m != "" {
 				add(t, "$."+m)
@@ -488,7 +495,7 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 
 	default:
 
-//line generate.ego:414
+//line generate.ego:416
 		iface, _ := elem.Underlying().(*types.Interface)
 		var added []types.Type
 		for _, t := range a.provided {
@@ -645,7 +652,7 @@ func describe(root, appDir string) ([]service, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:567
+//line generate.ego:569
 	if len(pkgs) != 1 || len(pkgs[0].Errors) > 0 {
 		return nil, nil
 	}
@@ -673,7 +680,7 @@ func describe(root, appDir string) ([]service, error) {
 		}
 		return v
 	}
-//line generate.ego:586
+//line generate.ego:588
 	var services []service
 	for _, stmt := range build.Body.List {
 		assign, ok := stmt.(*ast.AssignStmt)
@@ -694,4 +701,13 @@ func describe(root, appDir string) ([]service, error) {
 		services = append(services, s)
 	}
 	return services, nil
+}
+
+// sameDir reports whether a and b are the same directory, through
+// symlinks.
+func sameDir(a, b string) bool {
+	if real, err := filepath.EvalSymlinks(a); err == nil {
+		a = real
+	}
+	return a == b
 }
