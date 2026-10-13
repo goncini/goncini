@@ -127,7 +127,7 @@ func (t *Translator) Translate(lang, msg string) string {
 			}
 		}
 	}
-//line translation.ego:122
+//line translation.ego:120
 	return msg
 }
 
@@ -174,7 +174,7 @@ func (t *Translator) Subscribe(d *event.Dispatcher) {
 		if p.Header == nil {
 			p.Header = http.Header{}
 		}
-//line translation.ego:165
+//line translation.ego:163
 		p.Header.Add("Vary", "Accept-Language")
 		lang := t.Language(e.Request)
 		if lang == t.Default {

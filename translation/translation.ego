@@ -113,9 +113,7 @@ func (t *Translator) Translate(lang, msg string) string {
 				for i, name := range p.names {
 					values[name] = m[i+1]
 				}
-				return placeholder.ReplaceAllStringFunc(p.translation, func(name string) string {
-					return values[name] ?? name
-				})
+				return placeholder.ReplaceAllStringFunc(p.translation, name => values[name] ?? name)
 			}
 		}
 	}

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-goncini requires Go 1.27, and effect-go v0.3.1, which pins the library and
+goncini requires Go 1.27, and effect-go v0.3.2, which pins the library and
 the `ego` tool together.
 
 ### httpkernel
@@ -626,3 +626,6 @@ with their providers and what they need, which `debug:container` lists.
   - v0.3.1:
     - `must (x).M()` and `check (x).M()` parsed as calls of functions named
       `must` and `check`, which `ego fmt` then wrote that way.
+  - v0.3.2:
+    - `??` on a map lookup failed in an expression lambda whose parameter
+      type is inferred, as in `name => values[name] ?? name`.
