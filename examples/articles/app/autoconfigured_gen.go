@@ -24,7 +24,7 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoBackground, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigEditors, autoDefaultOpenapiConfig, autoDefaultTranslationConfig)
+var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigEditors, autoDefaultOpenapiConfig, autoDefaultTranslationConfig)
 
 // autoRoutes are the services that have routes, in the order they are provided.
 func autoRoutes(p1 *articles.Articles) []routing.Routes {
@@ -59,6 +59,11 @@ func autoSubscribers(p1 *translation.Translator) []event.Subscriber {
 // autoBackground is the work that serve runs beside the server.
 func autoBackground() []goncini.Background {
 	return []goncini.Background{}
+}
+
+// autoSpanProcessors are the services that receive the app's spans, when enabled.
+func autoSpanProcessors() []goncini.SpanProcessor {
+	return []goncini.SpanProcessor{}
 }
 
 // autoServices describes the app's services, for debug:container.
@@ -101,7 +106,9 @@ func autoServices() []goncini.Service {
 		{Type: "openapi.Annotations", Provider: "autoOpenAPI", Needs: []string{}},
 		{Type: "*openapi.Document", Provider: "goncini.NewOpenAPI", Needs: []string{"openapi.Config", "*routing.Router", "*httpkernel.Kernel", "openapi.Annotations"}},
 		{Type: "[]goncini.Background", Provider: "autoBackground", Needs: []string{}},
-		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger", "*openapi.Document", "*event.Dispatcher", "[]goncini.Background"}},
+		{Type: "[]goncini.SpanProcessor", Provider: "autoSpanProcessors", Needs: []string{}},
+		{Type: "*goncini.Tracing", Provider: "goncini.NewTracing", Needs: []string{"[]goncini.SpanProcessor"}},
+		{Type: "*goncini.App", Provider: "goncini.NewApp", Needs: []string{"*httpkernel.Kernel", "*httpkernel.Server", "*routing.Router", "[]console.Command", "[]goncini.Check", "[]goncini.Service", "*slog.Logger", "*openapi.Document", "*event.Dispatcher", "[]goncini.Background", "*goncini.Tracing"}},
 	}
 }
 

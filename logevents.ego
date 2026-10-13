@@ -1,0 +1,71 @@
+package goncini
+
+import (
+	"context"
+	"log/slog"
+	"slices"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+)
+
+// spanEvents is a log handler that also adds each record logged in a
+// recording span to it, as a "log" event, so that what reads spans, the
+// profiler or a collector, has each span's logs.
+type spanEvents struct {
+	h      slog.Handler
+	attrs  []attribute.KeyValue // from WithAttrs
+	prefix string               // the groups opened with WithGroup, as "a.b."
+}
+
+func (s spanEvents) Enabled(ctx context.Context, level slog.Level) bool {
+	return s.h.Enabled(ctx, level)
+}
+
+func (s spanEvents) Handle(ctx context.Context, r slog.Record) error {
+	if span := trace.SpanFromContext(ctx); span.IsRecording() {
+		kvs := append(slices.Clone(s.attrs), attribute.String("log.severity", r.Level.String()), attribute.String("log.message", r.Message))
+		r.Attrs(a => {
+			kvs = appendAttr(kvs, s.prefix, a)
+			return true
+		})
+		span.AddEvent("log", trace.WithTimestamp(r.Time), trace.WithAttributes(kvs...))
+	}
+	return s.h.Handle(ctx, r)
+}
+
+func (s spanEvents) WithAttrs(as []slog.Attr) slog.Handler {
+	n := s
+	n.h = s.h.WithAttrs(as)
+	n.attrs = slices.Clone(s.attrs)
+	for _, a := range as {
+		n.attrs = appendAttr(n.attrs, s.prefix, a)
+	}
+	return n
+}
+
+func (s spanEvents) WithGroup(name string) slog.Handler {
+	if name == "" {
+		return s
+	}
+	n := s
+	n.h = s.h.WithGroup(name)
+	n.prefix = s.prefix + name + "."
+	return n
+}
+
+// appendAttr appends a, flattened into keys under prefix, as strings.
+func appendAttr(kvs []attribute.KeyValue, prefix string, a slog.Attr) []attribute.KeyValue {
+	a.Value = a.Value.Resolve()
+	if a.Value.Kind() == slog.KindGroup {
+		p := if a.Key == "" { prefix } else { prefix + a.Key + "." }
+		for _, g := range a.Value.Group() {
+			kvs = appendAttr(kvs, p, g)
+		}
+		return kvs
+	}
+	if a.Key == "" {
+		return kvs
+	}
+	return append(kvs, attribute.String(prefix+a.Key, a.Value.String()))
+}

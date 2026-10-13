@@ -96,6 +96,7 @@ var kinds = []kind{
 	{"autoHandlers", "messenger.Handlers", "autoHandlers are the services that handle messages."},
 	{"autoTasks", "scheduler.Tasks", "autoTasks are the services that schedule tasks."},
 	{"autoBackground", "goncini.Background", "autoBackground is the work that serve runs beside the server."},
+	{"autoSpanProcessors", "goncini.SpanProcessor", "autoSpanProcessors are the services that receive the app's spans, when enabled."},
 }
 
 // sections are the config sections that goncini's providers take.

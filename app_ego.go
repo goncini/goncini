@@ -86,6 +86,8 @@ type App struct {
 	// Background is the work that serve runs beside the server, such as a
 	// bus's worker when messenger.Config.Consume says so.
 	Background []Background
+	// Tracing is the app's tracer provider, if a SpanProcessor wants spans.
+	Tracing *Tracing
 }
 
 // Background is a service that serve runs beside the server, as a fiber
@@ -127,7 +129,7 @@ type Check func(ctx context.Context) error
 //
 // where NewConduitRenderer returns an httpkernel.Renderer. NewLogHandler,
 // NewMiddleware, NewRenderer and NewValidator are there to be replaced so.
-var Framework = layer.Set(NewLogHandler, NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewDispatcher, NewKernel, NewServer, NewOpenAPI, NewApp)
+var Framework = layer.Set(NewTracing, NewLogHandler, NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewDispatcher, NewKernel, NewServer, NewOpenAPI, NewApp)
 
 // NewLogHandler returns where an app's logs go: text or JSON records on
 // stderr, from c.Level up. An app that logs with another library, such as
@@ -141,9 +143,10 @@ func NewLogHandler(c Log) slog.Handler {
 }
 
 // NewLogger returns the logger of an app, whose records go to h, with the
-// trace and span IDs of the context they're logged with.
+// trace and span IDs of the context they're logged with, and to their span,
+// as an event, when it is recorded.
 func NewLogger(h slog.Handler) *slog.Logger {
-	return slog.New(trace.LogHandler(h))
+	return slog.New(spanEvents{h: trace.LogHandler(h)})
 }
 
 // NewRouter returns a router with routes registered in order.
@@ -186,7 +189,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:179
+//line app.ego:182
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -194,7 +197,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:183
+//line app.ego:186
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
@@ -203,7 +206,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:188
+//line app.ego:191
 		mw = append(mw, cors)
 	}
 	return &httpkernel.Kernel{
@@ -245,21 +248,21 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 // serves, with the doc comments and errors of a, and serves it on router
 // as c says.
 //
-//line app.ego:222
+//line app.ego:225
 func NewOpenAPI(c openapi.Config, router *routing.Router, kernel *httpkernel.Kernel, a openapi.Annotations) (*openapi.Document, error) {
 	doc, err := openapi.Generate(router.List(), kernel, c, a)
 	if err != nil {
 		return nil, err
 	}
-//line app.ego:224
+//line app.ego:227
 	if err := openapi.Mount(router, doc, c); err != nil {
 		return nil, err
 	}
-//line app.ego:225
+//line app.ego:228
 	return doc, nil
 }
 
 // NewApp returns the app made of these parts.
-func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger, doc *openapi.Document, events *event.Dispatcher, background []Background) *App {
-	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger, OpenAPI: doc, Events: events, Background: background}
+func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger, doc *openapi.Document, events *event.Dispatcher, background []Background, tracing *Tracing) *App {
+	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger, OpenAPI: doc, Events: events, Background: background, Tracing: tracing}
 }

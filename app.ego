@@ -79,6 +79,8 @@ type App struct {
 	// Background is the work that serve runs beside the server, such as a
 	// bus's worker when messenger.Config.Consume says so.
 	Background []Background
+	// Tracing is the app's tracer provider, if a SpanProcessor wants spans.
+	Tracing *Tracing
 }
 
 // Background is a service that serve runs beside the server, as a fiber
@@ -120,7 +122,7 @@ type Check func(ctx context.Context) error
 //
 // where NewConduitRenderer returns an httpkernel.Renderer. NewLogHandler,
 // NewMiddleware, NewRenderer and NewValidator are there to be replaced so.
-var Framework = layer.Set(NewLogHandler, NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewDispatcher, NewKernel, NewServer, NewOpenAPI, NewApp)
+var Framework = layer.Set(NewTracing, NewLogHandler, NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewDispatcher, NewKernel, NewServer, NewOpenAPI, NewApp)
 
 // NewLogHandler returns where an app's logs go: text or JSON records on
 // stderr, from c.Level up. An app that logs with another library, such as
@@ -134,9 +136,10 @@ func NewLogHandler(c Log) slog.Handler {
 }
 
 // NewLogger returns the logger of an app, whose records go to h, with the
-// trace and span IDs of the context they're logged with.
+// trace and span IDs of the context they're logged with, and to their span,
+// as an event, when it is recorded.
 func NewLogger(h slog.Handler) *slog.Logger {
-	return slog.New(trace.LogHandler(h))
+	return slog.New(spanEvents{h: trace.LogHandler(h)})
 }
 
 // NewRouter returns a router with routes registered in order.
@@ -226,6 +229,6 @@ func NewOpenAPI(c openapi.Config, router *routing.Router, kernel *httpkernel.Ker
 }
 
 // NewApp returns the app made of these parts.
-func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger, doc *openapi.Document, events *event.Dispatcher, background []Background) *App {
-	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger, OpenAPI: doc, Events: events, Background: background}
+func NewApp(kernel *httpkernel.Kernel, server *httpkernel.Server, router *routing.Router, commands []console.Command, checks []Check, services []Service, logger *slog.Logger, doc *openapi.Document, events *event.Dispatcher, background []Background, tracing *Tracing) *App {
+	return &App{Kernel: kernel, Server: server, Router: router, Commands: commands, Checks: checks, Services: services, Logger: logger, OpenAPI: doc, Events: events, Background: background, Tracing: tracing}
 }

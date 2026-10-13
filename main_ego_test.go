@@ -64,7 +64,7 @@ func build(c goncini.HTTP, routes []routing.Routes, commands []console.Command) 
 		panic(err)
 	}
 //line main_test.ego:49
-	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, services, logger, doc, goncini.NewDispatcher(nil), nil)
+	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, services, logger, doc, goncini.NewDispatcher(nil), nil, nil)
 }
 
 // routes registers a route.

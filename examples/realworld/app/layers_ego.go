@@ -124,7 +124,13 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
 	v12 := autoBackground(bus, scheduler2)
-	app := goncini.NewApp(kernel, server, router, v9, v10, v11, logger, document, dispatcher, v12)
+	v13 := autoSpanProcessors()
+	tracing, cleanup2, err := goncini.NewTracing(v13)
+	if err != nil {
+		return nil, fmt.Errorf("NewTracing: %w", err)
+	}
+	s.Defer(cleanup2)
+	app := goncini.NewApp(kernel, server, router, v9, v10, v11, logger, document, dispatcher, v12, tracing)
 	return app, nil
 }
 
@@ -226,7 +232,13 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config) (*Test, e
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
 	v12 := autoBackground(bus, scheduler2)
-	app := goncini.NewApp(kernel, server, router, v9, v10, v11, logger, document, dispatcher, v12)
+	v13 := autoSpanProcessors()
+	tracing, cleanup2, err := goncini.NewTracing(v13)
+	if err != nil {
+		return nil, fmt.Errorf("NewTracing: %w", err)
+	}
+	s.Defer(cleanup2)
+	app := goncini.NewApp(kernel, server, router, v9, v10, v11, logger, document, dispatcher, v12, tracing)
 	test := newTest(app, db2)
 	return test, nil
 }
