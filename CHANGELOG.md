@@ -353,7 +353,7 @@ Symfony's WebProfilerBundle, built from spans:
 Worth knowing: spans get the records that are logged, at the log's level.
 Query spans follow the tracer provider of their parent span.
 
-### goncini new (M5)
+### goncini new and make:* (M5)
 
 Symfony's `symfony new`, for an API:
 `go run github.com/goncini/goncini/cmd/goncini@latest new example.com/acme`.
@@ -368,8 +368,31 @@ Symfony's `symfony new`, for an API:
 - It tidies the module and runs `goncini generate`. `go test ./...` passes,
   and `go run .` serves, with nothing to edit first.
 
-Worth knowing: `goncini generate` now finds the app's package through
-symlinks, such as macOS's `/var`.
+Symfony's MakerBundle, as the tool's `make:*` commands, run in the app's
+module: each writes `.ego` files in goncini's layout, adds their services to
+`app/services.ego`, and runs `goncini generate`, so that what it writes is
+wired, and its tests pass, at once.
+
+- `make:feature notes` writes the `notes` package: a `Note`, its error set
+  and its problems, a store, endpoints to list, show, create and delete
+  notes, their test, and the table's migration. `make:feature people Person`
+  names the type when the singular isn't the name without its `s`.
+- `make:endpoint [-method POST] [-path /notes/{id}/archive] notes Archive`
+  adds an endpoint, its input with the path's parameters, its output, and
+  its route, to a feature's controller.
+- `make:message notes NoteAdded` writes a message and its handler, routed to
+  the `async` queue. An app with no bus gets `messenger.SQL`.
+- `make:command [-summary text] notes:prune` writes a console command.
+- `make:migration add_note_tags` writes the next goose migration.
+
+Worth knowing:
+
+- `goncini generate` now finds the app's package through symlinks, such as
+  macOS's `/var`.
+- The makers edit `app/services.ego` as text: they add to a
+  `var Services = layer.Set(…)`, and say what to add when it isn't one.
+- A feature's queries take `?` parameters, as SQLite, a new app's database,
+  does; an app on PostgreSQL writes `$1`.
 
 ### workflow (M4)
 

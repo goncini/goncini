@@ -1,0 +1,20 @@
+package <%.Package%>
+
+import (
+	"context"
+	"fmt"
+	"io"
+)
+
+// <%.Type%> is the <%.Command%> command.
+type <%.Type%> struct{}
+
+func New<%.Type%>() *<%.Type%> { return &<%.Type%>{} }
+
+func (*<%.Type%>) Name() string    { return "<%.Command%>" }
+func (*<%.Type%>) Summary() string { return "<%.Summary%>" }
+
+func (c *<%.Type%>) Run(ctx context.Context, out io.Writer, args []string) error {
+	_, err := fmt.Fprintln(out, "<%.Command%>: done")
+	return err
+}

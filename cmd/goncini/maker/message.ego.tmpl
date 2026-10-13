@@ -1,0 +1,28 @@
+package <%.Package%>
+
+import (
+	"github.com/goncini/goncini/messenger"
+)
+
+// <%.Type%> is a message, which a worker (messenger:consume) handles after
+// the response:
+//
+//	check messenger.Dispatch(ctx, bus, <%.Type%>{…}) ""
+type <%.Type%> struct{}
+
+// <%.Type%>Handler handles <%.Type%> messages. A message can be handled
+// twice: the handler must not do its work twice.
+type <%.Type%>Handler struct{}
+
+func New<%.Type%>Handler() *<%.Type%>Handler { return &<%.Type%>Handler{} }
+
+// Handlers registers the handler, and routes the messages to the async
+// queue.
+func (h *<%.Type%>Handler) Handlers(b *messenger.Bus) {
+	messenger.Handle(b, h.handle)
+	messenger.Route[<%.Type%>](b, "async")
+}
+
+effect (h *<%.Type%>Handler) handle(m <%.Type%>) error {
+	return nil
+}

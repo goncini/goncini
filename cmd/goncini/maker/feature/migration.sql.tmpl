@@ -1,0 +1,10 @@
+-- +goose Up
+CREATE TABLE <%.Table%> (
+    id         TEXT PRIMARY KEY,
+    title      TEXT NOT NULL,
+    created_at BIGINT NOT NULL -- Unix microseconds
+);
+CREATE INDEX <%.Table%>_created_at ON <%.Table%> (created_at);
+
+-- +goose Down
+DROP TABLE <%.Table%>;

@@ -12,21 +12,49 @@ import (
 	"time"
 )
 
-// TestNew is M5's second gate: goncini new writes an app whose tests pass,
-// and which serves, with nothing to edit first.
+// TestNew is M5's second and third gates: goncini new writes an app whose
+// tests pass, and which serves, with nothing to edit first; then the makers
+// write a feature, an endpoint, a message, a command and a migration, which
+// generate wires, whose tests pass, and which the OpenAPI document lists.
 func TestNew(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a new app")
 	}
 	dir := filepath.Join(t.TempDir(), "acme")
 	must newApp("example.com/acme", dir, "../..")
+	goTest(t, dir)
+	serves(t, dir)
 
+	must makeFeature(dir, "notes", "")
+	must makeEndpoint(dir, "notes", "Archive", "POST", "/notes/{id}/archive")
+	must makeMessage(dir, "notes", "NoteAdded")
+	must makeCommand(dir, "notes:prune", "Prunes the old notes")
+	must makeMigration(dir, "add_note_tags")
+	must generate(dir, "app", false)
+	goTest(t, dir)
+	for cmd, want := range map[string]string{"openapi:dump": `"/notes/{id}/archive"`, "list": "notes:prune", "debug:container": "NoteAddedHandler"} {
+		run := exec.Command("go", "run", ".", cmd)
+		run.Dir = dir
+		out, err := run.CombinedOutput()
+		if err != nil || !strings.Contains(string(out), want) {
+			t.Errorf("%s: %v, without %s:\n%s", cmd, err, want, out)
+		}
+	}
+}
+
+// goTest runs the app's tests.
+func goTest(t *testing.T, dir string) {
+	t.Helper()
 	test := exec.Command("go", "test", "./...")
 	test.Dir = dir
 	if out, err := test.CombinedOutput(); err != nil {
 		t.Fatalf("go test: %v\n%s", err, out)
 	}
+}
 
+// serves builds the app, serves it, and checks its home.
+func serves(t *testing.T, dir string) {
+	t.Helper()
 	bin := filepath.Join(t.TempDir(), "acme")
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir = dir
@@ -37,7 +65,6 @@ func TestNew(t *testing.T) {
 	addr := l.Addr().String()
 	l.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	serve := exec.CommandContext(ctx, bin, "serve", "-addr", addr)
 	serve.Dir = dir // its .env
 	var logs strings.Builder

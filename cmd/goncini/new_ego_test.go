@@ -14,10 +14,12 @@ import (
 	"time"
 )
 
-// TestNew is M5's second gate: goncini new writes an app whose tests pass,
-// and which serves, with nothing to edit first.
+// TestNew is M5's second and third gates: goncini new writes an app whose
+// tests pass, and which serves, with nothing to edit first; then the makers
+// write a feature, an endpoint, a message, a command and a migration, which
+// generate wires, whose tests pass, and which the OpenAPI document lists.
 //
-//line new_test.ego:17
+//line new_test.ego:19
 func TestNew(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a new app")
@@ -26,14 +28,58 @@ func TestNew(t *testing.T) {
 	if err := newApp("example.com/acme", dir, "../.."); err != nil {
 		panic(err)
 	}
+//line new_test.ego:25
+	goTest(t, dir)
+	serves(t, dir)
 
-//line new_test.ego:24
+	if err := makeFeature(dir, "notes", ""); err != nil {
+		panic(err)
+	}
+//line new_test.ego:29
+	if err := makeEndpoint(dir, "notes", "Archive", "POST", "/notes/{id}/archive"); err != nil {
+		panic(err)
+	}
+//line new_test.ego:30
+	if err := makeMessage(dir, "notes", "NoteAdded"); err != nil {
+		panic(err)
+	}
+//line new_test.ego:31
+	if err := makeCommand(dir, "notes:prune", "Prunes the old notes"); err != nil {
+		panic(err)
+	}
+//line new_test.ego:32
+	if _, err := makeMigration(dir, "add_note_tags"); err != nil {
+		panic(err)
+	}
+//line new_test.ego:33
+	if err := generate(dir, "app", false); err != nil {
+		panic(err)
+	}
+//line new_test.ego:34
+	goTest(t, dir)
+	for cmd, want := range map[string]string{"openapi:dump": `"/notes/{id}/archive"`, "list": "notes:prune", "debug:container": "NoteAddedHandler"} {
+		run := exec.Command("go", "run", ".", cmd)
+		run.Dir = dir
+		out, err := run.CombinedOutput()
+		if err != nil || !strings.Contains(string(out), want) {
+			t.Errorf("%s: %v, without %s:\n%s", cmd, err, want, out)
+		}
+	}
+}
+
+// goTest runs the app's tests.
+func goTest(t *testing.T, dir string) {
+	t.Helper()
 	test := exec.Command("go", "test", "./...")
 	test.Dir = dir
 	if out, err := test.CombinedOutput(); err != nil {
 		t.Fatalf("go test: %v\n%s", err, out)
 	}
+}
 
+// serves builds the app, serves it, and checks its home.
+func serves(t *testing.T, dir string) {
+	t.Helper()
 	bin := filepath.Join(t.TempDir(), "acme")
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Dir = dir
@@ -44,11 +90,10 @@ func TestNew(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:37
+//line new_test.ego:65
 	addr := l.Addr().String()
 	l.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	serve := exec.CommandContext(ctx, bin, "serve", "-addr", addr)
 	serve.Dir = dir // its .env
 	var logs strings.Builder
@@ -56,7 +101,7 @@ func TestNew(t *testing.T) {
 	if err := serve.Start(); err != nil {
 		panic(err)
 	}
-//line new_test.ego:46
+//line new_test.ego:73
 	defer func() {
 		cancel()
 		serve.Wait()
@@ -68,7 +113,7 @@ func TestNew(t *testing.T) {
 			if err2 != nil {
 				panic(err2)
 			}
-//line new_test.ego:54
+//line new_test.ego:81
 			res.Body.Close()
 			if res.StatusCode != 200 || !strings.Contains(string(body), `"status":"ok"`) {
 				t.Errorf("GET /: %d %s", res.StatusCode, body)

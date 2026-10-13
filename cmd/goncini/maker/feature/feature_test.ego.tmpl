@@ -1,0 +1,26 @@
+package <%.Package%>_test
+
+import (
+	"testing"
+
+	"github.com/goncini/goncini/webtest"
+
+	"<%.Module%>/app"
+	"<%.Module%>/config"
+)
+
+func Test<%.Plural%>(t *testing.T) {
+	a := webtest.Boot(t, config.Load, app.Build)
+	webtest.Run(t, a, "db:migrate")
+	c := webtest.NewClient(t, a)
+
+	var created struct {
+		ID string `json:"id"`
+	}
+	c.Post("<%.Path%>", `{"title":"First"}`).Status(201).JSON(&created)
+	c.Get("<%.Path%>/" + created.ID).Status(200).Contains(`"title":"First"`)
+	c.Get("<%.Path%>").Status(200).Contains(`"total":1`)
+	c.Post("<%.Path%>", `{"title":""}`).Problem(422)
+	c.Delete("<%.Path%>/" + created.ID).Status(204)
+	c.Get("<%.Path%>/" + created.ID).Problem(404)
+}

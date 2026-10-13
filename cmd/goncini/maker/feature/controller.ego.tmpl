@@ -1,0 +1,73 @@
+package <%.Package%>
+
+import (
+	"time"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/listing"
+	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/uid"
+)
+
+// <%.Plural%> serves the <%.Package%> of its store.
+type <%.Plural%> struct {
+	store *Store
+	now   func() time.Time
+}
+
+func New<%.Plural%>(store *Store, now func() time.Time) *<%.Plural%> {
+	return &<%.Plural%>{store: store, now: now}
+}
+
+// Routes registers the endpoints.
+func (<%.Recv%> *<%.Plural%>) Routes(r *routing.Router) {
+	r.Get("<%.Path%>", httpkernel.Endpoint(<%.Recv%>.List)).Name("<%.Route%>_list")
+	r.Get("<%.Path%>/{id}", httpkernel.Endpoint(<%.Recv%>.Show)).Name("<%.Route%>_show").Require("id", routing.UUID)
+	r.Post("<%.Path%>", httpkernel.Endpoint(<%.Recv%>.Create)).Name("<%.Route%>_create")
+	r.Delete("<%.Path%>/{id}", httpkernel.Endpoint(<%.Recv%>.Delete)).Name("<%.Route%>_delete").Require("id", routing.UUID)
+}
+
+type ListInput struct {
+	listing.Window
+}
+
+// List returns a page of the <%.Package%>, the newest first.
+effect (<%.Recv%> *<%.Plural%>) List(in ListInput) (listing.Page[<%.Type%>], <%.Type%>Error) {
+	list, count := check <%.Recv%>.store.List(in.Limit, in.Offset) as Unavailable
+	return listing.Page[<%.Type%>]{Items: list, Total: count, Window: in.Window}, nil
+}
+
+type IDInput struct {
+	ID uid.UUID `path:"id"`
+}
+
+// Show returns a <%.Var%>.
+effect (<%.Recv%> *<%.Plural%>) Show(in IDInput) (<%.Type%>, <%.Type%>Error) {
+	<%.Var%>, ok := check <%.Recv%>.store.Get(in.ID) as Unavailable
+	if !ok {
+		fail NotFound{ID: in.ID}
+	}
+	return <%.Var%>, nil
+}
+
+type CreateInput struct {
+	Body struct {
+		Title string `json:"title" validate:"required,max=200"`
+	}
+}
+
+// Create adds a <%.Var%>.
+effect (<%.Recv%> *<%.Plural%>) Create(in CreateInput) (httpkernel.Created[<%.Type%>], <%.Type%>Error) {
+	<%.Var%> := <%.Type%>{ID: uid.NewV7(), Title: in.Body.Title, CreatedAt: <%.Recv%>.now().UTC()}
+	check <%.Recv%>.store.Add(<%.Var%>) as Unavailable
+	return httpkernel.Created[<%.Type%>]{Body: <%.Var%>}, nil
+}
+
+// Delete removes a <%.Var%>.
+effect (<%.Recv%> *<%.Plural%>) Delete(in IDInput) (httpkernel.NoContent, <%.Type%>Error) {
+	deleted := check <%.Recv%>.store.Delete(in.ID) as Unavailable
+	if !deleted {
+		fail NotFound{ID: in.ID}
+	}
+	return httpkernel.NoContent{}, nil
+}

@@ -19,6 +19,17 @@ go run . messenger:consume   # handles the queued messages, until stopped
 go run . scheduler:run       # runs the scheduled tasks, until stopped
 ```
 
+The makers write `.ego` files in the app's layout, add their services to
+`app/services.ego`, and run `goncini generate`:
+
+```bash
+go tool goncini make:feature notes                     # store, endpoints, error set, test, migration
+go tool goncini make:endpoint -method POST notes Archive
+go tool goncini make:message notes NoteAdded           # and its handler
+go tool goncini make:command notes:prune
+go tool goncini make:migration add_note_tags
+```
+
 Edit `.ego` files only, never the generated `_ego.go`, `layers_ego.go` or
 `autoconfigured_gen.go`, and run `go tool goncini generate` before building
 or testing. It runs `go tool ego generate ./...`, which writes `x_ego.go`

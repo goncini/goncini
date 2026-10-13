@@ -1,0 +1,38 @@
+// Package <%.Package%> is the <%.Package%> feature: what a <%.Var%> is, how it
+// fails, and the endpoints that serve it.
+package <%.Package%>
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/uid"
+)
+
+// <%.Type%> is what the API serves.
+type <%.Type%> struct {
+	ID        uid.UUID  `json:"id"`
+	Title     string    `json:"title"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// <%.Type%>Error is everything the <%.Package%> endpoints fail with.
+error <%.Type%>Error {
+	NotFound{ ID uid.UUID } "no <%.Var%> {ID}"
+	// Unavailable means that the store failed.
+	Unavailable{ Cause error } "the <%.Package%> are unavailable"
+}
+
+// Problem says what each <%.Type%>Error looks like over HTTP. A new case
+// doesn't compile until it has an arm here.
+func Problem(err <%.Type%>Error) httpkernel.Problem {
+	return match err {
+		nil            => httpkernel.Problem{}
+		NotFound(e)    => httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
+		Unavailable(_) => httpkernel.Problem{Status: http.StatusServiceUnavailable}
+	}
+}
+
+// Problems is what the kernel registers to answer <%.Type%>Errors.
+var Problems = httpkernel.Map[<%.Type%>Error](Problem)

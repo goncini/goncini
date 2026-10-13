@@ -1,0 +1,57 @@
+package <%.Package%>
+
+import (
+	"time"
+
+	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/uid"
+)
+
+// Store keeps the <%.Package%> in the database.
+type Store struct {
+	sql *db.SQL
+}
+
+func NewStore(s *db.SQL) *Store {
+	return &Store{sql: s}
+}
+
+// columns are what scan reads.
+const columns = "SELECT id, title, created_at FROM <%.Table%>"
+
+// List returns at most limit <%.Package%> from offset, the newest first, and
+// how many there are in all.
+effect (s *Store) List(limit, offset int) ([]<%.Type%>, int, error) {
+	conn := s.sql.Conn(ctx)
+	count := check db.Value[int](ctx, conn, "SELECT count(*) FROM <%.Table%>")
+	list := check db.All(ctx, conn, scan, columns+" ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?", limit, offset)
+	return list, count, nil
+}
+
+// Get returns the <%.Var%> with the ID, and reports whether there is one.
+effect (s *Store) Get(id uid.UUID) (<%.Type%>, bool, error) {
+	return db.One(ctx, s.sql.Conn(ctx), scan, columns+" WHERE id = ?", id)
+}
+
+// Add adds a <%.Var%>.
+effect (s *Store) Add(<%.Var%> <%.Type%>) error {
+	check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO <%.Table%> (id, title, created_at) VALUES (?, ?, ?)",
+		<%.Var%>.ID, <%.Var%>.Title, <%.Var%>.CreatedAt.UnixMicro())
+	return nil
+}
+
+// Delete removes the <%.Var%> with the ID, and reports whether there was one.
+effect (s *Store) Delete(id uid.UUID) (bool, error) {
+	res := check s.sql.Conn(ctx).ExecContext(ctx, "DELETE FROM <%.Table%> WHERE id = ?", id)
+	n := check res.RowsAffected()
+	return n == 1, nil
+}
+
+// scan reads a <%.Var%> from a row.
+func scan(row db.Scanner) (<%.Type%>, error) {
+	var <%.Var%> <%.Type%>
+	var created int64
+	check row.Scan(&<%.Var%>.ID, &<%.Var%>.Title, &created) ""
+	<%.Var%>.CreatedAt = time.UnixMicro(created).UTC()
+	return <%.Var%>, nil
+}

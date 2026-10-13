@@ -1,0 +1,13 @@
+
+type <%.Name%>Input struct {<%range .Params%>
+	<%.Field%> string `path:"<%.Name%>"`<%end%><%if .Body%>
+	Body struct{}<%end%>
+}
+
+// <%.Name%>Output is what <%.Name%> answers.
+type <%.Name%>Output struct{}
+
+// <%.Name%> answers <%.Method%> <%.Path%>.
+effect (<%.Recv%> *<%.Controller%>) <%.Name%>(in <%.Name%>Input) (<%.Name%>Output, <%.Error%>) {
+	return <%.Name%>Output{}, nil
+}
