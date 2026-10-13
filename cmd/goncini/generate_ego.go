@@ -39,25 +39,25 @@ const (
 // fails if the file isn't what it would write. Generating runs ego
 // generate before, so that the types of the .ego files are known, and
 // after, so that the app's layers use the providers.
-func generate(root, appDir string, checkOnly bool) error {
+func generate(root, appDir string, checkOnly bool) (err error) {
 	path := filepath.Join(root, appDir, FileName)
 	if checkOnly {
 		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%s is missing: run goncini generate", path)
 		}
-		services, err := describe(root, appDir)
-		if err != nil {
-			return err
+		services, err2 := describe(root, appDir)
+		if err2 != nil {
+			return err2
 		}
 //line generate.ego:43
-		code, err := autoconfigure(root, appDir, services)
-		if err != nil {
-			return err
+		code, err3 := autoconfigure(root, appDir, services)
+		if err3 != nil {
+			return err3
 		}
 //line generate.ego:44
-		old, err := os.ReadFile(path)
-		if err != nil {
-			return err
+		old, err4 := os.ReadFile(path)
+		if err4 != nil {
+			return err4
 		}
 //line generate.ego:45
 		if !bytes.Equal(old, code) {
@@ -66,48 +66,67 @@ func generate(root, appDir string, checkOnly bool) error {
 		return nil
 	}
 	// A stub, until the app's packages are loaded: the file that a former
-	// version of goncini, or a former run, wrote may not compile.
+	// version of goncini, or a former run, wrote may not compile. If
+	// generating fails, the file goes back as it was.
+	if old, rerr := os.ReadFile(path); rerr == nil {
+		defer func() {
+			if err != nil {
+				os.WriteFile(path, old, 0o644)
+			}
+		}()
+	}
 	stub := generatedTitle + "package " + filepath.Base(appDir) + "\n\nimport \"" + layerPath + "\"\n\nvar Autoconfigured = layer.Set()\n"
-	if err := os.WriteFile(path, []byte(stub), 0o644); err != nil {
-		return err
+	if err5 := os.WriteFile(path, []byte(stub), 0o644); err5 != nil {
+		return err5
 	}
-//line generate.ego:54
+//line generate.ego:62
 	egoGenerate(root, "./...") // the app's layers can't be wired until Autoconfigured is
-	code, err := autoconfigure(root, appDir, nil)
-	if err != nil {
-		return err
+	code, err6 := autoconfigure(root, appDir, nil)
+	if err6 != nil {
+		return err6
 	}
-//line generate.ego:56
-	if err := os.WriteFile(path, code, 0o644); err != nil {
-		return err
+//line generate.ego:64
+	if err7 := os.WriteFile(path, code, 0o644); err7 != nil {
+		return err7
 	}
 	// The app's package first: its layers are what the others need to
 	// type-check, and their errors, such as a cycle, are the ones to show.
-//line generate.ego:59
+//line generate.ego:67
 	if out, err := egoGenerate(root, "./"+filepath.ToSlash(appDir)); err != nil {
-		return fmt.Errorf("ego generate: %v\n%s", err, out)
+		return egoError(err, out)
 	}
 	if out, err := egoGenerate(root, "./..."); err != nil {
-		return fmt.Errorf("ego generate: %v\n%s", err, out)
+		return egoError(err, out)
 	}
 	// Now that the layers are wired, describe the services they build: the
 	// providers stay the same, so the layers do too.
-	services, err := describe(root, appDir)
-	if err != nil {
-		return err
+	services, err8 := describe(root, appDir)
+	if err8 != nil {
+		return err8
 	}
-//line generate.ego:68
-	v, err := autoconfigure(root, appDir, services)
-	if err != nil {
-		return err
+//line generate.ego:76
+	v, err9 := autoconfigure(root, appDir, services)
+	if err9 != nil {
+		return err9
 	}
 	code = v
-//line generate.ego:69
-	if err := os.WriteFile(path, code, 0o644); err != nil {
-		return err
+//line generate.ego:77
+	if err10 := os.WriteFile(path, code, 0o644); err10 != nil {
+		return err10
 	}
-//line generate.ego:70
+//line generate.ego:78
 	return nil
+}
+
+// egoError is the error of ego generate, with its output, and what to do
+// when it is a module that go.mod lacks: go mod tidy doesn't read .ego
+// files, nor fix it, but goncini tidy does.
+func egoError(err error, out []byte) error {
+	text := string(out)
+	if strings.Contains(text, "go.sum entry") || strings.Contains(text, "no required module provides") {
+		text += "\nA .ego file imports a module that go.mod lacks: run go tool goncini tidy, which go mod tidy is for .ego files."
+	}
+	return fmt.Errorf("ego generate: %v\n%s", err, text)
 }
 
 // egoGenerate runs ego generate on packages of the module at root.
@@ -168,7 +187,7 @@ func autoconfigure(root, appDir string, services []service) ([]byte, error) {
 	if err2 != nil {
 		return nil, err2
 	}
-//line generate.ego:128
+//line generate.ego:147
 	var b strings.Builder
 	var names []string
 	for _, k := range kinds {
@@ -258,7 +277,7 @@ func load(root, appDir string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:214
+//line generate.ego:233
 	var errs []error
 	packages.Visit(pkgs, nil, func(p *egopackages.Package) {
 		for _, e := range p.Errors {
@@ -268,19 +287,19 @@ func load(root, appDir string) (*app, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-//line generate.ego:221
+//line generate.ego:240
 	dir, err := filepath.Abs(filepath.Join(root, appDir))
 	if err != nil {
 		return nil, err
 	}
 	// As go list reports it, through symlinks: macOS's /var is /private/var.
-//line generate.ego:223
+//line generate.ego:242
 	v, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return nil, err
 	}
 	dir = v
-//line generate.ego:224
+//line generate.ego:243
 	a := &app{all: pkgs, imports: map[string]string{}}
 	for _, p := range pkgs {
 		if len(p.GoFiles) > 0 && sameDir(filepath.Dir(p.GoFiles[0]), dir) {
@@ -293,7 +312,7 @@ func load(root, appDir string) (*app, error) {
 	if err := a.findProviders(); err != nil {
 		return nil, err
 	}
-//line generate.ego:234
+//line generate.ego:253
 	return a, nil
 }
 
@@ -365,7 +384,7 @@ func isFunc(info *types.Info, x ast.Expr, path, name string) bool {
 
 // ident is the name in x, an identifier or a selector, or nil.
 //
-//line generate.ego:298
+//line generate.ego:317
 func ident(x ast.Expr) *ast.Ident {
 	switch x := x.(type) {
 	case *ast.Ident:
@@ -494,7 +513,7 @@ func (a *app) lookup(name string) types.Type {
 	} else {
 		path = gonciniPath + "/" + pkgName
 	}
-//line generate.ego:421
+//line generate.ego:440
 	var found types.Type
 	packages.Visit(a.all, nil, func(p *egopackages.Package) {
 		if found == nil && p.PkgPath == path {
@@ -517,14 +536,14 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 	switch k.name {
 	case "autoProblems":
 
-//line generate.ego:442
+//line generate.ego:461
 		for _, v := range a.mappers(elem) {
 			items = append(items, a.qualify(v.Pkg())+"."+v.Name())
 		}
 
 	case "autoChecks":
 
-//line generate.ego:447
+//line generate.ego:466
 		for _, t := range a.provided {
 			if m := pinger(t); m != "" {
 				add(t, "$."+m)
@@ -533,7 +552,7 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 
 	default:
 
-//line generate.ego:454
+//line generate.ego:473
 		iface, _ := elem.Underlying().(*types.Interface)
 		var added []types.Type
 		for _, t := range a.provided {
@@ -690,7 +709,7 @@ func describe(root, appDir string) ([]service, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:607
+//line generate.ego:626
 	if len(pkgs) != 1 || len(pkgs[0].Errors) > 0 {
 		return nil, nil
 	}
@@ -718,7 +737,7 @@ func describe(root, appDir string) ([]service, error) {
 		}
 		return v
 	}
-//line generate.ego:626
+//line generate.ego:645
 	var services []service
 	for _, stmt := range build.Body.List {
 		assign, ok := stmt.(*ast.AssignStmt)

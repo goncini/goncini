@@ -1,0 +1,90 @@
+package main
+
+import (
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"maps"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+
+	"golang.org/x/mod/modfile"
+)
+
+// tidyDir is the package that tidy writes the .ego files' imports in, for
+// go mod tidy to see them, and removes after.
+const tidyDir = "zz_goncini_tidy"
+
+// tidy runs go mod tidy on the module at root as if its .ego files were Go:
+// go mod tidy reads only Go files, so it misses an import that a .ego file
+// adds, which goncini generate then can't compile, and drops a module that
+// only .ego files import. A package of blank imports stands in for the .ego
+// files while go mod tidy runs; then the app is generated, and tidied again
+// without the stand-in, its generated Go importing what its .ego does.
+func tidy(root, appDir string) (err error) {
+	module, imports := check egoImports(root) ""
+	dir := filepath.Join(root, tidyDir)
+	defer func() {
+		if rerr := os.RemoveAll(dir); err == nil {
+			err = rerr
+		}
+	}()
+	if len(imports) > 0 {
+		var b strings.Builder
+		b.WriteString(generatedTitle + "//go:build tools\n\n// Package deps holds the imports of " + module + "'s .ego files, while goncini tidy runs.\npackage deps\n\nimport (\n")
+		for _, p := range imports {
+			b.WriteString("\t_ " + strconv.Quote(p) + "\n")
+		}
+		b.WriteString(")\n")
+		check os.MkdirAll(dir, 0o755) ""
+		check os.WriteFile(filepath.Join(dir, "deps.go"), []byte(b.String()), 0o644) ""
+	}
+	check run(root, "go", "mod", "tidy") ""
+	check generate(root, appDir, false) ""
+	check os.RemoveAll(dir) ""
+	return run(root, "go", "mod", "tidy")
+}
+
+// egoImports returns the module's path, and the packages that its .ego
+// files import from other modules, sorted: the standard library's and the
+// module's own aren't. Nested modules, testdata and the directories that
+// the go command ignores aren't read.
+func egoImports(root string) (string, []string, error) {
+	gomod := check os.ReadFile(filepath.Join(root, "go.mod")) ""
+	module := modfile.ModulePath(gomod)
+	seen := map[string]bool{}
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		check err ""
+		if d.IsDir() {
+			name := d.Name()
+			if path != root && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "testdata" || name == "vendor" || name == tidyDir) {
+				return filepath.SkipDir
+			}
+			if _, err := os.Stat(filepath.Join(path, "go.mod")); path != root && err == nil {
+				return filepath.SkipDir // another module
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".ego") {
+			return nil
+		}
+		// The package clause and the imports are Go: the dialect starts
+		// after them.
+		f := check parser.ParseFile(fset, path, nil, parser.ImportsOnly) ""
+		for _, spec := range f.Imports {
+			p := check strconv.Unquote(spec.Path.Value) ""
+			first, _, _ := strings.Cut(p, "/")
+			if strings.Contains(first, ".") && p != module && !strings.HasPrefix(p, module+"/") {
+				seen[p] = true
+			}
+		}
+		return nil
+	})
+	check err ""
+	imports := slices.Sorted(maps.Keys(seen))
+	return module, imports, nil
+}

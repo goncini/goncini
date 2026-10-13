@@ -416,6 +416,15 @@ app's, the feature's or its own, and prints the files it wrote.
 - `make:command -summary text notes:prune` writes a console command.
 - `make:migration add_note_tags` writes the next goose migration.
 
+`goncini tidy` is `go mod tidy` for `.ego` files, which `go mod tidy`
+doesn't read: it missed a module that a `.ego` file imported, which
+`goncini generate` then couldn't compile, and dropped one that only `.ego`
+files used. It tidies the module with the `.ego` files' imports standing in
+as a package of blank imports, generates the app, and tidies it again
+without them. `goncini generate` says to run it when a module is missing,
+and puts `autoconfigured_gen.go` back as it was when it fails, rather than
+leave it half written.
+
 Worth knowing:
 
 - `goncini generate` now finds the app's package through symlinks, such as

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,8 @@ import (
 // TestNew is M5's second and third gates: goncini new writes an app whose
 // tests pass, and which serves, with nothing to edit first; then the makers
 // write a feature, an endpoint, a message, a command and a migration, which
-// generate wires, whose tests pass, and which the OpenAPI document lists.
+// generate wires, whose tests pass, and which the OpenAPI document lists;
+// and goncini tidy requires a module that a .ego file imports.
 func TestNew(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a new app")
@@ -42,6 +44,25 @@ func TestNew(t *testing.T) {
 	}
 	if after := snapshot(t, dir); after != before {
 		t.Errorf("the app isn't put back:\n%s\nwas\n%s", after, before)
+	}
+	// A .ego file that imports a module go.mod lacks: generate says to run
+	// goncini tidy, and leaves the wiring as it was; tidy requires it.
+	must os.WriteFile(filepath.Join(dir, "notes", "price.ego"), []byte("package notes\n\nimport \"github.com/shopspring/decimal\"\n\nvar free = decimal.Zero\n"), 0o644)
+	wiring := must os.ReadFile(filepath.Join(dir, "app", FileName))
+	if err := generate(dir, "app", false); err == nil || !strings.Contains(err.Error(), "goncini tidy") {
+		t.Errorf("generate with a module missing: %v", err)
+	}
+	after := must os.ReadFile(filepath.Join(dir, "app", FileName))
+	if string(after) != string(wiring) {
+		t.Error("a failed generate changed the wiring")
+	}
+	must tidy(dir, "app")
+	gomod := must os.ReadFile(filepath.Join(dir, "go.mod"))
+	if !regexp.MustCompile(`(?m)^\s+github.com/shopspring/decimal v\S+$`).Match(gomod) {
+		t.Errorf("tidy didn't require github.com/shopspring/decimal directly:\n%s", gomod)
+	}
+	if _, err := os.Stat(filepath.Join(dir, tidyDir)); err == nil {
+		t.Error("tidy left its stand-in")
 	}
 	goTest(t, dir)
 	bin := build(t, dir)

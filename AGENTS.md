@@ -9,6 +9,7 @@ goncini's repository, is a complete one.
 
 ```bash
 go tool goncini generate     # after editing: runs ego generate, and writes app/autoconfigured_gen.go
+go tool goncini tidy         # go mod tidy for .ego files: after importing a new module in one
 go test ./...
 go run . list                # the app's commands; go run . serves it
 go run . db:migrate          # applies the migrations
@@ -34,7 +35,8 @@ go tool goncini make:migration add_note_tags
 
 Edit `.ego` files only, never the generated `_ego.go`, `layers_ego.go` or
 `autoconfigured_gen.go`, and run `go tool goncini generate` before building
-or testing. It runs `go tool ego generate ./...`, which writes `x_ego.go`
+or testing. `go mod tidy` doesn't read `.ego` files: run `go tool goncini
+tidy` instead, which requires the modules they import. It runs `go tool ego generate ./...`, which writes `x_ego.go`
 next to each `x.ego`, and finds the app's services by their types.
 
 ## Layout
