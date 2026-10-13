@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-goncini requires Go 1.27, and effect-go v0.3.3, which pins the library and
+goncini requires Go 1.27, and effect-go v0.3.4, which pins the library and
 the `ego` tool together.
 
 ### httpkernel
@@ -861,3 +861,4 @@ with their providers and what they need, which `debug:container` lists.
   - v0.3.3, asked for by M5's review:
     - effect methods' spans went to OTel's global tracer provider, even
       under a span of another one; they follow their parent span's now.
+  - v0.3.4: a cleanup of v0.3.2's fix, generating the same code.
