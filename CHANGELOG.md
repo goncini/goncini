@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## v0.1.0 (2026-10-13)
+
+The first release: every module is tagged v0.1.0, the root module as
+`v0.1.0` and each adapter module under its directory, such as
+`db/goosedb/v0.1.0`, so that `go run
+github.com/goncini/goncini/cmd/goncini@v0.1.0 new example.com/acme` writes
+an app that requires them.
 
 goncini requires Go 1.27, and effect-go v0.3.4, which pins the library and
 the `ego` tool together.
