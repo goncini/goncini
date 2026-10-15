@@ -9,7 +9,6 @@ import (
 	"go/ast"
 	"go/format"
 	"go/types"
-	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -27,7 +26,7 @@ import (
 
 // FileName is the file that goncini generate writes in the app's package.
 //
-//line generate.ego:25
+//line generate.ego:24
 const FileName = "autoconfigured_gen.go"
 
 const (
@@ -48,49 +47,30 @@ const appDir = "app"
 func generate(root string, checkOnly bool) (err error) {
 	path := filepath.Join(root, appDir, FileName)
 	if checkOnly {
-		left, err2 := leftovers(root)
-		if err2 != nil {
-			return err2
-		}
-//line generate.ego:46
-		if len(left) > 0 {
-			return fmt.Errorf("%s is left from a .ego file that is gone: run goncini generate", left[0])
-		}
 		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%s is missing: run goncini generate", path)
 		}
-		services, err3 := describe(root)
+		services, err2 := describe(root)
+		if err2 != nil {
+			return err2
+		}
+//line generate.ego:48
+		code, err3 := autoconfigure(root, services)
 		if err3 != nil {
 			return err3
 		}
-//line generate.ego:53
-		code, err4 := autoconfigure(root, services)
+//line generate.ego:49
+		old, err4 := os.ReadFile(path)
 		if err4 != nil {
 			return err4
 		}
-//line generate.ego:54
-		old, err5 := os.ReadFile(path)
-		if err5 != nil {
-			return err5
-		}
-//line generate.ego:55
+//line generate.ego:50
 		if !bytes.Equal(old, code) {
 			return fmt.Errorf("%s isn't up to date: run goncini generate", path)
 		}
 		return nil
 	}
 	start := time.Now()
-	left, err6 := leftovers(root)
-	if err6 != nil {
-		return err6
-	}
-//line generate.ego:62
-	for _, file := range left {
-		if err7 := os.Remove(file); err7 != nil {
-			return err7
-		}
-	}
-//line generate.ego:65
 	old, rerr := os.ReadFile(path)
 	// Most changes, such as an endpoint's code, leave the wiring as it is:
 	// when the app compiles with it, and it is what would be written, the
@@ -115,22 +95,22 @@ func generate(root string, checkOnly bool) (err error) {
 		}()
 	}
 	stub := generatedTitle + "package " + appDir + "\n\nimport \"" + layerPath + "\"\n\nvar Autoconfigured = layer.Set()\n"
-	if err8 := os.WriteFile(path, []byte(stub), 0o644); err8 != nil {
-		return err8
+	if err5 := os.WriteFile(path, []byte(stub), 0o644); err5 != nil {
+		return err5
 	}
-//line generate.ego:90
+//line generate.ego:81
 	egoGenerate(root, "./...") // the app's layers can't be wired until Autoconfigured is
-	code, err9 := autoconfigure(root, nil)
-	if err9 != nil {
-		return err9
+	code, err6 := autoconfigure(root, nil)
+	if err6 != nil {
+		return err6
 	}
-//line generate.ego:92
-	if err10 := os.WriteFile(path, code, 0o644); err10 != nil {
-		return err10
+//line generate.ego:83
+	if err7 := os.WriteFile(path, code, 0o644); err7 != nil {
+		return err7
 	}
 	// The app's package first: its layers are what the others need to
 	// type-check, and their errors, such as a cycle, are the ones to show.
-//line generate.ego:95
+//line generate.ego:86
 	if out, err := egoGenerate(root, "./"+appDir); err != nil {
 		return egoError(err, out)
 	}
@@ -139,66 +119,22 @@ func generate(root string, checkOnly bool) (err error) {
 	}
 	// Now that the layers are wired, describe the services they build: the
 	// providers stay the same, so the layers do too.
-	services, err11 := describe(root)
-	if err11 != nil {
-		return err11
+	services, err8 := describe(root)
+	if err8 != nil {
+		return err8
 	}
-//line generate.ego:104
-	v, err12 := autoconfigure(root, services)
-	if err12 != nil {
-		return err12
+//line generate.ego:95
+	v, err9 := autoconfigure(root, services)
+	if err9 != nil {
+		return err9
 	}
 	code = v
-//line generate.ego:105
-	if err13 := os.WriteFile(path, code, 0o644); err13 != nil {
-		return err13
+//line generate.ego:96
+	if err10 := os.WriteFile(path, code, 0o644); err10 != nil {
+		return err10
 	}
-//line generate.ego:106
+//line generate.ego:97
 	return os.Chtimes(path, start, start)
-}
-
-// leftovers returns the Go files of the module at root that ego generate
-// wrote from .ego files that are gone, and leaves: their code would still
-// compile. (effect-go is to remove them itself.)
-func leftovers(root string) ([]string, error) {
-	var left []string
-	err := walkModule(root, func(path string, d fs.DirEntry) error {
-		if leftover(path) {
-			left = append(left, path)
-		}
-		return nil
-	})
-	return left, err
-}
-
-// leftover reports whether path is Go that ego generate wrote from a .ego
-// file that is gone: x_ego.go without x.ego, or x_ego_test.go without
-// x_test.ego.
-func leftover(path string) bool {
-	name := filepath.Base(path)
-	var src string
-	switch {
-	case name == "layers_ego.go": // from the package's injectors
-		return false
-	case strings.HasSuffix(name, "_ego_test.go"):
-		src = strings.TrimSuffix(name, "_ego_test.go") + "_test.ego"
-	case strings.HasSuffix(name, "_ego.go"):
-		src = strings.TrimSuffix(name, "_ego.go") + ".ego"
-	default:
-		return false
-	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(path), src)); !errors.Is(err, fs.ErrNotExist) {
-		return false
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	header := []byte("// Code generated by ego generate")
-	head := make([]byte, len(header))
-	_, err = io.ReadFull(f, head)
-	return err == nil && bytes.Equal(head, header) // not someone's own x_ego.go
 }
 
 // egoError is the error of ego generate, with its output, and what to do
@@ -270,7 +206,7 @@ func autoconfigure(root string, services []service) ([]byte, error) {
 	if err2 != nil {
 		return nil, err2
 	}
-//line generate.ego:219
+//line generate.ego:166
 	var b strings.Builder
 	var names []string
 	for _, k := range kinds {
@@ -360,7 +296,7 @@ func load(root string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:305
+//line generate.ego:252
 	var errs []error
 	packages.Visit(pkgs, nil, func(p *egopackages.Package) {
 		for _, e := range p.Errors {
@@ -370,19 +306,19 @@ func load(root string) (*app, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-//line generate.ego:312
+//line generate.ego:259
 	dir, err := filepath.Abs(filepath.Join(root, appDir))
 	if err != nil {
 		return nil, err
 	}
 	// As go list reports it, through symlinks: macOS's /var is /private/var.
-//line generate.ego:314
+//line generate.ego:261
 	v, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return nil, err
 	}
 	dir = v
-//line generate.ego:315
+//line generate.ego:262
 	a := &app{all: pkgs, imports: map[string]string{}}
 	for _, p := range pkgs {
 		if len(p.GoFiles) > 0 && sameDir(filepath.Dir(p.GoFiles[0]), dir) {
@@ -395,7 +331,7 @@ func load(root string) (*app, error) {
 	if err := a.findProviders(); err != nil {
 		return nil, err
 	}
-//line generate.ego:325
+//line generate.ego:272
 	return a, nil
 }
 
@@ -467,7 +403,7 @@ func isFunc(info *types.Info, x ast.Expr, path, name string) bool {
 
 // ident is the name in x, an identifier or a selector, or nil.
 //
-//line generate.ego:389
+//line generate.ego:336
 func ident(x ast.Expr) *ast.Ident {
 	switch x := x.(type) {
 	case *ast.Ident:
@@ -596,7 +532,7 @@ func (a *app) lookup(name string) types.Type {
 	} else {
 		path = gonciniPath + "/" + pkgName
 	}
-//line generate.ego:512
+//line generate.ego:459
 	var found types.Type
 	packages.Visit(a.all, nil, func(p *egopackages.Package) {
 		if found == nil && p.PkgPath == path {
@@ -619,14 +555,14 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 	switch k.name {
 	case "autoProblems":
 
-//line generate.ego:533
+//line generate.ego:480
 		for _, v := range a.mappers(elem) {
 			items = append(items, a.qualify(v.Pkg())+"."+v.Name())
 		}
 
 	case "autoChecks":
 
-//line generate.ego:538
+//line generate.ego:485
 		for _, t := range a.provided {
 			if m := pinger(t); m != "" {
 				add(t, "$."+m)
@@ -635,7 +571,7 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 
 	default:
 
-//line generate.ego:545
+//line generate.ego:492
 		iface, _ := elem.Underlying().(*types.Interface)
 		var added []types.Type
 		for _, t := range a.provided {
@@ -792,7 +728,7 @@ func describe(root string) ([]service, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:698
+//line generate.ego:645
 	if len(pkgs) != 1 || len(pkgs[0].Errors) > 0 {
 		return nil, nil
 	}
@@ -820,7 +756,7 @@ func describe(root string) ([]service, error) {
 		}
 		return v
 	}
-//line generate.ego:717
+//line generate.ego:664
 	var services []service
 	for _, stmt := range build.Body.List {
 		assign, ok := stmt.(*ast.AssignStmt)

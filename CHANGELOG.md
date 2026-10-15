@@ -31,9 +31,10 @@
   own, `go tool goncini`, when the app requires another version or replaces
   goncini with another directory, so the code it generates is for the
   goncini the app builds with.
-- **Removed `.ego` files:** `goncini generate` removes the Go that `ego
-  generate` wrote from a `.ego` file that is gone, which `ego generate`
-  leaves, and `generate -check` fails on it: the removed code compiled on.
+- **effect-go v0.3.5:** `ego generate` removes the Go it wrote from a
+  `.ego` file that is gone, and `-check` fails on it: the removed code
+  compiled on. The tool counts a removed `.ego` file as a change, so the
+  app's commands and `serve` generate again.
 - **No more `-app`:** the wiring is in `app/`, which is part of the layout;
   `generate` and `tidy` no longer take the flag.
 - **Faster `goncini generate`:** it first runs `ego generate` alone, and

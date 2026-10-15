@@ -7,7 +7,7 @@ tool github.com/effect-go/effect-go/cmd/ego
 replace github.com/goncini/goncini => ../..
 
 require (
-	github.com/effect-go/effect-go v0.3.4
+	github.com/effect-go/effect-go v0.3.5
 	github.com/goncini/goncini v0.1.0
 	github.com/redis/go-redis/v9 v9.23.0
 )

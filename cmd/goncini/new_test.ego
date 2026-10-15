@@ -23,7 +23,8 @@ import (
 // and reloads as it changes; then the makers write a feature, an endpoint,
 // a message, a command and a migration, which generate wires, whose tests
 // pass, and which the OpenAPI document lists; goncini tidy requires a
-// module that a .ego file imports; and the Go of a removed .ego file goes.
+// module that a .ego file imports; and a removed .ego file makes the app
+// stale.
 func TestNew(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a new app")
@@ -66,17 +67,17 @@ func TestNew(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, tidyDir)); err == nil {
 		t.Error("tidy left its stand-in")
 	}
-	// ego generate leaves the Go of a .ego file that is removed: generate
-	// removes it.
+	// A .ego file removed: the app is stale, and its Go goes when it is
+	// generated again, as its commands do.
 	must os.Remove(filepath.Join(dir, "notes", "price.ego"))
-	if err := generate(dir, true); err == nil || !strings.Contains(err.Error(), "price_ego.go") {
-		t.Errorf("generate -check with the Go of a removed .ego file: %v", err)
+	if !stale(dir) {
+		t.Error("the app isn't stale when a .ego file is removed")
 	}
-	goTest(t, dir)
 	bin := build(t, dir)
 	if _, err := os.Stat(filepath.Join(dir, "notes", "price_ego.go")); err == nil {
 		t.Error("the Go of a removed .ego file is left")
 	}
+	goTest(t, dir)
 	for cmd, want := range map[string]string{"openapi:dump": `"/notes/{id}/archive"`, "list": `Prunes the "old" notes`, "debug:container": "NoteAddedHandler"} {
 		run := exec.Command(bin, cmd)
 		run.Dir = dir
