@@ -14,7 +14,7 @@ const govulncheck = "golang.org/x/vuln/cmd/govulncheck@v1.9.0"
 // writes what it finds to out: that the Go of its .ego files and its wiring
 // are what generating would write, and that no known vulnerability is in
 // the code it calls, which govulncheck reports.
-func checkApp(out io.Writer, root, appDir string) error {
+func checkApp(out io.Writer, root string) error {
 	var failed []string
 	report := (what string, err error) => {
 		if err != nil {
@@ -31,7 +31,7 @@ func checkApp(out io.Writer, root, appDir string) error {
 		}
 	}
 	report("the Go of the .ego files is up to date", run(root, "go", "tool", "ego", "generate", "-check", "./..."))
-	report("the wiring is up to date", generate(root, appDir, true))
+	report("the wiring is up to date", generate(root, true))
 	report("no known vulnerability in the code the app calls", run(root, "go", "run", govulncheck, "./..."))
 	if len(failed) > 0 {
 		return errors.New("failed: " + strings.Join(failed, "; "))

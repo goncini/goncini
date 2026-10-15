@@ -30,11 +30,11 @@ import (
 //
 //line serve.ego:28
 type devServer struct {
-	root, appDir string
-	internal     string // the address the app serves on, behind the proxy
-	proxy        *httputil.ReverseProxy
-	logs         *tail // the app's last output
-	out          io.Writer
+	root     string
+	internal string // the address the app serves on, behind the proxy
+	proxy    *httputil.ReverseProxy
+	logs     *tail // the app's last output
+	out      io.Writer
 
 	mu      sync.Mutex
 	ready   chan struct{} // closed once the app runs, or failed to
@@ -46,13 +46,13 @@ type devServer struct {
 
 // devServe serves the app at root on addr, or on the address of its config,
 // until ctx is done, and writes what it does to out.
-func devServe(ctx context.Context, out io.Writer, root, appDir, addr string) error {
+func devServe(ctx context.Context, out io.Writer, root, addr string) error {
 	internal, err2 := freeAddr()
 	if err2 != nil {
 		return err2
 	}
 //line serve.ego:47
-	s := &devServer{root: root, appDir: appDir, internal: internal, logs: &tail{}, out: out, ready: make(chan struct{})}
+	s := &devServer{root: root, internal: internal, logs: &tail{}, out: out, ready: make(chan struct{})}
 	s.proxy = &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(&url.URL{Scheme: "http", Host: internal})
@@ -130,7 +130,11 @@ func (s *devServer) writeFailure(w http.ResponseWriter, r *http.Request, status 
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
-	json.MarshalWrite(w, map[string]any{"title": "The app doesn't run", "status": status, "detail": detail})
+	json.MarshalWrite(w, struct {
+		Title  string `json:"title"`
+		Status int    `json:"status"`
+		Detail string `json:"detail"`
+	}{"The app doesn't run", status, detail})
 }
 
 // reload starts the app built, then rebuilds and restarts it each time its
@@ -156,7 +160,7 @@ func (s *devServer) reload(ctx context.Context, changes <-chan string) {
 // build generates the app if a .ego file changed, and builds it: its
 // failure, if it fails, is what the server answers.
 func (s *devServer) build() {
-	bin, err := buildApp(s.root, s.appDir)
+	bin, err := buildApp(s.root)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.bin, s.failure = bin, ""
@@ -199,7 +203,7 @@ func (s *devServer) start(ctx context.Context) {
 			} else {
 				reason = "the app stopped"
 			}
-//line serve.ego:185
+//line serve.ego:189
 			s.failure = fmt.Sprintf("%s\n\n%v", reason, s.logs)
 			s.app = nil
 		}
@@ -212,6 +216,7 @@ func (s *devServer) start(ctx context.Context) {
 			s.done("") // with the failure that the waiter recorded
 			return
 		case <-ctx.Done():
+			s.done("goncini serve is stopping")
 			return
 		case <-time.After(50 * time.Millisecond):
 		}
@@ -224,18 +229,15 @@ func (s *devServer) start(ctx context.Context) {
 	s.done("the app didn't listen within a minute")
 }
 
-// done ends a reload: the app runs, or failed with failure, if any.
+// done ends a start, and only one: the app runs, or failed with failure,
+// if any. The requests that waited for it go on.
 func (s *devServer) done(failure string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if failure != "" {
 		s.failure = failure
 	}
-	select {
-	case <-s.ready:
-	default:
-		close(s.ready)
-	}
+	close(s.ready)
 }
 
 // stopApp interrupts the app, if it runs, for it to shut down gracefully,
@@ -284,7 +286,7 @@ func freeAddr() (string, error) {
 	if err != nil {
 		return "", err
 	}
-//line serve.ego:266
+//line serve.ego:268
 	defer ln.Close()
 	return ln.Addr().String(), nil
 }
@@ -323,9 +325,10 @@ func watch(ctx context.Context, root string, changes chan<- string) {
 	}
 }
 
-// watched reports whether the app is built from the file: its code, its
-// migrations, its module, its environment, and the files it embeds, such
-// as templates. Tests aren't, nor what generating writes.
+// watched reports whether the app runs from the file: its code, its module,
+// its environment, and the files it embeds, such as templates. Tests
+// aren't, nor what generating writes, nor migrations, which db:migrate
+// applies.
 func watched(rel string) bool {
 	name := filepath.Base(rel)
 	switch {
@@ -334,11 +337,9 @@ func watched(rel string) bool {
 		return false
 	case name == "go.mod", name == "go.sum", name == ".env", strings.HasPrefix(name, ".env."):
 		return true
-	case strings.HasPrefix(rel, "var"+string(filepath.Separator)): // the profiler's and the dev database's
-		return false
 	}
 	switch filepath.Ext(name) {
-	case ".ego", ".go", ".sql", ".html", ".tmpl", ".txt", ".json", ".yaml", ".yml", ".toml":
+	case ".ego", ".go", ".html", ".tmpl", ".txt", ".json", ".yaml", ".yml", ".toml":
 		return true
 	}
 	return false

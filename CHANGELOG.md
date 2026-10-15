@@ -8,16 +8,19 @@
   `debug:router`, `db:migrate` and the others run the app's commands.
   - It runs them from a binary in the user's cache, which `go build` links
     again only when the code changed, unlike `go run .`.
-  - It generates the app first when a `.ego` file or `go.mod` changed
-    since the last generation, so a command never runs stale Go.
+  - It generates the app first when a `.ego` file or `go.mod` is newer
+    than the wiring, whose modification time is when it was last
+    generated, so a command never runs stale Go.
   - It works from any directory of the app.
+  - Inside an app, `goncini list` lists the app's commands, then the
+    tool's.
 - **`goncini serve`:** serves the app while it is developed, as `symfony
   server:start` does.
   - It listens on the config's address, which the app's `serve
     -print-addr` reports, in front of the app.
-  - When the app's files change (its `.ego`, Go, SQL, `go.mod`, `.env` and
-    embedded templates, but not its tests), it generates, rebuilds and
-    restarts the app.
+  - When the app's files change (its `.ego`, Go, `go.mod`, `.env` and
+    embedded templates, but not its tests, nor its migrations, which
+    `db:migrate` applies), it generates, rebuilds and restarts the app.
   - Requests made meanwhile wait for the app.
   - What doesn't compile, or why the app exited, is the answer until it is
     fixed: a problem, or text to a browser.
@@ -26,7 +29,13 @@
   v1.9.0.
 - **`goncini` in the path:** installed with `go install`, it runs the app's
   own, `go tool goncini`, when the app requires another version or replaces
-  goncini, so the code it generates is for the goncini the app builds with.
+  goncini with another directory, so the code it generates is for the
+  goncini the app builds with.
+- **Removed `.ego` files:** `goncini generate` removes the Go that `ego
+  generate` wrote from a `.ego` file that is gone, which `ego generate`
+  leaves, and `generate -check` fails on it: the removed code compiled on.
+- **No more `-app`:** the wiring is in `app/`, which is part of the layout;
+  `generate` and `tidy` no longer take the flag.
 - **Faster `goncini generate`:** it first runs `ego generate` alone, and
   stops there when the wiring is already what it would write, as after most
   edits: about 3s instead of 6 on a new app.

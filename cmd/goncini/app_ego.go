@@ -14,12 +14,11 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
-	"time"
 
 	"golang.org/x/mod/modfile"
 )
 
-//line app.ego:20
+//line app.ego:19
 const toolPath = gonciniPath + "/cmd/goncini"
 
 // findApp returns the root of the app that dir is in, and its go.mod: the
@@ -49,29 +48,31 @@ func findApp(dir string) (string, *modfile.File, bool) {
 	}
 }
 
-// delegates reports whether this goncini should run the app's instead, go
-// tool goncini, as a goncini that go install put in the path does: the app
-// requires a version of goncini, and its tool generates code for that one.
-// The app's own, which go tool runs, doesn't.
-func delegates(app *modfile.File) bool {
-	if os.Getenv("GONCINI_TOOL") != "" {
+// delegates reports whether a goncini built as tool should run the app's
+// goncini instead, go tool goncini, as one that go install put in the path
+// does: the app requires a version of goncini, or replaces it with a
+// directory, and its tool generates code for that one. The app's own, which
+// go tool runs, doesn't; nor does a goncini that runs for another, inner,
+// in case they still differ, as in a Go workspace.
+func delegates(app *modfile.File, tool debug.Module, inner bool) bool {
+	if inner {
 		return false
 	}
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
+	var required string
+	for _, r := range app.Require {
+		if r.Mod.Path == gonciniPath {
+			required = r.Mod.Version
+		}
+	}
+	if tool.Path != gonciniPath || tool.Version != required {
 		return true
 	}
 	for _, r := range app.Replace {
-		if r.Old.Path == gonciniPath {
-			return true
+		if r.Old.Path == gonciniPath && (r.Old.Version == "" || r.Old.Version == required) {
+			return tool.Replace == nil || tool.Replace.Path != r.New.Path || tool.Replace.Version != r.New.Version
 		}
 	}
-	for _, r := range app.Require {
-		if r.Mod.Path == gonciniPath {
-			return r.Mod.Version != info.Main.Version
-		}
-	}
-	return true
+	return tool.Replace != nil
 }
 
 // delegate runs the app's goncini with args, and returns its exit status.
@@ -99,10 +100,10 @@ func runChild(cmd *exec.Cmd) int {
 }
 
 // runCommand runs the app's command that args name, as go run . would, from
-// a binary that it rebuilds only when the app's code changed, and after
-// generating the app if a .ego file changed since it was last.
-func runCommand(root, appDir string, args []string) int {
-	bin, err := buildApp(root, appDir)
+// a binary that it builds again only when the app's code changed, and after
+// generating the app if it is stale.
+func runCommand(root string, args []string) int {
+	bin, err := buildApp(root)
 	if err != nil {
 		os.Stderr.WriteString("goncini: " + err.Error() + "\n")
 		return 1
@@ -110,26 +111,33 @@ func runCommand(root, appDir string, args []string) int {
 	return runChild(exec.Command(bin, args...))
 }
 
-// buildApp generates the app at root if it is stale, builds it, and returns
-// its binary. go build doesn't link it again when its code is the same.
-func buildApp(root, appDir string) (string, error) {
-	dir, err := cacheDir(root)
-	if err != nil {
-		return "", err
-	}
-//line app.ego:114
-	if stale(root, dir) {
-		if err := generate(root, appDir, false); err != nil {
+// buildApp generates the app at root if it is stale, builds it in the
+// user's cache, and returns its binary. go build doesn't link it again when
+// its code is the same.
+func buildApp(root string) (string, error) {
+	if stale(root) {
+		if err := generate(root, false); err != nil {
 			return "", err
 		}
 	}
-//line app.ego:117
+//line app.ego:118
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+//line app.ego:119
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+//line app.ego:120
+	sum := sha256.Sum256([]byte(abs))
 	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err != nil {
 		return "", err
 	}
-//line app.ego:118
-	bin := filepath.Join(dir, path.Base(modfile.ModulePath(data)))
+//line app.ego:122
+	bin := filepath.Join(cache, "goncini", hex.EncodeToString(sum[:8]), path.Base(modfile.ModulePath(data)))
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	cmd.Dir = root
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -138,55 +146,22 @@ func buildApp(root, appDir string) (string, error) {
 	return bin, nil
 }
 
-// cacheDir is the directory of the app at root's binary, and of the stamp
-// of its last generation, in the user's cache.
-func cacheDir(root string) (string, error) {
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-//line app.ego:131
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
-//line app.ego:132
-	sum := sha256.Sum256([]byte(abs))
-	dir := filepath.Join(cache, "goncini", hex.EncodeToString(sum[:8]))
-	return dir, os.MkdirAll(dir, 0o755)
-}
-
-// stamp is the file whose modification time is when the app was last
-// generated from.
-const stamp = "generated"
-
-// markGenerated records that the app at root was generated from its files
-// as they were at start. It is only a hint, to generate less often: it
-// fails silently.
-func markGenerated(root string, start time.Time) {
-	dir, err := cacheDir(root)
-	if err != nil {
-		return
-	}
-	path := filepath.Join(dir, stamp)
-	if os.WriteFile(path, nil, 0o644) == nil {
-		os.Chtimes(path, start, start)
-	}
-}
-
-// stale reports whether a .ego file of the app at root, or its go.mod,
-// changed since it was last generated.
-func stale(root, cache string) bool {
-	info, err := os.Stat(filepath.Join(cache, stamp))
+// stale reports whether the app at root changed since it was generated: a
+// .ego file or its go.mod is newer than its wiring, or ego generate left the
+// Go of a .ego file that is gone.
+func stale(root string) bool {
+	info, err := os.Stat(filepath.Join(root, appDir, FileName))
 	if err != nil {
 		return true
 	}
 	errStale := errors.New("stale")
 	err = walkModule(root, func(path string, d fs.DirEntry) error {
-		if !strings.HasSuffix(path, ".ego") && d.Name() != "go.mod" {
-			return nil
+		if strings.HasSuffix(path, ".ego") || d.Name() == "go.mod" {
+			if fi, err := d.Info(); err != nil || fi.ModTime().After(info.ModTime()) {
+				return errStale
+			}
 		}
-		if fi, err := d.Info(); err != nil || fi.ModTime().After(info.ModTime()) {
+		if leftover(path) {
 			return errStale
 		}
 		return nil
@@ -195,14 +170,15 @@ func stale(root, cache string) bool {
 }
 
 // walkModule calls fn for each file of the module at root: not those of
-// nested modules, of testdata, or of the directories that the go command
-// ignores, whose names start with . or _.
+// nested modules, of testdata, of var, where the app keeps its data, or of
+// the directories that the go command ignores, whose names start with . or
+// _.
 func walkModule(root string, fn func(path string, d fs.DirEntry) error) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-//line app.ego:181
+//line app.ego:161
 		if !d.IsDir() {
 			return fn(path, d)
 		}
@@ -210,7 +186,7 @@ func walkModule(root string, fn func(path string, d fs.DirEntry) error) error {
 			return nil
 		}
 		name := d.Name()
-		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "testdata" || name == "vendor" || name == tidyDir {
+		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "testdata" || name == "vendor" || name == tidyDir || path == filepath.Join(root, "var") {
 			return filepath.SkipDir
 		}
 		if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {

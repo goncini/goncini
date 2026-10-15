@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,13 +21,13 @@ import (
 )
 
 // TestNew is M5's second and third gates: goncini new writes an app whose
-// tests pass, and which serves, with nothing to edit first; then the makers
-// write a feature, an endpoint, a message, a command and a migration, which
-// generate wires, whose tests pass, and which the OpenAPI document lists;
-// and goncini tidy requires a module that a .ego file imports; goncini serve
-// reloads the app as it changes.
+// tests pass, and which goncini serve serves, with nothing to edit first,
+// and reloads as it changes; then the makers write a feature, an endpoint,
+// a message, a command and a migration, which generate wires, whose tests
+// pass, and which the OpenAPI document lists; goncini tidy requires a
+// module that a .ego file imports; and the Go of a removed .ego file goes.
 //
-//line new_test.ego:28
+//line new_test.ego:27
 func TestNew(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a new app")
@@ -37,38 +36,32 @@ func TestNew(t *testing.T) {
 	if err := newApp("example.com/acme", dir, "../.."); err != nil {
 		panic(err)
 	}
-//line new_test.ego:34
-	cache, err := cacheDir(dir)
-	if err != nil {
-		panic(err)
-	}
-//line new_test.ego:35
-	t.Cleanup(func() { os.RemoveAll(cache) })
+//line new_test.ego:33
 	goTest(t, dir)
-	serves(t, dir)
+	devServes(t, dir)
 
 	if _, err := makeFeature(dir, "notes", ""); err != nil {
 		panic(err)
 	}
-//line new_test.ego:40
+//line new_test.ego:37
 	if _, err := makeEndpoint(dir, "notes", "Archive", "POST", "/notes/{id}/archive"); err != nil {
 		panic(err)
 	}
-//line new_test.ego:41
+//line new_test.ego:38
 	if _, err := makeMessage(dir, "notes", "NoteAdded"); err != nil {
 		panic(err)
 	}
-//line new_test.ego:42
+//line new_test.ego:39
 	if _, err := makeCommand(dir, "notes:prune", `Prunes the "old" notes`); err != nil {
 		panic(err)
 	}
-//line new_test.ego:43
+//line new_test.ego:40
 	if _, err := makeMigration(dir, "add_note_tags"); err != nil {
 		panic(err)
 	}
 	// A maker whose code doesn't compile puts the app back as it was: a
 	// path parameter named body clashes with the input's body.
-//line new_test.ego:46
+//line new_test.ego:43
 	before := snapshot(t, dir)
 	if _, err := makeEndpoint(dir, "notes", "Clash", "POST", "/notes/{body}/clash"); err == nil {
 		t.Error("an endpoint that doesn't compile is made")
@@ -81,41 +74,52 @@ func TestNew(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "notes", "price.ego"), []byte("package notes\n\nimport \"github.com/shopspring/decimal\"\n\nvar free = decimal.Zero\n"), 0o644); err != nil {
 		panic(err)
 	}
-//line new_test.ego:56
+//line new_test.ego:53
 	wiring, err := os.ReadFile(filepath.Join(dir, "app", FileName))
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:57
-	if err := generate(dir, "app", false); err == nil || !strings.Contains(err.Error(), "goncini tidy") {
+//line new_test.ego:54
+	if err := generate(dir, false); err == nil || !strings.Contains(err.Error(), "goncini tidy") {
 		t.Errorf("generate with a module missing: %v", err)
 	}
 	after, err := os.ReadFile(filepath.Join(dir, "app", FileName))
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:61
+//line new_test.ego:58
 	if string(after) != string(wiring) {
 		t.Error("a failed generate changed the wiring")
 	}
-	if err := tidy(dir, "app"); err != nil {
+	if err := tidy(dir); err != nil {
 		panic(err)
 	}
-//line new_test.ego:65
+//line new_test.ego:62
 	gomod, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:66
+//line new_test.ego:63
 	if !regexp.MustCompile(`(?m)^\s+github.com/shopspring/decimal v\S+$`).Match(gomod) {
 		t.Errorf("tidy didn't require github.com/shopspring/decimal directly:\n%s", gomod)
 	}
 	if _, err := os.Stat(filepath.Join(dir, tidyDir)); err == nil {
 		t.Error("tidy left its stand-in")
 	}
+	// ego generate leaves the Go of a .ego file that is removed: generate
+	// removes it.
+	if err := os.Remove(filepath.Join(dir, "notes", "price.ego")); err != nil {
+		panic(err)
+	}
+//line new_test.ego:72
+	if err := generate(dir, true); err == nil || !strings.Contains(err.Error(), "price_ego.go") {
+		t.Errorf("generate -check with the Go of a removed .ego file: %v", err)
+	}
 	goTest(t, dir)
-	devServes(t, dir)
 	bin := build(t, dir)
+	if _, err := os.Stat(filepath.Join(dir, "notes", "price_ego.go")); err == nil {
+		t.Error("the Go of a removed .ego file is left")
+	}
 	for cmd, want := range map[string]string{"openapi:dump": `"/notes/{id}/archive"`, "list": `Prunes the "old" notes`, "debug:container": "NoteAddedHandler"} {
 		run := exec.Command(bin, cmd)
 		run.Dir = dir
@@ -133,7 +137,7 @@ func snapshot(t *testing.T, dir string) string {
 		if err != nil {
 			return err
 		}
-//line new_test.ego:90
+//line new_test.ego:95
 		if d.IsDir() {
 			return nil
 		}
@@ -141,18 +145,18 @@ func snapshot(t *testing.T, dir string) string {
 		if err2 != nil {
 			return err2
 		}
-//line new_test.ego:94
+//line new_test.ego:99
 		rel, err3 := filepath.Rel(dir, path)
 		if err3 != nil {
 			return err3
 		}
-//line new_test.ego:95
+//line new_test.ego:100
 		fmt.Fprintf(&b, "%s %x\n", rel, sha256.Sum256(content))
 		return nil
 	}); err != nil {
 		panic(err)
 	}
-//line new_test.ego:98
+//line new_test.ego:103
 	return b.String()
 }
 
@@ -160,10 +164,11 @@ func snapshot(t *testing.T, dir string) string {
 // its binary.
 func build(t *testing.T, dir string) string {
 	t.Helper()
-	bin, err := buildApp(dir, "app")
+	bin, err := buildApp(dir)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
+	t.Cleanup(func() { os.RemoveAll(filepath.Dir(bin)) })
 	return bin
 }
 
@@ -174,10 +179,10 @@ func devServes(t *testing.T, dir string) {
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:116
+//line new_test.ego:122
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- devServe(ctx, t.Output(), dir, "app", addr) }()
+	go func() { done <- devServe(ctx, t.Output(), dir, addr) }()
 	defer func() {
 		cancel()
 		if err := <-done; err != nil {
@@ -197,7 +202,7 @@ func devServes(t *testing.T, dir string) {
 			if err2 != nil {
 				panic(err2)
 			}
-//line new_test.ego:135
+//line new_test.ego:141
 			res.Body.Close()
 			last = fmt.Sprintf("%d %s", res.StatusCode, body)
 			if res.StatusCode == status && strings.Contains(string(body), want) {
@@ -212,21 +217,21 @@ func devServes(t *testing.T, dir string) {
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:146
+//line new_test.ego:152
 	if err := os.WriteFile(home, append(slices.Clip(src), "\nfunc broken() int { return \"x\" }\n"...), 0o644); err != nil {
 		panic(err)
 	}
-//line new_test.ego:147
+//line new_test.ego:153
 	answers(500, "cannot use")
 	if err := os.WriteFile(home, bytes.ReplaceAll(src, []byte(`Status: "ok"`), []byte(`Status: "fine"`)), 0o644); err != nil {
 		panic(err)
 	}
-//line new_test.ego:149
+//line new_test.ego:155
 	answers(200, `"status":"fine"`)
 	if err := os.WriteFile(home, src, 0o644); err != nil {
 		panic(err)
 	}
-//line new_test.ego:151
+//line new_test.ego:157
 	answers(200, `"status":"ok"`)
 }
 
@@ -240,62 +245,18 @@ func goTest(t *testing.T, dir string) {
 	}
 }
 
-// serves builds the app, serves it, and checks its home.
-func serves(t *testing.T, dir string) {
-	t.Helper()
-	bin := build(t, dir)
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		panic(err)
-	}
-//line new_test.ego:169
-	addr := l.Addr().String()
-	l.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	serve := exec.CommandContext(ctx, bin, "serve", "-addr", addr)
-	serve.Dir = dir // its .env
-	var logs strings.Builder
-	serve.Stdout, serve.Stderr = &logs, &logs
-	if err := serve.Start(); err != nil {
-		panic(err)
-	}
-//line new_test.ego:177
-	defer func() {
-		cancel()
-		serve.Wait()
-	}()
-	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(100 * time.Millisecond) {
-		res, err := http.Get("http://" + addr + "/")
-		if err == nil {
-			body, err2 := io.ReadAll(res.Body)
-			if err2 != nil {
-				panic(err2)
-			}
-//line new_test.ego:185
-			res.Body.Close()
-			if res.StatusCode != 200 || !strings.Contains(string(body), `"status":"ok"`) {
-				t.Errorf("GET /: %d %s", res.StatusCode, body)
-			}
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the app doesn't answer: %v\n%s", err, logs.String())
-		}
-	}
-}
-
 // TestAgents checks that new apps get goncini's AGENTS.md as it is.
 func TestAgents(t *testing.T) {
 	want, err := os.ReadFile("../../AGENTS.md")
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:200
+//line new_test.ego:173
 	got, err := skeleton.ReadFile("skeleton/AGENTS.md")
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:201
+//line new_test.ego:174
 	if string(got) != string(want) {
 		t.Error("skeleton/AGENTS.md isn't AGENTS.md: cp AGENTS.md cmd/goncini/skeleton/")
 	}

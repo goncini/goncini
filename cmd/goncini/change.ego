@@ -86,14 +86,14 @@ func (c *change) apply() (files []string, err error) {
 	// The packages written, but the app's, first: their errors are the ones
 	// to show, not that the app can't import them.
 	for _, dir := range slices.Sorted(maps.Keys(dirs)) {
-		if dir == "app" {
+		if dir == appDir {
 			continue
 		}
 		if out, err := egoGenerate(c.root, "./"+filepath.ToSlash(dir)); err != nil {
 			return nil, fmt.Errorf("%s doesn't compile: %v\n%s", dir, err, out)
 		}
 	}
-	check generate(c.root, "app", false) ""
+	check generate(c.root, false) ""
 	return append(created, edited...), nil
 }
 
@@ -114,7 +114,7 @@ func (c *change) undo(created []string, originals map[string][]byte) error {
 	for rel, b := range originals {
 		errs = append(errs, os.WriteFile(filepath.Join(c.root, rel), b, 0o644))
 	}
-	if err := generate(c.root, "app", false); err != nil {
+	if err := generate(c.root, false); err != nil {
 		errs = append(errs, fmt.Errorf("the app is put back, but generating it fails: %w", err))
 	}
 	return errors.Join(errs...)

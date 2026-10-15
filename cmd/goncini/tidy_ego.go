@@ -28,7 +28,7 @@ const tidyDir = "zz_goncini_tidy"
 // only .ego files import. A package of blank imports stands in for the .ego
 // files while go mod tidy runs; then the app is generated, and tidied again
 // without the stand-in, its generated Go importing what its .ego does.
-func tidy(root, appDir string) (err error) {
+func tidy(root string) (err error) {
 	module, imports, err2 := egoImports(root)
 	if err2 != nil {
 		return err2
@@ -60,7 +60,7 @@ func tidy(root, appDir string) (err error) {
 		return err5
 	}
 //line tidy.ego:46
-	if err6 := generate(root, appDir, false); err6 != nil {
+	if err6 := generate(root, false); err6 != nil {
 		return err6
 	}
 //line tidy.ego:47

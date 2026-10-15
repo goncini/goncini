@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,21 +19,19 @@ import (
 )
 
 // TestNew is M5's second and third gates: goncini new writes an app whose
-// tests pass, and which serves, with nothing to edit first; then the makers
-// write a feature, an endpoint, a message, a command and a migration, which
-// generate wires, whose tests pass, and which the OpenAPI document lists;
-// and goncini tidy requires a module that a .ego file imports; goncini serve
-// reloads the app as it changes.
+// tests pass, and which goncini serve serves, with nothing to edit first,
+// and reloads as it changes; then the makers write a feature, an endpoint,
+// a message, a command and a migration, which generate wires, whose tests
+// pass, and which the OpenAPI document lists; goncini tidy requires a
+// module that a .ego file imports; and the Go of a removed .ego file goes.
 func TestNew(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a new app")
 	}
 	dir := filepath.Join(t.TempDir(), "acme")
 	must newApp("example.com/acme", dir, "../..")
-	cache := must cacheDir(dir)
-	t.Cleanup(func() { os.RemoveAll(cache) })
 	goTest(t, dir)
-	serves(t, dir)
+	devServes(t, dir)
 
 	must makeFeature(dir, "notes", "")
 	must makeEndpoint(dir, "notes", "Archive", "POST", "/notes/{id}/archive")
@@ -54,14 +51,14 @@ func TestNew(t *testing.T) {
 	// goncini tidy, and leaves the wiring as it was; tidy requires it.
 	must os.WriteFile(filepath.Join(dir, "notes", "price.ego"), []byte("package notes\n\nimport \"github.com/shopspring/decimal\"\n\nvar free = decimal.Zero\n"), 0o644)
 	wiring := must os.ReadFile(filepath.Join(dir, "app", FileName))
-	if err := generate(dir, "app", false); err == nil || !strings.Contains(err.Error(), "goncini tidy") {
+	if err := generate(dir, false); err == nil || !strings.Contains(err.Error(), "goncini tidy") {
 		t.Errorf("generate with a module missing: %v", err)
 	}
 	after := must os.ReadFile(filepath.Join(dir, "app", FileName))
 	if string(after) != string(wiring) {
 		t.Error("a failed generate changed the wiring")
 	}
-	must tidy(dir, "app")
+	must tidy(dir)
 	gomod := must os.ReadFile(filepath.Join(dir, "go.mod"))
 	if !regexp.MustCompile(`(?m)^\s+github.com/shopspring/decimal v\S+$`).Match(gomod) {
 		t.Errorf("tidy didn't require github.com/shopspring/decimal directly:\n%s", gomod)
@@ -69,9 +66,17 @@ func TestNew(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, tidyDir)); err == nil {
 		t.Error("tidy left its stand-in")
 	}
+	// ego generate leaves the Go of a .ego file that is removed: generate
+	// removes it.
+	must os.Remove(filepath.Join(dir, "notes", "price.ego"))
+	if err := generate(dir, true); err == nil || !strings.Contains(err.Error(), "price_ego.go") {
+		t.Errorf("generate -check with the Go of a removed .ego file: %v", err)
+	}
 	goTest(t, dir)
-	devServes(t, dir)
 	bin := build(t, dir)
+	if _, err := os.Stat(filepath.Join(dir, "notes", "price_ego.go")); err == nil {
+		t.Error("the Go of a removed .ego file is left")
+	}
 	for cmd, want := range map[string]string{"openapi:dump": `"/notes/{id}/archive"`, "list": `Prunes the "old" notes`, "debug:container": "NoteAddedHandler"} {
 		run := exec.Command(bin, cmd)
 		run.Dir = dir
@@ -102,10 +107,11 @@ func snapshot(t *testing.T, dir string) string {
 // its binary.
 func build(t *testing.T, dir string) string {
 	t.Helper()
-	bin, err := buildApp(dir, "app")
+	bin, err := buildApp(dir)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
+	t.Cleanup(func() { os.RemoveAll(filepath.Dir(bin)) })
 	return bin
 }
 
@@ -115,7 +121,7 @@ func devServes(t *testing.T, dir string) {
 	addr := must freeAddr()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- devServe(ctx, t.Output(), dir, "app", addr) }()
+	go func() { done <- devServe(ctx, t.Output(), dir, addr) }()
 	defer func() {
 		cancel()
 		if err := <-done; err != nil {
@@ -158,39 +164,6 @@ func goTest(t *testing.T, dir string) {
 	test.Dir = dir
 	if out, err := test.CombinedOutput(); err != nil {
 		t.Fatalf("go test: %v\n%s", err, out)
-	}
-}
-
-// serves builds the app, serves it, and checks its home.
-func serves(t *testing.T, dir string) {
-	t.Helper()
-	bin := build(t, dir)
-	l := must net.Listen("tcp", "127.0.0.1:0")
-	addr := l.Addr().String()
-	l.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	serve := exec.CommandContext(ctx, bin, "serve", "-addr", addr)
-	serve.Dir = dir // its .env
-	var logs strings.Builder
-	serve.Stdout, serve.Stderr = &logs, &logs
-	must serve.Start()
-	defer func() {
-		cancel()
-		serve.Wait()
-	}()
-	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(100 * time.Millisecond) {
-		res, err := http.Get("http://" + addr + "/")
-		if err == nil {
-			body := must io.ReadAll(res.Body)
-			res.Body.Close()
-			if res.StatusCode != 200 || !strings.Contains(string(body), `"status":"ok"`) {
-				t.Errorf("GET /: %d %s", res.StatusCode, body)
-			}
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the app doesn't answer: %v\n%s", err, logs.String())
-		}
 	}
 }
 

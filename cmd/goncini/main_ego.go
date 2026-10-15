@@ -64,15 +64,17 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"runtime/debug"
 	"syscall"
+	"text/tabwriter"
 )
 
-//line main.ego:68
+//line main.ego:70
 const usage = `usage: goncini new [-replace dir] module [dir]
-       goncini serve [-addr address] [-app dir]
-       goncini check [-app dir]
-       goncini generate [-check] [-app dir]
-       goncini tidy [-app dir]
+       goncini serve [-addr address]
+       goncini check
+       goncini generate [-check]
+       goncini tidy
        goncini make:feature name [Type]
        goncini make:endpoint [-method GET] [-path /feature/name] feature Name
        goncini make:message feature Name
@@ -80,9 +82,27 @@ const usage = `usage: goncini new [-replace dir] module [dir]
        goncini make:migration name
        goncini command [args]       the app's command, such as list`
 
+// commands are the tool's commands for an app, which goncini list shows
+// after the app's own.
+var commands = [][2]string{
+	{"serve", "Serves the app, instead of its serve, and reloads it when its files change"},
+	{"check", "Checks the generated files, and runs govulncheck"},
+	{"generate", "Generates the Go of the .ego files, and the wiring"},
+	{"tidy", "Runs go mod tidy, for the .ego files too"},
+	{"make:feature", "Makes a feature: store, endpoints, error set, test, migration"},
+	{"make:endpoint", "Makes an endpoint in a feature"},
+	{"make:message", "Makes a message, and its handler"},
+	{"make:command", "Makes a command"},
+	{"make:migration", "Makes a migration"},
+}
+
 func main() {
 	root, mod, inApp := findApp(".")
-	if inApp && delegates(mod) {
+	var tool debug.Module
+	if info, ok := debug.ReadBuildInfo(); ok {
+		tool = info.Main
+	}
+	if inApp && delegates(mod, tool, os.Getenv("GONCINI_TOOL") != "") {
 		os.Exit(delegate(os.Args[1:]))
 	}
 	if !inApp {
@@ -115,24 +135,20 @@ func main() {
 		}
 	case "generate":
 		checkOnly := fs.Bool("check", false, "fail if the generated file isn't up to date, instead of writing it")
-		app := fs.String("app", "app", "the directory of the app's wiring package, from the module's root")
 		args(0, 0)
-		err = generate(root, *app, *checkOnly)
+		err = generate(root, *checkOnly)
 	case "tidy":
-		app := fs.String("app", "app", "the directory of the app's wiring package, from the module's root")
 		args(0, 0)
-		err = tidy(root, *app)
+		err = tidy(root)
 	case "serve":
 		addr := fs.String("addr", "", "the TCP address to serve on, instead of the config's")
-		app := fs.String("app", "app", "the directory of the app's wiring package, from the module's root")
 		args(0, 0)
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		err = devServe(ctx, os.Stderr, root, *app, *addr)
+		err = devServe(ctx, os.Stderr, root, *addr)
 		stop()
 	case "check":
-		app := fs.String("app", "app", "the directory of the app's wiring package, from the module's root")
 		args(0, 0)
-		err = checkApp(os.Stdout, root, *app)
+		err = checkApp(os.Stdout, root)
 	case "make:feature":
 		args(1, 2)
 		files, err = makeFeature(root, fs.Arg(0), fs.Arg(1))
@@ -152,9 +168,20 @@ func main() {
 		args(1, 1)
 		files, err = makeMigration(root, fs.Arg(0))
 	default:
-		if inApp {
-			os.Exit(runCommand(root, "app", os.Args[1:]))
+		if !inApp {
+			fs.Usage()
+			os.Exit(2)
 		}
+		status := runCommand(root, os.Args[1:])
+		if cmd == "list" && status == 0 {
+			fmt.Println("\ngoncini's commands, for developing the app:")
+			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			for _, c := range commands {
+				fmt.Fprintf(tw, "%s\t%s\n", c[0], c[1])
+			}
+			tw.Flush()
+		}
+		os.Exit(status)
 		fs.Usage()
 		os.Exit(2)
 	}
