@@ -73,48 +73,33 @@ func tidy(root, appDir string) (err error) {
 
 // egoImports returns the module's path, and the packages that its .ego
 // files import from other modules, sorted: the standard library's and the
-// module's own aren't. Nested modules, testdata and the directories that
-// the go command ignores aren't read.
+// module's own aren't.
 func egoImports(root string) (string, []string, error) {
 	gomod, err2 := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err2 != nil {
 		return "", nil, err2
 	}
-//line tidy.ego:57
+//line tidy.ego:56
 	module := modfile.ModulePath(gomod)
 	seen := map[string]bool{}
 	fset := token.NewFileSet()
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-//line tidy.ego:62
-		if d.IsDir() {
-			name := d.Name()
-			if path != root && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "testdata" || name == "vendor" || name == tidyDir) {
-				return filepath.SkipDir
-			}
-			if _, err := os.Stat(filepath.Join(path, "go.mod")); path != root && err == nil {
-				return filepath.SkipDir // another module
-			}
-			return nil
-		}
+	err := walkModule(root, func(path string, d fs.DirEntry) error {
 		if !strings.HasSuffix(path, ".ego") {
 			return nil
 		}
 		// The package clause and the imports are Go: the dialect starts
 		// after them.
-		f, err2 := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-		if err2 != nil {
-			return err2
+		f, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if err != nil {
+			return err
 		}
-//line tidy.ego:78
+//line tidy.ego:66
 		for _, spec := range f.Imports {
-			p, err3 := strconv.Unquote(spec.Path.Value)
-			if err3 != nil {
-				return err3
+			p, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				return err
 			}
-//line tidy.ego:80
+//line tidy.ego:68
 			first, _, _ := strings.Cut(p, "/")
 			if strings.Contains(first, ".") && p != module && !strings.HasPrefix(p, module+"/") {
 				seen[p] = true
@@ -125,7 +110,7 @@ func egoImports(root string) (string, []string, error) {
 	if err != nil {
 		return "", nil, err
 	}
-//line tidy.ego:88
+//line tidy.ego:76
 	imports := slices.Sorted(maps.Keys(seen))
 	return module, imports, nil
 }

@@ -155,6 +155,11 @@ func TestServe(t *testing.T) {
 	if err := goncini.Run(ctx, &out, goncini.NewEnv("dev", nil), config{}, app, nil); err == nil || err.Error() != "goncini: the app isn't ready to serve: the database is down" {
 		t.Errorf("serve with a failing check: %v", err)
 	}
+	// goncini serve asks for the address, without the checks.
+	out.Reset()
+	if err := goncini.Run(ctx, &out, goncini.NewEnv("dev", nil), config{}, app, []string{"serve", "-print-addr"}); err != nil || out.String() != "127.0.0.1:0\n" {
+		t.Errorf("serve -print-addr: %v, %q", err, out.String())
+	}
 	for _, args := range [][]string{{"serve", "-port", "1"}, {"serve", "now"}} {
 		if err := goncini.Run(ctx, &out, goncini.NewEnv("dev", nil), config{}, app, args); !console.IsUsage(err) {
 			t.Errorf("%q: %v", args, err)

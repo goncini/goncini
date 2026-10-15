@@ -50,25 +50,13 @@ func tidy(root, appDir string) (err error) {
 
 // egoImports returns the module's path, and the packages that its .ego
 // files import from other modules, sorted: the standard library's and the
-// module's own aren't. Nested modules, testdata and the directories that
-// the go command ignores aren't read.
+// module's own aren't.
 func egoImports(root string) (string, []string, error) {
 	gomod := check os.ReadFile(filepath.Join(root, "go.mod")) ""
 	module := modfile.ModulePath(gomod)
 	seen := map[string]bool{}
 	fset := token.NewFileSet()
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		check err ""
-		if d.IsDir() {
-			name := d.Name()
-			if path != root && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "testdata" || name == "vendor" || name == tidyDir) {
-				return filepath.SkipDir
-			}
-			if _, err := os.Stat(filepath.Join(path, "go.mod")); path != root && err == nil {
-				return filepath.SkipDir // another module
-			}
-			return nil
-		}
+	err := walkModule(root, func(path string, d fs.DirEntry) error {
 		if !strings.HasSuffix(path, ".ego") {
 			return nil
 		}

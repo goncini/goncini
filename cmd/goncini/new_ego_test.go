@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -23,9 +25,10 @@ import (
 // tests pass, and which serves, with nothing to edit first; then the makers
 // write a feature, an endpoint, a message, a command and a migration, which
 // generate wires, whose tests pass, and which the OpenAPI document lists;
-// and goncini tidy requires a module that a .ego file imports.
+// and goncini tidy requires a module that a .ego file imports; goncini serve
+// reloads the app as it changes.
 //
-//line new_test.ego:25
+//line new_test.ego:28
 func TestNew(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a new app")
@@ -34,32 +37,38 @@ func TestNew(t *testing.T) {
 	if err := newApp("example.com/acme", dir, "../.."); err != nil {
 		panic(err)
 	}
-//line new_test.ego:31
+//line new_test.ego:34
+	cache, err := cacheDir(dir)
+	if err != nil {
+		panic(err)
+	}
+//line new_test.ego:35
+	t.Cleanup(func() { os.RemoveAll(cache) })
 	goTest(t, dir)
 	serves(t, dir)
 
 	if _, err := makeFeature(dir, "notes", ""); err != nil {
 		panic(err)
 	}
-//line new_test.ego:35
+//line new_test.ego:40
 	if _, err := makeEndpoint(dir, "notes", "Archive", "POST", "/notes/{id}/archive"); err != nil {
 		panic(err)
 	}
-//line new_test.ego:36
+//line new_test.ego:41
 	if _, err := makeMessage(dir, "notes", "NoteAdded"); err != nil {
 		panic(err)
 	}
-//line new_test.ego:37
+//line new_test.ego:42
 	if _, err := makeCommand(dir, "notes:prune", `Prunes the "old" notes`); err != nil {
 		panic(err)
 	}
-//line new_test.ego:38
+//line new_test.ego:43
 	if _, err := makeMigration(dir, "add_note_tags"); err != nil {
 		panic(err)
 	}
 	// A maker whose code doesn't compile puts the app back as it was: a
 	// path parameter named body clashes with the input's body.
-//line new_test.ego:41
+//line new_test.ego:46
 	before := snapshot(t, dir)
 	if _, err := makeEndpoint(dir, "notes", "Clash", "POST", "/notes/{body}/clash"); err == nil {
 		t.Error("an endpoint that doesn't compile is made")
@@ -72,12 +81,12 @@ func TestNew(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "notes", "price.ego"), []byte("package notes\n\nimport \"github.com/shopspring/decimal\"\n\nvar free = decimal.Zero\n"), 0o644); err != nil {
 		panic(err)
 	}
-//line new_test.ego:51
+//line new_test.ego:56
 	wiring, err := os.ReadFile(filepath.Join(dir, "app", FileName))
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:52
+//line new_test.ego:57
 	if err := generate(dir, "app", false); err == nil || !strings.Contains(err.Error(), "goncini tidy") {
 		t.Errorf("generate with a module missing: %v", err)
 	}
@@ -85,19 +94,19 @@ func TestNew(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:56
+//line new_test.ego:61
 	if string(after) != string(wiring) {
 		t.Error("a failed generate changed the wiring")
 	}
 	if err := tidy(dir, "app"); err != nil {
 		panic(err)
 	}
-//line new_test.ego:60
+//line new_test.ego:65
 	gomod, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:61
+//line new_test.ego:66
 	if !regexp.MustCompile(`(?m)^\s+github.com/shopspring/decimal v\S+$`).Match(gomod) {
 		t.Errorf("tidy didn't require github.com/shopspring/decimal directly:\n%s", gomod)
 	}
@@ -105,6 +114,7 @@ func TestNew(t *testing.T) {
 		t.Error("tidy left its stand-in")
 	}
 	goTest(t, dir)
+	devServes(t, dir)
 	bin := build(t, dir)
 	for cmd, want := range map[string]string{"openapi:dump": `"/notes/{id}/archive"`, "list": `Prunes the "old" notes`, "debug:container": "NoteAddedHandler"} {
 		run := exec.Command(bin, cmd)
@@ -123,7 +133,7 @@ func snapshot(t *testing.T, dir string) string {
 		if err != nil {
 			return err
 		}
-//line new_test.ego:84
+//line new_test.ego:90
 		if d.IsDir() {
 			return nil
 		}
@@ -131,31 +141,93 @@ func snapshot(t *testing.T, dir string) string {
 		if err2 != nil {
 			return err2
 		}
-//line new_test.ego:88
+//line new_test.ego:94
 		rel, err3 := filepath.Rel(dir, path)
 		if err3 != nil {
 			return err3
 		}
-//line new_test.ego:89
+//line new_test.ego:95
 		fmt.Fprintf(&b, "%s %x\n", rel, sha256.Sum256(content))
 		return nil
 	}); err != nil {
 		panic(err)
 	}
-//line new_test.ego:92
+//line new_test.ego:98
 	return b.String()
 }
 
-// build builds the app, and returns its binary.
+// build builds the app, as its commands run through goncini, and returns
+// its binary.
 func build(t *testing.T, dir string) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "acme")
-	cmd := exec.Command("go", "build", "-o", bin, ".")
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("go build: %v\n%s", err, out)
+	bin, err := buildApp(dir, "app")
+	if err != nil {
+		t.Fatalf("build: %v", err)
 	}
 	return bin
+}
+
+// devServes serves the app with goncini serve, breaks its code, and fixes
+// it: the server answers what doesn't compile, then the app as it changed.
+func devServes(t *testing.T, dir string) {
+	addr, err := freeAddr()
+	if err != nil {
+		panic(err)
+	}
+//line new_test.ego:116
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- devServe(ctx, t.Output(), dir, "app", addr) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("goncini serve: %v", err)
+		}
+	}()
+	answers := func(status int, want string) {
+		t.Helper()
+		var last string
+		for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+			res, err := http.Get("http://" + addr + "/")
+			if err != nil {
+				last = err.Error()
+				continue
+			}
+			body, err2 := io.ReadAll(res.Body)
+			if err2 != nil {
+				panic(err2)
+			}
+//line new_test.ego:135
+			res.Body.Close()
+			last = fmt.Sprintf("%d %s", res.StatusCode, body)
+			if res.StatusCode == status && strings.Contains(string(body), want) {
+				return
+			}
+		}
+		t.Fatalf("GET / doesn't answer %d with %s: %s", status, want, last)
+	}
+	answers(200, `"status":"ok"`)
+	home := filepath.Join(dir, "home", "home.ego")
+	src, err := os.ReadFile(home)
+	if err != nil {
+		panic(err)
+	}
+//line new_test.ego:146
+	if err := os.WriteFile(home, append(slices.Clip(src), "\nfunc broken() int { return \"x\" }\n"...), 0o644); err != nil {
+		panic(err)
+	}
+//line new_test.ego:147
+	answers(500, "cannot use")
+	if err := os.WriteFile(home, bytes.ReplaceAll(src, []byte(`Status: "ok"`), []byte(`Status: "fine"`)), 0o644); err != nil {
+		panic(err)
+	}
+//line new_test.ego:149
+	answers(200, `"status":"fine"`)
+	if err := os.WriteFile(home, src, 0o644); err != nil {
+		panic(err)
+	}
+//line new_test.ego:151
+	answers(200, `"status":"ok"`)
 }
 
 // goTest runs the app's tests.
@@ -176,7 +248,7 @@ func serves(t *testing.T, dir string) {
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:122
+//line new_test.ego:169
 	addr := l.Addr().String()
 	l.Close()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -187,7 +259,7 @@ func serves(t *testing.T, dir string) {
 	if err := serve.Start(); err != nil {
 		panic(err)
 	}
-//line new_test.ego:130
+//line new_test.ego:177
 	defer func() {
 		cancel()
 		serve.Wait()
@@ -199,7 +271,7 @@ func serves(t *testing.T, dir string) {
 			if err2 != nil {
 				panic(err2)
 			}
-//line new_test.ego:138
+//line new_test.ego:185
 			res.Body.Close()
 			if res.StatusCode != 200 || !strings.Contains(string(body), `"status":"ok"`) {
 				t.Errorf("GET /: %d %s", res.StatusCode, body)
@@ -218,12 +290,12 @@ func TestAgents(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:153
+//line new_test.ego:200
 	got, err := skeleton.ReadFile("skeleton/AGENTS.md")
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:154
+//line new_test.ego:201
 	if string(got) != string(want) {
 		t.Error("skeleton/AGENTS.md isn't AGENTS.md: cp AGENTS.md cmd/goncini/skeleton/")
 	}

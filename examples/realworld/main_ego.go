@@ -3,8 +3,8 @@
 // Command realworld is the RealWorld "Conduit" API, built with goncini:
 // https://github.com/gothinkster/realworld.
 //
-//	go run . db:migrate
-//	go run .
+//	go tool goncini db:migrate
+//	go tool goncini serve
 //	curl localhost:8080/api/articles
 package main
 

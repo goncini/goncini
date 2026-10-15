@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -47,10 +48,25 @@ func generate(root, appDir string, checkOnly bool) (err error) {
 		}
 		return nil
 	}
+	start := time.Now()
+	old, rerr := os.ReadFile(path)
+	// Most changes, such as an endpoint's code, leave the wiring as it is:
+	// when the app compiles with it, and it is what would be written, the
+	// rest is not needed.
+	if rerr == nil {
+		if _, err := egoGenerate(root, "./..."); err == nil {
+			if services, err := describe(root, appDir); err == nil {
+				if code, err := autoconfigure(root, appDir, services); err == nil && bytes.Equal(code, old) {
+					markGenerated(root, start)
+					return nil
+				}
+			}
+		}
+	}
 	// A stub, until the app's packages are loaded: the file that a former
 	// version of goncini, or a former run, wrote may not compile. If
 	// generating fails, the file goes back as it was.
-	if old, rerr := os.ReadFile(path); rerr == nil {
+	if rerr == nil {
 		defer func() {
 			if err != nil {
 				os.WriteFile(path, old, 0o644)
@@ -75,6 +91,7 @@ func generate(root, appDir string, checkOnly bool) (err error) {
 	services := check describe(root, appDir) ""
 	code = check autoconfigure(root, appDir, services) ""
 	check os.WriteFile(path, code, 0o644) ""
+	markGenerated(root, start)
 	return nil
 }
 

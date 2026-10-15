@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+### The goncini tool, as the symfony command
+
+- **The app's commands:** in an app, `go tool goncini list`,
+  `debug:router`, `db:migrate` and the others run the app's commands.
+  - It runs them from a binary in the user's cache, which `go build` links
+    again only when the code changed, unlike `go run .`.
+  - It generates the app first when a `.ego` file or `go.mod` changed
+    since the last generation, so a command never runs stale Go.
+  - It works from any directory of the app.
+- **`goncini serve`:** serves the app while it is developed, as `symfony
+  server:start` does.
+  - It listens on the config's address, which the app's `serve
+    -print-addr` reports, in front of the app.
+  - When the app's files change (its `.ego`, Go, SQL, `go.mod`, `.env` and
+    embedded templates, but not its tests), it generates, rebuilds and
+    restarts the app.
+  - Requests made meanwhile wait for the app.
+  - What doesn't compile, or why the app exited, is the answer until it is
+    fixed: a problem, or text to a browser.
+- **`goncini check`:** as `symfony check:security`, it checks that the Go
+  of the `.ego` files and the wiring are up to date, and runs govulncheck
+  v1.9.0.
+- **`goncini` in the path:** installed with `go install`, it runs the app's
+  own, `go tool goncini`, when the app requires another version or replaces
+  goncini, so the code it generates is for the goncini the app builds with.
+- **Faster `goncini generate`:** it first runs `ego generate` alone, and
+  stops there when the wiring is already what it would write, as after most
+  edits: about 3s instead of 6 on a new app.
+- **Docs:** AGENTS.md, the skeleton and the examples use `go tool goncini`
+  instead of `go run .`.
+
 ## v0.1.0 (2026-10-13)
 
 The first release: every module is tagged v0.1.0, the root module as

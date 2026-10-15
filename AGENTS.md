@@ -8,17 +8,26 @@ goncini's repository, is a complete one.
 ## Commands
 
 ```bash
-go tool goncini generate     # after editing: runs ego generate, and writes app/autoconfigured_gen.go
-go tool goncini tidy         # go mod tidy for .ego files: after importing a new module in one
+go tool goncini serve              # serves the app, and reloads it when its files change, until stopped
+go tool goncini generate           # after editing: runs ego generate, and writes app/autoconfigured_gen.go
+go tool goncini tidy               # go mod tidy for .ego files: after importing a new module in one
+go tool goncini check              # the generated files are up to date, and govulncheck finds nothing
 go test ./...
-go run . list                # the app's commands; go run . serves it
-go run . db:migrate          # applies the migrations
-go run . debug:router        # lists the routes
-go run . debug:container     # lists the services, with their providers and what they need
-go run . openapi:dump        # prints the API's OpenAPI document
-go run . messenger:consume   # handles the queued messages, until stopped
-go run . scheduler:run       # runs the scheduled tasks, until stopped
+go tool goncini list               # the app's commands
+go tool goncini db:migrate         # applies the migrations
+go tool goncini debug:router       # lists the routes
+go tool goncini debug:container    # lists the services, with their providers and what they need
+go tool goncini openapi:dump       # prints the API's OpenAPI document
+go tool goncini messenger:consume  # handles the queued messages, until stopped
+go tool goncini scheduler:run      # runs the scheduled tasks, until stopped
 ```
+
+`go tool goncini` runs the app's commands, such as `list`, from a binary
+that it builds again when the app's code changed, after generating the app
+when a `.ego` file did. `goncini serve` answers what went wrong, such as
+what doesn't compile, until it is fixed. `go install
+github.com/goncini/goncini/cmd/goncini@latest` puts a `goncini` in the
+path, which runs the app's own: `goncini debug:router`.
 
 The makers write `.ego` files in the app's layout, add their services to
 `app/services.ego`, and run `goncini generate`; what doesn't compile is
@@ -34,10 +43,11 @@ go tool goncini make:migration add_note_tags
 ```
 
 Edit `.ego` files only, never the generated `_ego.go`, `layers_ego.go` or
-`autoconfigured_gen.go`, and run `go tool goncini generate` before building
-or testing. `go mod tidy` doesn't read `.ego` files: run `go tool goncini
-tidy` instead, which requires the modules they import. It runs `go tool ego generate ./...`, which writes `x_ego.go`
-next to each `x.ego`, and finds the app's services by their types.
+`autoconfigured_gen.go`, and run `go tool goncini generate` before
+testing. It runs `go tool ego generate ./...`, which writes `x_ego.go` next
+to each `x.ego`, and finds the app's services by their types. `go mod tidy`
+doesn't read `.ego` files: run `go tool goncini tidy` instead, which
+requires the modules they import.
 
 ## Layout
 
@@ -273,7 +283,7 @@ func (s *Subscriber) Subscribe(d *event.Dispatcher) {
 ```
 
 Work that can happen after the response is a message, which a worker
-(`go run . messenger:consume`) handles, with retries; a message can be
+(`go tool goncini messenger:consume`) handles, with retries; a message can be
 handled twice, so its handler must not do its work twice:
 
 ```go
@@ -288,7 +298,7 @@ func (n *Notifications) Handlers(b *messenger.Bus) {
 check messenger.Dispatch(ctx, bus, NotifyFollowers{Slug: slug}) ""
 ```
 
-Recurring work is a scheduled task, run by `go run . scheduler:run`: with
+Recurring work is a scheduled task, run by `go tool goncini scheduler:run`: with
 a lock store that the app's instances share, such as `lock.SQL`, once per
 tick across them, and never twice at once; without, in each instance. The
 ticks missed while no scheduler runs are skipped, and `scheduler.Tick(ctx)`
@@ -341,7 +351,7 @@ changes.
 
 With `profiler.Layer` in `Services` and `c.Profiler.Enabled = true` in
 `config/dev.ego`, each request's spans, queries and logs are kept:
-`/_profiler` lists them, and `go run . debug:requests [id]` prints them.
+`/_profiler` lists them, and `go tool goncini debug:requests [id]` prints them.
 
 ## Wiring
 

@@ -103,7 +103,7 @@ func ProjectDir() string {
 //   - list and help, which describe the commands.
 func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, args []string) error {
 	commands := []console.Command{
-		serveCommand{app.Server, app.Checks, app.Background},
+		serveCommand{app.Server, app.Checks, app.Background, new(bool)},
 		console.New("debug:router", "Lists the routes", (ctx context.Context, out io.Writer, args []string) => routing.WriteTable(out, app.Router.List())),
 		console.New("openapi:dump", "Prints the OpenAPI document", (ctx context.Context, out io.Writer, args []string) => writeDocument(out, app.OpenAPI)),
 		console.New("debug:event-dispatcher", "Lists the listeners of each event", (ctx context.Context, out io.Writer, args []string) => event.WriteTable(out, app.Events.List())),
@@ -125,6 +125,7 @@ type serveCommand struct {
 	server     *httpkernel.Server
 	checks     []Check
 	background []Background
+	printAddr  *bool
 }
 
 func (serveCommand) Name() string    { return "serve" }
@@ -132,11 +133,16 @@ func (serveCommand) Summary() string { return "Serves the app over HTTP" }
 
 func (c serveCommand) Flags(fs *flag.FlagSet) {
 	fs.StringVar(&c.server.Addr, "addr", c.server.Addr, "the TCP address to listen on, instead of the config's")
+	fs.BoolVar(c.printAddr, "print-addr", false, "print the address it would listen on, and exit: for goncini serve, which serves the app there")
 }
 
 func (c serveCommand) Run(ctx context.Context, out io.Writer, args []string) error {
 	if len(args) > 0 {
 		return console.Usage{Command: "serve", Reason: f"unexpected argument {args[0]:q}"}
+	}
+	if *c.printAddr {
+		_, err := fmt.Fprintln(out, c.server.Addr)
+		return err
 	}
 	for _, check := range c.checks {
 		if err := check(ctx); err != nil {

@@ -93,8 +93,9 @@ Handlers build URLs from route names, escaped:
 `/articles/caf%C3%A9`.
 
 The full example is [examples/articles](examples/articles), an app in
-goncini's layout: in its directory, `go run .` serves it, `go run . list`
-lists its commands, and `go run . debug:router` its routes.
+goncini's layout: in its directory, `go tool goncini serve` serves it,
+and reloads it when its files change, `go tool goncini list` lists its
+commands, and `go tool goncini debug:router` its routes.
 
 ## Developing
 

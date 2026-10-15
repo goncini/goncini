@@ -2,9 +2,26 @@
 //
 //	go run github.com/goncini/goncini/cmd/goncini@latest new example.com/acme
 //
-// In an app, the makers write .ego files in its layout, add their services
-// to app/services.ego, and wire them with goncini generate; if what they
-// wrote doesn't compile, they put the app back as it was:
+// In an app, it runs the app's commands, after generating the app if a .ego
+// file changed, and building it if its code did: from a binary, which it
+// links again only when the code changed, unlike go run.
+//
+//	go tool goncini list            # the app's commands
+//	go tool goncini debug:router    # its routes
+//	go tool goncini db:migrate      # applies its migrations
+//
+// goncini serve serves the app while it is developed: it generates, builds
+// and restarts the app when its files change, and answers what went wrong,
+// such as what doesn't compile, while it doesn't build or run. goncini check
+// checks that the generated files are up to date, and that no known
+// vulnerability is in the code the app calls, with govulncheck:
+//
+//	go tool goncini serve            # on the address of the app's config
+//	go tool goncini check
+//
+// The makers write .ego files in its layout, add their services to
+// app/services.ego, and wire them with goncini generate; if what they wrote
+// doesn't compile, they put the app back as it was:
 //
 //	go tool goncini make:feature notes          # a feature: store, endpoints, test, migration
 //	go tool goncini make:feature people Person  # when the type isn't the singular without its s
@@ -28,26 +45,46 @@
 // An app requires it with a tool directive:
 //
 //	tool github.com/goncini/goncini/cmd/goncini
+//
+// Installed with go install, as goncini, it runs the app's own, of the
+// version that the app requires, as the symfony command runs the app's
+// console:
+//
+//	go install github.com/goncini/goncini/cmd/goncini@latest
+//	goncini debug:router
 package main
 
 import (
 	"cmp"
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path"
+	"syscall"
 )
 
 const usage = `usage: goncini new [-replace dir] module [dir]
+       goncini serve [-addr address] [-app dir]
+       goncini check [-app dir]
        goncini generate [-check] [-app dir]
        goncini tidy [-app dir]
        goncini make:feature name [Type]
        goncini make:endpoint [-method GET] [-path /feature/name] feature Name
        goncini make:message feature Name
        goncini make:command -summary text feature:name
-       goncini make:migration name`
+       goncini make:migration name
+       goncini command [args]       the app's command, such as list`
 
 func main() {
+	root, mod, inApp := findApp(".")
+	if inApp && delegates(mod) {
+		os.Exit(delegate(os.Args[1:]))
+	}
+	if !inApp {
+		root = "."
+	}
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
@@ -71,36 +108,50 @@ func main() {
 		module := fs.Arg(0)
 		dir := cmp.Or(fs.Arg(1), path.Base(module))
 		if err = newApp(module, dir, *replace); err == nil {
-			fmt.Printf("%s is ready: cd %s, then go test ./..., and go run . to serve it.\n", module, dir)
+			fmt.Printf("%s is ready: cd %s, then go test ./..., and go tool goncini serve.\n", module, dir)
 		}
 	case "generate":
 		checkOnly := fs.Bool("check", false, "fail if the generated file isn't up to date, instead of writing it")
 		app := fs.String("app", "app", "the directory of the app's wiring package, from the module's root")
 		args(0, 0)
-		err = generate(".", *app, *checkOnly)
+		err = generate(root, *app, *checkOnly)
 	case "tidy":
 		app := fs.String("app", "app", "the directory of the app's wiring package, from the module's root")
 		args(0, 0)
-		err = tidy(".", *app)
+		err = tidy(root, *app)
+	case "serve":
+		addr := fs.String("addr", "", "the TCP address to serve on, instead of the config's")
+		app := fs.String("app", "app", "the directory of the app's wiring package, from the module's root")
+		args(0, 0)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		err = devServe(ctx, os.Stderr, root, *app, *addr)
+		stop()
+	case "check":
+		app := fs.String("app", "app", "the directory of the app's wiring package, from the module's root")
+		args(0, 0)
+		err = checkApp(os.Stdout, root, *app)
 	case "make:feature":
 		args(1, 2)
-		files, err = makeFeature(".", fs.Arg(0), fs.Arg(1))
+		files, err = makeFeature(root, fs.Arg(0), fs.Arg(1))
 	case "make:endpoint":
 		method := fs.String("method", "GET", "the endpoint's HTTP method")
 		at := fs.String("path", "", "the endpoint's path; /feature/name by default")
 		args(2, 2)
-		files, err = makeEndpoint(".", fs.Arg(0), fs.Arg(1), *method, *at)
+		files, err = makeEndpoint(root, fs.Arg(0), fs.Arg(1), *method, *at)
 	case "make:message":
 		args(2, 2)
-		files, err = makeMessage(".", fs.Arg(0), fs.Arg(1))
+		files, err = makeMessage(root, fs.Arg(0), fs.Arg(1))
 	case "make:command":
 		summary := fs.String("summary", "", "what the command does, in a line, for the list")
 		args(1, 1)
-		files, err = makeCommand(".", fs.Arg(0), *summary)
+		files, err = makeCommand(root, fs.Arg(0), *summary)
 	case "make:migration":
 		args(1, 1)
-		files, err = makeMigration(".", fs.Arg(0))
+		files, err = makeMigration(root, fs.Arg(0))
 	default:
+		if inApp {
+			os.Exit(runCommand(root, "app", os.Args[1:]))
+		}
 		fs.Usage()
 		os.Exit(2)
 	}

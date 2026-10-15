@@ -3,10 +3,10 @@
 // endpoints, validation, named routes, config as code, and a server that
 // shuts down gracefully.
 //
-//	go run .
+//	go tool goncini serve
 //	curl -i localhost:8080/articles -H 'Content-Type: application/json' -d '{"title":"Hello","body":"First post"}'
 //
-// go run . list lists the commands, such as debug:router.
+// go tool goncini list lists the commands, such as debug:router.
 package main
 
 import (

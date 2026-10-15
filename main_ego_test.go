@@ -183,6 +183,11 @@ func TestServe(t *testing.T) {
 	if err := goncini.Run(ctx, &out, goncini.NewEnv("dev", nil), config{}, app, nil); err == nil || err.Error() != "goncini: the app isn't ready to serve: the database is down" {
 		t.Errorf("serve with a failing check: %v", err)
 	}
+	// goncini serve asks for the address, without the checks.
+	out.Reset()
+	if err := goncini.Run(ctx, &out, goncini.NewEnv("dev", nil), config{}, app, []string{"serve", "-print-addr"}); err != nil || out.String() != "127.0.0.1:0\n" {
+		t.Errorf("serve -print-addr: %v, %q", err, out.String())
+	}
 	for _, args := range [][]string{{"serve", "-port", "1"}, {"serve", "now"}} {
 		if err := goncini.Run(ctx, &out, goncini.NewEnv("dev", nil), config{}, app, args); !console.IsUsage(err) {
 			t.Errorf("%q: %v", args, err)
@@ -217,7 +222,7 @@ func TestNewKernel(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:187
+//line main_test.ego:192
 	rec := httptest.NewRecorder()
 	k.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://evil.example/", nil))
 	if rec.Code != 400 || rec.Header().Get("X-App") != "" {
@@ -243,7 +248,7 @@ func TestDebugContainerWithoutServices(t *testing.T) {
 	if err := goncini.Run(context.Background(), &out, goncini.NewEnv("dev", nil), config{}, app, []string{"debug:container"}); err != nil {
 		panic(err)
 	}
-//line main_test.ego:210
+//line main_test.ego:215
 	if out.String() != "no services are described: run goncini generate\n" {
 		t.Errorf("debug:container: %q", out.String())
 	}
@@ -261,7 +266,7 @@ func TestDebugConfigMasksStringsOnly(t *testing.T) {
 	if err := goncini.Run(context.Background(), &out, env, cfg, build(goncini.HTTP{}, nil, nil), []string{"debug:config"}); err != nil {
 		panic(err)
 	}
-//line main_test.ego:225
+//line main_test.ego:230
 	if want := "{\n  \"Limit\": 51,\n  \"URL\": \"db://u:******@h\"\n}\n"; out.String() != want {
 		t.Errorf("debug:config:\n%s\nwant:\n%s", out.String(), want)
 	}
@@ -289,12 +294,12 @@ func TestLoggerOnAnotherHandler(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:249
+//line main_test.ego:254
 	sid, err := trace.SpanIDFromHex("0102030405060708")
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:250
+//line main_test.ego:255
 	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid}))
 	goncini.NewLogger(h).InfoContext(ctx, "hello", "k", "v")
 	if h.attrs["k"] != "v" || h.attrs["trace_id"] != tid.String() || h.attrs["span_id"] != sid.String() {

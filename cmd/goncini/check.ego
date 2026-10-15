@@ -1,0 +1,40 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+)
+
+// govulncheck is the version of govulncheck that goncini check runs.
+const govulncheck = "golang.org/x/vuln/cmd/govulncheck@v1.9.0"
+
+// checkApp checks the app at root, as symfony check:security does, and
+// writes what it finds to out: that the Go of its .ego files and its wiring
+// are what generating would write, and that no known vulnerability is in
+// the code it calls, which govulncheck reports.
+func checkApp(out io.Writer, root, appDir string) error {
+	var failed []string
+	report := (what string, err error) => {
+		if err != nil {
+			var lines []string
+			for line := range strings.Lines(err.Error()) {
+				if !strings.HasPrefix(line, "go: downloading ") {
+					lines = append(lines, line)
+				}
+			}
+			fmt.Fprintf(out, "FAIL %s\n%s\n", what, strings.TrimSpace(strings.Join(lines, "")))
+			failed = append(failed, what)
+		} else {
+			fmt.Fprintf(out, "ok   %s\n", what)
+		}
+	}
+	report("the Go of the .ego files is up to date", run(root, "go", "tool", "ego", "generate", "-check", "./..."))
+	report("the wiring is up to date", generate(root, appDir, true))
+	report("no known vulnerability in the code the app calls", run(root, "go", "run", govulncheck, "./..."))
+	if len(failed) > 0 {
+		return errors.New("failed: " + strings.Join(failed, "; "))
+	}
+	return nil
+}

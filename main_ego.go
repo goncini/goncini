@@ -122,7 +122,7 @@ func ProjectDir() string {
 //   - list and help, which describe the commands.
 func Run[C any](ctx context.Context, out io.Writer, env *Env, cfg C, app *App, args []string) error {
 	commands := []console.Command{
-		serveCommand{app.Server, app.Checks, app.Background},
+		serveCommand{app.Server, app.Checks, app.Background, new(bool)},
 		console.New("debug:router", "Lists the routes", func(ctx context.Context, out io.Writer, args []string) error {
 			return routing.WriteTable(out, app.Router.List())
 		}),
@@ -152,6 +152,7 @@ type serveCommand struct {
 	server     *httpkernel.Server
 	checks     []Check
 	background []Background
+	printAddr  *bool
 }
 
 func (serveCommand) Name() string    { return "serve" }
@@ -159,11 +160,16 @@ func (serveCommand) Summary() string { return "Serves the app over HTTP" }
 
 func (c serveCommand) Flags(fs *flag.FlagSet) {
 	fs.StringVar(&c.server.Addr, "addr", c.server.Addr, "the TCP address to listen on, instead of the config's")
+	fs.BoolVar(c.printAddr, "print-addr", false, "print the address it would listen on, and exit: for goncini serve, which serves the app there")
 }
 
 func (c serveCommand) Run(ctx context.Context, out io.Writer, args []string) error {
 	if len(args) > 0 {
 		return console.Usage{Command: "serve", Reason: fmt.Sprintf("unexpected argument %q", args[0])}
+	}
+	if *c.printAddr {
+		_, err := fmt.Fprintln(out, c.server.Addr)
+		return err
 	}
 	for _, check := range c.checks {
 		if err := check(ctx); err != nil {
@@ -203,7 +209,7 @@ func writeConfig(out io.Writer, env *Env, cfg any) error {
 	if err != nil {
 		return err
 	}
-//line main.ego:176
+//line main.ego:182
 	dec := jsontext.NewDecoder(bytes.NewReader(b))
 	enc := jsontext.NewEncoder(out, jsontext.WithIndent("  "))
 	for {
@@ -214,7 +220,7 @@ func writeConfig(out io.Writer, env *Env, cfg any) error {
 		if err != nil {
 			return err
 		}
-//line main.ego:184
+//line main.ego:190
 		if tok.Kind() == '"' {
 			s := tok.String()
 			for _, secret := range env.read {

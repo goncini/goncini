@@ -1,8 +1,10 @@
 // Command <%.Name%> is an API built with goncini.
 //
-//	go run .              # serves it on :8080
-//	go run . list         # its commands
-//	go run . db:migrate   # applies the migrations
+//	go tool goncini serve        # serves it on :8080, and reloads it when its files change
+//	go tool goncini list         # its commands
+//	go tool goncini db:migrate   # applies the migrations
+//
+// In production, it is a binary: go build, then ./<%.Name%> serves it.
 package main
 
 import (
