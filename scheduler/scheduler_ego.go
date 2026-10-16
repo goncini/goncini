@@ -122,6 +122,7 @@ func (s *Scheduler) Background(ctx context.Context) error {
 func (s *Scheduler) loop(ctx context.Context, t task) {
 	v := s.Logger
 	if v == nil {
+//line scheduler.ego:119
 		v = slog.Default()
 	}
 	log := (v).With(slog.String("task", t.name))
@@ -187,8 +188,11 @@ func (s *Scheduler) runOnce(ctx context.Context, log *slog.Logger, t task, tick 
 	running := (&lock.Factory{Store: s.Locks}).New("scheduler:" + t.name)
 	var runErr error
 	held, err := running.Run(ctx, func(ctx context.Context) error {
+
+//line scheduler.ego:177
 		runErr = s.run(ctx, t)
 		return nil
+
 	})
 	if err != nil {
 		return false, err
@@ -240,6 +244,7 @@ func (s *Scheduler) writeTable(out io.Writer, now time.Time) error {
 		if next.IsZero() {
 			when = "never"
 		} else {
+//line scheduler.ego:222
 			when = next.Format(time.RFC3339)
 		}
 //line scheduler.ego:223

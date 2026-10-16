@@ -20,25 +20,32 @@ import (
 //line login_test.ego:17
 func TestLoginThrottling(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line login_test.ego:19
 		a := webtest.Boot(t, config.Load, app.Build)
 		webtest.Run(t, a, "db:migrate")
 		c := webtest.NewClient(t, a)
 		c.Post("/api/users", `{"user":{"username":"ann","email":"ann@example.com","password":"right password"}}`).Status(201)
 		wrong := `{"user":{"email":"ann@example.com","password":"wrong"}}`
 		right := `{"user":{"email":"ann@example.com","password":"right password"}}`
+
 		for range 4 {
 			c.Post("/api/users/login", wrong).Status(401)
 		}
-		c.Post("/api/users/login", right).Status(200)
+		c.Post("/api/users/login", right).Status(200) // gives the attempts back
 		for range 5 {
 			c.Post("/api/users/login", wrong).Status(401)
 		}
+		// In a minute, the 5 attempts count 4/5 after 12 seconds, as the
+		// window slides: a sixth fits.
 		c.Post("/api/users/login", right).Status(429).HasHeader("Retry-After", "72").Contains(`"credentials":["too many failed attempts"]`)
-		c.Post("/api/users/login", `{"user":{"email":"bob@example.com","password":"wrong"}}`).Status(401)
+		c.Post("/api/users/login", `{"user":{"email":"bob@example.com","password":"wrong"}}`).Status(401) // another email
+
 		time.Sleep(time.Minute)
-		c.Post("/api/users/login", wrong).Status(429)
+		c.Post("/api/users/login", wrong).Status(429) // half the last minute's attempts still count
 		time.Sleep(time.Minute)
 		c.Post("/api/users/login", right).Status(200)
+
 	})
 }
 
@@ -48,6 +55,8 @@ func TestLoginThrottling(t *testing.T) {
 //line login_test.ego:47
 func TestLoginThrottlingByAddress(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line login_test.ego:49
 		a := webtest.Boot(t, config.Load, app.Build)
 		webtest.Run(t, a, "db:migrate")
 		c := webtest.NewClient(t, a)
@@ -55,5 +64,6 @@ func TestLoginThrottlingByAddress(t *testing.T) {
 			c.Post("/api/users/login", fmt.Sprintf(`{"user":{"email":"user%d@example.com","password":"guess"}}`, i)).Status(401)
 		}
 		c.Post("/api/users/login", `{"user":{"email":"another@example.com","password":"guess"}}`).Status(429)
+
 	})
 }

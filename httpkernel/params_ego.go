@@ -71,14 +71,19 @@ func Query(r *http.Request) *Params {
 // {slug} in "GET /articles/{slug}".
 func Path(r *http.Request) *Params {
 	return &Params{in: inPath, values: func(name string) []string {
+
+//line params.ego:52
 		if v := r.PathValue(name); v != "" {
 			return []string{v}
 		}
 		return nil
+
 	}}
 }
 
 // Header reads the headers of r.
+//
+//line params.ego:60
 func Header(r *http.Request) *Params {
 	return &Params{in: inHeader, values: r.Header.Values}
 }

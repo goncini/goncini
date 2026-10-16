@@ -42,15 +42,23 @@ type CacheControl struct {
 func (c CacheControl) String() string {
 	var parts []string
 	flag := func(on bool, name string) {
+
+//line cache.ego:40
 		if on {
 			parts = append(parts, name)
 		}
+
 	}
+//line cache.ego:44
 	seconds := func(d time.Duration, name string) {
+
+//line cache.ego:45
 		if d > 0 {
 			parts = append(parts, fmt.Sprintf("%s=%d", name, int64(d/time.Second)))
 		}
+
 	}
+//line cache.ego:49
 	flag(c.Public, "public")
 	flag(c.Private, "private")
 	flag(c.NoCache, "no-cache")

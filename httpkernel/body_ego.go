@@ -265,16 +265,22 @@ func bodyProblem(err error) Problem {
 	if err == nil {
 		v = Problem{}
 	} else if e, ok := errors.AsType[BodyMediaType](err); ok {
+//line body.ego:147
 		v = Problem{Status: http.StatusUnsupportedMediaType, Detail: e.Error()}
 	} else if e, ok := errors.AsType[BodyTooLarge](err); ok {
+//line body.ego:148
 		v = Problem{Status: http.StatusRequestEntityTooLarge, Detail: e.Error()}
 	} else if e, ok := errors.AsType[BodyEmpty](err); ok {
+//line body.ego:149
 		v = Problem{Status: http.StatusBadRequest, Detail: e.Error()}
 	} else if e, ok := errors.AsType[BodyMalformed](err); ok {
+//line body.ego:150
 		v = Problem{Status: http.StatusBadRequest, Detail: fmt.Sprintf("%s: %s", e.Error(), syntaxReason(e.Cause))}
 	} else if e, ok := errors.AsType[BodyInvalid](err); ok {
+//line body.ego:151
 		v = invalidBody(e)
 	} else if e, ok := errors.AsType[BodyUnreadable](err); ok {
+//line body.ego:152
 		v = Problem{Status: http.StatusBadRequest, Detail: e.Error()}
 	} else if _, ok := errors.AsType[BodyUnsupportedType](err); ok {
 		v = Problem{Status: http.StatusInternalServerError}

@@ -229,6 +229,7 @@ func ClientIP(r *http.Request) netip.Addr {
 	if c.ip.IsValid() {
 		v = c.ip
 	} else {
+//line proxy.ego:213
 		v = remoteAddr(r)
 	}
 	return v

@@ -86,6 +86,7 @@ func open(t *testing.T) *db.SQL {
 	}
 //line db_test.ego:80
 	t.Cleanup(func() {
+//line db_test.ego:80
 		closePool()
 	})
 //line db_test.ego:81

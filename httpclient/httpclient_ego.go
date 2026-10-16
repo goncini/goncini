@@ -76,6 +76,7 @@ func New(c Config) *Client {
 	if c.Retries == 0 {
 		retries = 3
 	} else {
+//line httpclient.ego:71
 		retries = max(c.Retries, 0)
 	}
 //line httpclient.ego:72
@@ -211,6 +212,7 @@ func (c *Client) retryable(req *http.Request, res *http.Response, err error, att
 	}
 	v := err
 	if v == nil {
+//line httpclient.ego:177
 		v = errors.New(res.Status)
 	}
 	wait, again := c.Retry.Next(attempt, v)

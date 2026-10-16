@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+goncini requires effect-go v0.4.0, and its generated code is generated
+again with it. What changes for apps:
+
+- `a ?? b` also falls back when `a` is a nil map value or a nil result of
+  a type assertion. goncini's own uses, such as the OpenAPI document's
+  responses, behave as before, or fall back where a nil entry would have
+  gone through.
+- `goncini.Main`, through `scope.Main`, exits with status 1 when shutting
+  down fails, as when a resource fails to close, even after a clean stop
+  by signal.
+- An app runs `go tool goncini generate` after upgrading: the Go that ego
+  generates changes.
+
 ### The goncini tool, as the symfony command
 
 - **The app's commands:** in an app, `go tool goncini list`,
@@ -31,10 +44,10 @@
   own, `go tool goncini`, when the app requires another version or replaces
   goncini with another directory, so the code it generates is for the
   goncini the app builds with.
-- **effect-go v0.3.5:** `ego generate` removes the Go it wrote from a
-  `.ego` file that is gone, and `-check` fails on it: the removed code
-  compiled on. The tool counts a removed `.ego` file as a change, so the
-  app's commands and `serve` generate again.
+- **Removed `.ego` files:** with effect-go v0.3.5, `ego generate` removes
+  the Go it wrote from a `.ego` file that is gone, and `-check` fails on
+  it: the removed code compiled on. The tool counts a removed `.ego` file
+  as a change, so the app's commands and `serve` generate again.
 - **No more `-app`:** the wiring is in `app/`, which is part of the layout;
   `generate` and `tidy` no longer take the flag.
 - **Faster `goncini generate`:** it first runs `ego generate` alone, and

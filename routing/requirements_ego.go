@@ -88,6 +88,7 @@ func cutRequirements(path, source string) (string, [][2]string) {
 		if end < 0 || path[open+end] == '}' {
 			var cut int
 			if end < 0 {
+//line requirements.ego:84
 				cut = len(path)
 			} else {
 				cut = open + end + 1
@@ -191,6 +192,7 @@ func pathValues(segs []segment, path string) []string {
 			if s.kind == wildcard {
 				raw = parts[i]
 			} else {
+//line requirements.ego:171
 				raw = strings.Join(parts[i:], "/")
 			}
 		}

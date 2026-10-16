@@ -29,6 +29,7 @@ func TestSQLiteTransport(t *testing.T) {
 //line transport_test.ego:21
 		pool.SetMaxOpenConns(1) // one database: each connection to :memory: has its own
 		t.Cleanup(func() {
+//line transport_test.ego:22
 			pool.Close()
 		})
 //line transport_test.ego:23

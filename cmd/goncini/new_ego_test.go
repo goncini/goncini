@@ -191,6 +191,8 @@ func devServes(t *testing.T, dir string) {
 		}
 	}()
 	answers := func(status int, want string) {
+
+//line new_test.ego:133
 		t.Helper()
 		var last string
 		for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
@@ -211,7 +213,9 @@ func devServes(t *testing.T, dir string) {
 			}
 		}
 		t.Fatalf("GET / doesn't answer %d with %s: %s", status, want, last)
+
 	}
+//line new_test.ego:150
 	answers(200, `"status":"ok"`)
 	home := filepath.Join(dir, "home", "home.ego")
 	src, err := os.ReadFile(home)

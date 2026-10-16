@@ -80,6 +80,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	logger := s.Logger
 	if logger == nil {
+//line server.ego:67
 		logger = slog.Default()
 	}
 //line server.ego:68
@@ -95,12 +96,18 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	}
 	logger.InfoContext(ctx, "serving HTTP", slog.String("addr", ln.Addr().String()))
 	_, err := scope.Run[struct{}](ctx, func(sc *scope.Scope) (struct{}, error) {
+
+//line server.ego:80
 		serving := scope.Fork[struct{}](sc, func(_ context.Context) (struct{}, error) {
+
+//line server.ego:81
 			if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 				return struct{}{}, err
 			}
 			return struct{}{}, nil
+
 		})
+//line server.ego:86
 		select {
 		case <-serving.Done():
 			return serving.Join() // the server failed before ctx was done
@@ -116,7 +123,9 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		}
 		_, err := serving.Join()
 		return struct{}{}, errors.Join(stuck, err)
+
 	})
+//line server.ego:102
 	return err
 }
 

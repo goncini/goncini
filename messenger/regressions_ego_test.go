@@ -29,6 +29,7 @@ func sqliteBus(t *testing.T, c messenger.Config) (*messenger.Bus, messenger.Tran
 //line regressions_test.ego:22
 	pool.SetMaxOpenConns(1)
 	t.Cleanup(func() {
+//line regressions_test.ego:23
 		pool.Close()
 	})
 //line regressions_test.ego:24
@@ -97,6 +98,8 @@ func TestSQLFailureTransport(t *testing.T) {
 // back.
 func TestStopTimeoutBoundsHandlers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line regressions_test.ego:58
 		b, async, _ := newBus()
 		messenger.Handle(b, func(ctx context.Context, m welcome) error {
 			time.Sleep(time.Hour) // deaf to ctx
@@ -106,6 +109,7 @@ func TestStopTimeoutBoundsHandlers(t *testing.T) {
 		if err := messenger.Dispatch(context.Background(), b, welcome{"ann"}); err != nil {
 			panic(err)
 		}
+//line regressions_test.ego:65
 		ctx, stop := context.WithCancel(context.Background())
 		w := worker(b, 0)
 		w.StopTimeout = time.Second
@@ -121,10 +125,12 @@ func TestStopTimeoutBoundsHandlers(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
+//line regressions_test.ego:77
 		if took := time.Since(start); took > 2*time.Second || len(left) != 1 || left[0].Attempts != 0 {
 			t.Errorf("stopping took %v; left %+v", took, left)
 		}
-		time.Sleep(time.Hour)
+		time.Sleep(time.Hour) // let the deaf handler end
+
 	})
 }
 
@@ -147,6 +153,8 @@ func (f *flaky) Receive(ctx context.Context, ttl time.Duration) (messenger.Lease
 // receive.
 func TestReceiveErrorsPass(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line regressions_test.ego:101
 		b, async, _ := newBus()
 		b.Transports["async"] = &flaky{Transport: async}
 		handled := 0
@@ -157,12 +165,15 @@ func TestReceiveErrorsPass(t *testing.T) {
 				panic(err)
 			}
 		}
+//line regressions_test.ego:109
 		if err := worker(b, 3).Run(context.Background()); err != nil {
 			panic(err)
 		}
+//line regressions_test.ego:110
 		if handled != 3 {
 			t.Errorf("handled %d", handled)
 		}
+
 	})
 }
 
@@ -192,6 +203,7 @@ func TestSQLOutbox(t *testing.T) {
 //line regressions_test.ego:134
 	pool.SetMaxOpenConns(1) // a send outside the transaction would wait for it forever
 	t.Cleanup(func() {
+//line regressions_test.ego:135
 		pool.Close()
 	})
 //line regressions_test.ego:136
@@ -324,6 +336,8 @@ func TestWorkerErrors(t *testing.T) {
 // named as the app likes, but the failure transport.
 func TestBackground(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line regressions_test.ego:214
 		emails := &messenger.MemoryTransport{}
 		b := messenger.NewBus(messenger.Config{Consume: true}, messenger.Transports{"emails": emails, "failed": &messenger.MemoryTransport{}}, nil, slog.New(slog.DiscardHandler))
 		var handled atomic.Int32
@@ -335,13 +349,16 @@ func TestBackground(t *testing.T) {
 		if err := messenger.Dispatch(context.Background(), b, welcome{"ann"}); err != nil {
 			panic(err)
 		}
+//line regressions_test.ego:223
 		ctx, stop := context.WithTimeout(context.Background(), time.Minute)
 		defer stop()
 		if err := b.Background(ctx); err != nil {
 			panic(err)
 		}
+//line regressions_test.ego:226
 		if handled.Load() != 1 {
 			t.Errorf("%d handled", handled.Load())
 		}
+
 	})
 }

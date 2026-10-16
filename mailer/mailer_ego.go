@@ -264,6 +264,7 @@ func (t *LogTransport) Send(ctx context.Context, from string, to []string, raw [
 	head, _, _ := strings.Cut(string(raw), "\r\n\r\n")
 	v := t.Logger
 	if v == nil {
+//line mailer.ego:226
 		v = slog.Default()
 	}
 	(v).InfoContext(ctx, "an email, not sent", slog.String("from", from), slog.Any("to", to), slog.String("header", head))

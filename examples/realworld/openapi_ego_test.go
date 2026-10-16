@@ -220,10 +220,13 @@ func nullableOf(s *openapi.Schema) (*openapi.Schema, bool) {
 // maps returns the keys of a map.
 func maps[V any](m map[string]V) func(func(string) bool) {
 	return func(yield func(string) bool) {
+
+//line openapi_test.ego:194
 		for k := range m {
 			if !yield(k) {
 				return
 			}
 		}
+
 	}
 }

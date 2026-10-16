@@ -116,6 +116,7 @@ func (t *Transactor) begin(ctx context.Context) (context.Context, pgx.Tx, func()
 			return nil, nil, nil, fmt.Errorf("pgxdb: beginning a transaction: %w", err)
 		}
 		return context.WithValue(ctx, txKey{t.Pool}, tx), tx, func() {
+
 		}, nil
 	}
 //line pgxdb.ego:116
@@ -145,6 +146,7 @@ func (t *Transactor) begin(ctx context.Context) (context.Context, pgx.Tx, func()
 	}
 	ctx = db.Join(context.WithValue(ctx, txKey{t.Pool}, tx), t.SQL, conn)
 	return ctx, tx, func() {
+//line pgxdb.ego:141
 		conn.Close()
 	}, nil
 }

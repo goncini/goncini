@@ -87,6 +87,7 @@ func (m *Migrator) Status(ctx context.Context, out io.Writer) error {
 	for _, s := range statuses {
 		var applied string
 		if s.State == goose.StateApplied {
+//line goosedb.ego:84
 			applied = s.AppliedAt.UTC().Format(time.DateTime)
 		} else {
 			applied = "pending"

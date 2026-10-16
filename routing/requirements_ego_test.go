@@ -37,6 +37,7 @@ func TestRequirements(t *testing.T) {
 		rec := serve(r, "GET", target)
 		var got string
 		if rec.Code == 200 {
+//line requirements_test.ego:34
 			got = rec.Body.String()
 		} else {
 			got = fmt.Sprintf("%d", rec.Code)
@@ -99,21 +100,27 @@ func TestRequirementMistakesPanic(t *testing.T) {
 	r.Get("/b/{y}/{v}", echo())
 	for want, f := range map[string]func(){
 		"has no wildcard \"y\"": func() {
+//line requirements_test.ego:88
 			open.Require("y", ".+")
 		},
 		"requirement \"(\" of \"x\"": func() {
+//line requirements_test.ego:89
 			open.Require("x", "(")
 		},
 		"require \"w\" before registering another route": func() {
+//line requirements_test.ego:90
 			open2.Require("w", "1")
 		},
 		"has a requirement for \"x\" already": func() {
+//line requirements_test.ego:91
 			r.Get("/c/{x<\\d+>}", echo()).Require("x", "1")
 		},
 		"has no closing >}": func() {
+//line requirements_test.ego:92
 			r.Get("/d/{x<\\d+}", echo())
 		},
 		"conflicts with GET /b/{y}/{v}": func() {
+//line requirements_test.ego:93
 			r.Get("/b/{z<\\d+>}/{u}", echo())
 		},
 	} {
@@ -129,11 +136,15 @@ func TestRequirementsBehindMiddleware(t *testing.T) {
 	tag := func(name string) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+
+//line requirements_test.ego:105
 				w.Header().Set("X-Route", name)
 				next.ServeHTTP(w, req)
+
 			})
 		}
 	}
+//line requirements_test.ego:109
 	r.With(tag("id")).Get("/articles/{id<\\d+>}", echo("id"))
 	r.With(tag("slug")).Get("/articles/{slug}", echo("slug"))
 	for target, want := range map[string]string{"/articles/1": "id", "/articles/x": "slug"} {

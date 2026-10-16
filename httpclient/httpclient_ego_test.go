@@ -73,41 +73,53 @@ func TestGet(t *testing.T) {
 
 func TestRetries(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line httpclient_test.ego:69
 		a := &api{statuses: []int{503, 502}}
 		start := time.Now()
 		if _, err2 := httpclient.Get[repo](context.Background(), client(a), "/repos/goncini"); err2 != nil {
 			panic(err2)
 		}
+//line httpclient_test.ego:72
 		if len(a.times) != 3 || a.times[1].Sub(start) != 100*time.Millisecond || a.times[2].Sub(start) != 300*time.Millisecond {
 			t.Errorf("attempts at %v", a.times)
 		}
+
 		a = &api{statuses: []int{429}, retry: "2"}
 		start = time.Now()
 		if _, err3 := httpclient.Get[repo](context.Background(), client(a), "/"); err3 != nil {
 			panic(err3)
 		}
+//line httpclient_test.ego:79
 		if a.times[1].Sub(start) != 2*time.Second {
 			t.Errorf("Retry-After: retried after %v", a.times[1].Sub(start))
 		}
-		a = &api{statuses: []int{503}, retry: "3600"}
+
+		a = &api{statuses: []int{503}, retry: "3600"} // too long a pause
 		if _, err := httpclient.Get[repo](context.Background(), client(a), "/"); len(a.got) != 1 || err == nil {
 			t.Errorf("%d attempts, %v", len(a.got), err)
 		}
+
 		a = &api{statuses: []int{503, 503, 503, 503, 503}}
 		_, err := httpclient.Get[repo](context.Background(), client(a), "/")
 		if e, ok := errors.AsType[*httpclient.StatusError](err); !ok || e.Status != 503 || len(a.got) != 4 {
 			t.Errorf("%d attempts, %v", len(a.got), err)
 		}
+
 		a = &api{statuses: []int{404}}
 		_, err = httpclient.Get[repo](context.Background(), client(a), "/")
 		if e, ok := errors.AsType[*httpclient.StatusError](err); !ok || e.Status != 404 || e.Body != "down" || len(a.got) != 1 {
 			t.Errorf("%d attempts, %v", len(a.got), err)
 		}
+
 	})
 }
 
+//line httpclient_test.ego:102
 func TestPOSTs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line httpclient_test.ego:104
 		a := &api{statuses: []int{503}}
 		ctx := context.Background()
 		if _, err := httpclient.Send[repo](ctx, client(a), http.MethodPost, "/repos", repo{"new"}); err == nil || len(a.got) != 1 {
@@ -118,15 +130,18 @@ func TestPOSTs(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
+//line httpclient_test.ego:111
 		req.Header.Set("Idempotency-Key", "1")
 		res, err := client(a).Do(req)
 		if err != nil {
 			panic(err)
 		}
+//line httpclient_test.ego:113
 		res.Body.Close()
 		if res.StatusCode != 200 || len(a.got) != 2 || a.bodies[1] != `{"name":"new"}` {
 			t.Errorf("with an idempotency key: %d, %d attempts, bodies %q", res.StatusCode, len(a.got), a.bodies)
 		}
+
 	})
 }
 
@@ -149,15 +164,19 @@ func (f *failing) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func TestConnectionFailures(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line httpclient_test.ego:137
 		a := &api{}
 		c := client(a)
 		c.Transport = &failing{RoundTripper: c.Transport}
 		if _, err := httpclient.Get[repo](context.Background(), c, "/"); err != nil {
 			panic(err)
 		}
+//line httpclient_test.ego:141
 		if len(a.got) != 1 {
 			t.Errorf("%d attempts reached the API", len(a.got))
 		}
+
 	})
 }
 
@@ -167,6 +186,7 @@ func TestTracePropagates(t *testing.T) {
 	tp := sdktrace.NewTracerProvider()
 	otel.SetTracerProvider(tp)
 	t.Cleanup(func() {
+//line httpclient_test.ego:151
 		tp.Shutdown(context.Background())
 	})
 //line httpclient_test.ego:152
@@ -188,13 +208,17 @@ func TestRedirectsAndHosts(t *testing.T) {
 	var auths []string
 	c := httpclient.New(httpclient.Config{BaseURL: "https://api.example.com", Header: map[string]string{"Authorization": "Bearer secret"}})
 	c.Transport = httpclient.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+//line httpclient_test.ego:167
 		auths = append(auths, r.URL.Host+" "+r.Header.Get("Authorization"))
 		if r.URL.Path == "/old" {
 			http.Redirect(w, r, "/new", http.StatusMovedPermanently)
 			return
 		}
 		w.Write([]byte(`{"name":"goncini"}`))
+
 	}))
+//line httpclient_test.ego:174
 	r, err := httpclient.Get[repo](context.Background(), c, "/old")
 	if err != nil {
 		panic(err)
@@ -229,6 +253,8 @@ func TestRedirectsAndHosts(t *testing.T) {
 // the request.
 func TestHandlerTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line httpclient_test.ego:193
 		c := httpclient.New(httpclient.Config{Timeout: time.Second, Retries: -1})
 		c.Transport = httpclient.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(time.Minute) }))
 		_, err := httpclient.Get[repo](context.Background(), c, "https://api.example.com/slow")
@@ -236,5 +262,6 @@ func TestHandlerTimeout(t *testing.T) {
 			t.Errorf("got %v", err)
 		}
 		time.Sleep(time.Minute)
+
 	})
 }

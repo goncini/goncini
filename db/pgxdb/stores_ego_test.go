@@ -42,6 +42,7 @@ func TestLockStore(t *testing.T) {
 	}
 //line stores_test.ego:32
 	t.Cleanup(func() {
+//line stores_test.ego:32
 		closeDB()
 	})
 //line stores_test.ego:33
@@ -52,6 +53,7 @@ func TestLockStore(t *testing.T) {
 //line stores_test.ego:34
 	store.Table = "pgxdb_test_locks"
 	t.Cleanup(func() {
+//line stores_test.ego:35
 		sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_locks")
 	})
 
@@ -114,6 +116,7 @@ func TestMessengerTransport(t *testing.T) {
 		tr.Table, tr.Now = "pgxdb_test_messages", now
 		sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_messages")
 		t.Cleanup(func() {
+//line stores_test.ego:67
 			sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_messages")
 		})
 //line stores_test.ego:68
@@ -147,6 +150,7 @@ func TestOutbox(t *testing.T) {
 	}
 //line stores_test.ego:89
 	t.Cleanup(func() {
+//line stores_test.ego:89
 		closeDB()
 	})
 //line stores_test.ego:90
@@ -167,6 +171,7 @@ func TestOutbox(t *testing.T) {
 	}
 //line stores_test.ego:99
 	t.Cleanup(func() {
+//line stores_test.ego:99
 		sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_outbox")
 	})
 //line stores_test.ego:100

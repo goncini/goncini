@@ -63,6 +63,8 @@ func worker(b *messenger.Bus, limit int) *messenger.Worker {
 
 func TestWorker(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line messenger_test.ego:56
 		b, async, _ := newBus()
 		var mu sync.Mutex
 		var got []string
@@ -77,9 +79,11 @@ func TestWorker(t *testing.T) {
 		if err := messenger.Dispatch(ctx, b, welcome{"ann"}); err != nil {
 			panic(err)
 		}
+//line messenger_test.ego:68
 		if err := messenger.Dispatch(ctx, b, welcome{"bob"}, messenger.Delay(time.Hour)); err != nil {
 			panic(err)
 		}
+//line messenger_test.ego:69
 		if len(got) != 0 {
 			t.Fatal("a routed message was handled when dispatched")
 		}
@@ -87,20 +91,25 @@ func TestWorker(t *testing.T) {
 		w.Concurrency = 2
 		if err := w.Run(ctx); err != nil {
 			panic(err)
-		}
+		} // returns after 2 messages, an hour later
+//line messenger_test.ego:75
 		left, err := async.List(ctx)
 		if err != nil {
 			panic(err)
 		}
+//line messenger_test.ego:76
 		if len(got) != 2 || got[0] != "ann" || got[1] != "bob" || len(left) != 0 {
 			t.Errorf("handled %v, left %v", got, left)
 		}
+
 	})
 }
 
 //line messenger_test.ego:82
 func TestRetriesAndFailures(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line messenger_test.ego:84
 		b, _, failed := newBus()
 		start := time.Now()
 		var tries []time.Duration
@@ -114,10 +123,12 @@ func TestRetriesAndFailures(t *testing.T) {
 		if err := messenger.Dispatch(ctx, b, welcome{"ann"}); err != nil {
 			panic(err)
 		}
+//line messenger_test.ego:95
 		if err := worker(b, 0).Run(ctx); err != nil {
 			panic(err)
 		}
-		want := []time.Duration{0, time.Second, 3 * time.Second, 7 * time.Second}
+//line messenger_test.ego:96
+		want := []time.Duration{0, time.Second, 3 * time.Second, 7 * time.Second} // then 1, 2 and 4 seconds later
 		if len(tries) != len(want) {
 			t.Fatalf("tries at %v", tries)
 		}
@@ -130,9 +141,11 @@ func TestRetriesAndFailures(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
+//line messenger_test.ego:106
 		if len(list) != 1 || list[0].Attempts != 4 || list[0].Error != "the mail server is down" {
 			t.Errorf("failed %+v", list)
 		}
+
 	})
 }
 
@@ -142,6 +155,8 @@ func TestRetriesAndFailures(t *testing.T) {
 //line messenger_test.ego:114
 func TestStopping(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line messenger_test.ego:116
 		b, async, _ := newBus()
 		var done []string
 		messenger.Handle(b, func(ctx context.Context, m welcome) error {
@@ -185,10 +200,12 @@ func TestStopping(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
+//line messenger_test.ego:147
 		if len(done) != 1 || done[0] != "quick" || len(left) != 1 || left[0].Attempts != 0 {
 			// slow is back, as it was: being cut short isn't a failure.
 			t.Errorf("done %v, left %+v", done, left)
 		}
+
 	})
 }
 
@@ -199,19 +216,24 @@ func TestStopping(t *testing.T) {
 //line messenger_test.ego:157
 func TestLostWorker(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line messenger_test.ego:159
 		ctx := context.Background()
 		tr := &messenger.MemoryTransport{}
 		if err := tr.Send(ctx, messenger.Message{ID: "1", Type: "welcome"}); err != nil {
 			panic(err)
 		}
+//line messenger_test.ego:162
 		lease, ok, err := tr.Receive(ctx, time.Minute)
 		if err != nil {
 			panic(err)
 		}
+//line messenger_test.ego:163
 		_, again, err := tr.Receive(ctx, time.Minute)
 		if err != nil {
 			panic(err)
 		}
+//line messenger_test.ego:164
 		if !ok || again {
 			t.Fatalf("received %v, again %v", ok, again)
 		}
@@ -220,6 +242,7 @@ func TestLostWorker(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
+//line messenger_test.ego:169
 		if !back || other.Message().ID != "1" {
 			t.Fatal("the message isn't back once the lease ran out")
 		}
@@ -227,16 +250,20 @@ func TestLostWorker(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
+//line messenger_test.ego:173
 		if err := lease.Ack(ctx); err != nil {
 			panic(err)
-		}
+		} // the dead worker's: nothing happens
+//line messenger_test.ego:174
 		list, err := tr.List(ctx)
 		if err != nil {
 			panic(err)
 		}
+//line messenger_test.ego:175
 		if held || len(list) != 1 {
 			t.Errorf("the old lease still held it: extended %v, left %d", held, len(list))
 		}
+
 	})
 }
 

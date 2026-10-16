@@ -142,6 +142,7 @@ func (e *Email) Bytes() ([]byte, error) {
 	h.Set("Subject", stdmime.QEncoding.Encode("utf-8", e.Subject))
 	var date time.Time
 	if e.Date.IsZero() {
+//line mime.ego:136
 		date = time.Now()
 	} else {
 		date = e.Date
@@ -244,6 +245,7 @@ func filePart(p Part, disposition string) part {
 	if contentType == "" {
 		i := strings.LastIndexByte(p.Name, '.')
 		if i >= 0 {
+//line mime.ego:219
 			contentType = stdmime.TypeByExtension(p.Name[i:])
 		} else {
 			contentType = ""
@@ -310,11 +312,15 @@ func writeHeader(b *bytes.Buffer, h textproto.MIMEHeader) {
 	order := []string{"From", "To", "Cc", "Reply-To", "Subject", "Date", "Message-Id", "Mime-Version", "Content-Type", "Content-Transfer-Encoding"}
 	written := map[string]bool{}
 	write := func(name string) {
+
+//line mime.ego:274
 		for _, v := range h[name] {
 			b.WriteString(fold(name + ": " + v))
 		}
 		written[name] = true
+
 	}
+//line mime.ego:279
 	for _, name := range order {
 		write(name)
 	}

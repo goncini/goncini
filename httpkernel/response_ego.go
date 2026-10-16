@@ -21,7 +21,7 @@ type ResponseTracker struct {
 // reaches w's Flush, Hijack and deadline methods.
 func TrackResponse(w http.ResponseWriter) *ResponseTracker {
 	v, ok := w.(*ResponseTracker)
-	if !ok {
+	if !ok || v == nil {
 		v = &ResponseTracker{w: w}
 	}
 	return v

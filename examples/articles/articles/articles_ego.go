@@ -115,10 +115,13 @@ func Problem(err error) httpkernel.Problem {
 	if err == nil {
 		v = httpkernel.Problem{}
 	} else if e, ok := errors.AsType[NotFound](err); ok {
+//line articles.ego:46
 		v = httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
 	} else if e, ok := errors.AsType[Duplicate](err); ok {
+//line articles.ego:47
 		v = httpkernel.Problem{Status: http.StatusConflict, Detail: e.Error()}
 	} else if e, ok := errors.AsType[Refused](err); ok {
+//line articles.ego:48
 		v = httpkernel.ProblemFor(e.Cause)
 	} else if _, ok := errors.AsType[Unavailable](err); ok {
 		v = httpkernel.Problem{Status: http.StatusServiceUnavailable}

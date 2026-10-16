@@ -156,6 +156,8 @@ func TestStampede(t *testing.T) {
 	results := make([]int, 20)
 	for i := range results {
 		wg.Go(func() {
+
+//line cache_test.ego:107
 			v, err := cache.Get(context.Background(), c, "slow", func(ctx context.Context, item *cache.Item) (int, error) {
 				computed.Add(1)
 				<-release
@@ -165,6 +167,7 @@ func TestStampede(t *testing.T) {
 				panic(err)
 			}
 			results[i] = v
+
 		})
 	}
 //line cache_test.ego:114

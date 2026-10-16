@@ -79,6 +79,7 @@ type Option func(*listener)
 // 0, and negative priorities run after.
 func Priority(p int) Option {
 	return func(l *listener) {
+//line event.ego:77
 		l.priority = p
 	}
 }

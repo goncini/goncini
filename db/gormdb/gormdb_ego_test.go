@@ -31,6 +31,7 @@ func open(t *testing.T) *gormdb.Transactor {
 	}
 //line gormdb_test.ego:26
 	t.Cleanup(func() {
+//line gormdb_test.ego:26
 		closePool()
 	})
 //line gormdb_test.ego:27
@@ -130,13 +131,17 @@ func TestIsolate(t *testing.T) {
 		return n
 	}
 	t.Run("test", func(t *testing.T) {
+
+//line gormdb_test.ego:96
 		ctx := webtest.Isolate(t, tr)
 		if err := tr.InTx(ctx, func(ctx context.Context) error { return tr.Conn(ctx).Create(&Article{Slug: "isolated"}).Error }); err != nil {
 			panic(err)
 		}
+//line gormdb_test.ego:98
 		if n := count(ctx); n != 1 {
 			t.Errorf("%d rows inside the test", n)
 		}
+
 	})
 //line gormdb_test.ego:102
 	if n := count(context.Background()); n != 0 {

@@ -70,6 +70,7 @@ func noteProblem(err error) httpkernel.Problem {
 	if err == nil {
 		v = httpkernel.Problem{}
 	} else if e, ok := errors.AsType[NoNote](err); ok {
+//line generate_test.ego:30
 		v = httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
 	} else if _, ok := errors.AsType[Unavailable](err); ok {
 		v = httpkernel.Problem{Status: http.StatusServiceUnavailable}

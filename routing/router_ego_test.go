@@ -171,39 +171,51 @@ func TestRegistrationMistakesPanic(t *testing.T) {
 		want     string // the start of the message
 	}{
 		{func(r *routing.Router) {
+//line router_test.ego:169
 			r.Get("articles", echo())
 		}, `routing: path "articles" doesn't start with / (`},
 		{func(r *routing.Router) {
+//line router_test.ego:170
 			r.Group("api")
 		}, `routing: group prefix "api" doesn't start with / (`},
 		{func(r *routing.Router) {
+//line router_test.ego:171
 			r.Handle("//evil.example/x", echo())
 		}, `routing: path "//evil.example/x" isn't clean (`},
 		{func(r *routing.Router) {
+//line router_test.ego:172
 			r.Get("/a/./b", echo())
 		}, `routing: path "/a/./b" isn't clean (`},
 		{func(r *routing.Router) {
+//line router_test.ego:173
 			r.Get("/a/../b", echo())
 		}, `routing: path "/a/../b" isn't clean (`},
 		{func(r *routing.Router) {
+//line router_test.ego:174
 			r.Group("/api//").Get("/x", echo())
 		}, `routing: path "/api//x" isn't clean (`},
 		{func(r *routing.Router) {
+//line router_test.ego:175
 			r.Handle("/v/%2E/x", echo())
 		}, `routing: path "/v/%2E/x" has a "." segment (`},
 		{func(r *routing.Router) {
+//line router_test.ego:176
 			r.Get("/w/%2e%2E/{id}", echo())
 		}, `routing: path "/w/%2e%2E/{id}" has a ".." segment (`},
 		{func(r *routing.Router) {
+//line router_test.ego:177
 			r.Get("/b/{x}/{x}", echo())
 		}, "routing: GET /b/{x}/{x} ("},
 		{func(r *routing.Router) {
+//line router_test.ego:178
 			r.Get("/nil", nil)
 		}, "routing: nil handler for GET /nil ("},
 		{func(r *routing.Router) {
+//line router_test.ego:179
 			r.With(pass).Get("/nil", http.HandlerFunc(nil))
 		}, "routing: nil handler for GET /nil ("},
 		{func(r *routing.Router) {
+//line router_test.ego:180
 			r.With(nil)
 		}, "routing: nil middleware ("},
 	}
@@ -320,10 +332,14 @@ func (userRoutes) Routes(r *routing.Router) {
 func TestPrefixAndWith(t *testing.T) {
 	var tag func(http.Handler) http.Handler = func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+//line router_test.ego:283
 			w.Header().Set("X-Tag", "1")
 			next.ServeHTTP(w, r)
+
 		})
 	}
+//line router_test.ego:286
 	r := routing.New(routing.Prefix("/api", routing.With(tag, articleRoutes{}), userRoutes{}))
 	for path, tagged := range map[string]string{"/api/articles": "1", "/api/users": ""} {
 		if rec := serve(r, "GET", path); rec.Code != 200 || rec.Header().Get("X-Tag") != tagged {

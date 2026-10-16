@@ -39,17 +39,22 @@ func TrustHosts(hosts ...string) (Middleware, error) {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+//line hosts.ego:35
 			if host := Host(r); !trusted(hostname(host)) {
 				WriteError(w, r, Problem{Status: http.StatusBadRequest, Detail: fmt.Sprintf("untrusted host %q", host)})
 				return
 			}
 			next.ServeHTTP(w, r)
+
 		})
 	}, nil
 }
 
 // hostname returns host without its port, lowercase, and without the dot
 // that may end a fully qualified name.
+//
+//line hosts.ego:45
 func hostname(host string) string {
 	if strings.HasPrefix(host, "[") {
 		if end := strings.IndexByte(host, ']'); end >= 0 {

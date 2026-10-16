@@ -65,8 +65,12 @@ func (w *Worker) Run(ctx context.Context) error {
 	handling, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
 	defer cancel(nil)
 	stop := context.AfterFunc(ctx, func() {
+
+//line worker.ego:64
 		time.AfterFunc(w.stopTimeout(), func() { cancel(errStopTimeout) })
+
 	})
+//line worker.ego:66
 	defer stop()
 	receiving, done := context.WithCancel(ctx)
 	defer done()
@@ -130,6 +134,7 @@ func (w *Worker) loop(ctx, handling context.Context, take func() (bool, bool), d
 			// after a poll, rather than stop consuming.
 			v := w.Logger
 			if v == nil {
+//line worker.ego:119
 				v = slog.Default()
 			}
 			(v).ErrorContext(ctx, "receiving a message failed", slog.Any("error", err))
@@ -201,6 +206,7 @@ func (w *Worker) process(ctx context.Context, lease Lease) {
 	msg := lease.Message()
 	v := w.Logger
 	if v == nil {
+//line worker.ego:171
 		v = slog.Default()
 	}
 	log := (v).With(slog.String("message", msg.Type), slog.String("id", msg.ID))

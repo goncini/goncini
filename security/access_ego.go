@@ -154,6 +154,8 @@ func NewAccess(c Config, voters []Voter) *Access {
 func (a *Access) IsGranted(ctx context.Context, attribute string, subject any) bool {
 	grants, denials := 0, 0
 	count := func(v Vote) {
+
+//line access.ego:101
 		switch v {
 		case Grant:
 //line access.ego:102
@@ -164,6 +166,7 @@ func (a *Access) IsGranted(ctx context.Context, attribute string, subject any) b
 		case Abstain:
 
 		}
+
 	}
 //line access.ego:108
 	count(a.builtIn(ctx, attribute))
@@ -198,7 +201,7 @@ func (a *Access) Check(ctx context.Context, attribute string, subject any) error
 		return nil
 	}
 	st, ok := ctx.Value(stateKey{}).(*state)
-	if !ok {
+	if !ok || st == nil {
 		st = nil
 	}
 //line access.ego:131
@@ -221,7 +224,7 @@ func (a *Access) Check(ctx context.Context, attribute string, subject any) error
 // builtIn is the vote on Authenticated and roles.
 func (a *Access) builtIn(ctx context.Context, attribute string) Vote {
 	st, ok2 := ctx.Value(stateKey{}).(*state)
-	if !ok2 {
+	if !ok2 || st == nil {
 		st = nil
 	}
 //line access.ego:140

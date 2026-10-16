@@ -57,6 +57,8 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 	}
 
 	t.Run("order and delays", func(t *testing.T) {
+
+//line transporttest.ego:56
 		tr, c := setup(t)
 		for _, m := range []messenger.Message{msg("later", c.now.Add(time.Hour)), msg("b", c.now.Add(-time.Second)), msg("a", c.now.Add(-time.Minute))} {
 			if err := tr.Send(ctx, m); err != nil {
@@ -68,14 +70,18 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 			t.Errorf("message %+v", got)
 		}
 		b := receive(t, tr, "b")
-		receive(t, tr, "")
+		receive(t, tr, "") // later isn't available, and the others are leased
 		a.Ack(ctx)
 		b.Ack(ctx)
 		c.now = c.now.Add(time.Hour)
 		receive(t, tr, "later")
+
 	})
 
+//line transporttest.ego:74
 	t.Run("acknowledging", func(t *testing.T) {
+
+//line transporttest.ego:75
 		tr, c := setup(t)
 		tr.Send(ctx, msg("a", c.now))
 		lease := receive(t, tr, "a")
@@ -83,17 +89,21 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 			t.Fatal(err)
 		}
 		c.now = c.now.Add(time.Hour)
-		receive(t, tr, "")
+		receive(t, tr, "") // gone for good
+
 	})
 
+//line transporttest.ego:85
 	t.Run("lost leases", func(t *testing.T) {
+
+//line transporttest.ego:86
 		tr, c := setup(t)
 		tr.Send(ctx, msg("a", c.now))
 		dead := receive(t, tr, "a")
 		c.now = c.now.Add(30 * time.Second)
-		receive(t, tr, "")
+		receive(t, tr, "") // still leased
 		c.now = c.now.Add(31 * time.Second)
-		alive := receive(t, tr, "a")
+		alive := receive(t, tr, "a") // the lease ran out
 		held, err := dead.Extend(ctx, time.Minute)
 		if err != nil || held {
 			t.Errorf("the lost lease extended: %v, %v", held, err)
@@ -107,13 +117,17 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 			t.Errorf("the new lease can't extend: %v, %v", held, err)
 		}
 		c.now = c.now.Add(61 * time.Second)
-		again := receive(t, tr, "a")
+		again := receive(t, tr, "a") // the lost lease's ack and retry did nothing
 		if again.Message().Attempts != 0 {
 			t.Errorf("attempts %d", again.Message().Attempts)
 		}
+
 	})
 
+//line transporttest.ego:112
 	t.Run("sending again", func(t *testing.T) {
+
+//line transporttest.ego:113
 		tr, c := setup(t)
 		tr.Send(ctx, msg("a", c.now))
 		old := receive(t, tr, "a")
@@ -122,9 +136,9 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 		if err := tr.Send(ctx, again); err != nil {
 			t.Fatal(err)
 		}
-		got := receive(t, tr, "a")
-		receive(t, tr, "")
-		old.Ack(ctx)
+		got := receive(t, tr, "a") // replaced, and its lease with it
+		receive(t, tr, "")         // once
+		old.Ack(ctx)               // the old lease's: nothing
 		if got.Message().Attempts != 5 {
 			t.Errorf("attempts %d", got.Message().Attempts)
 		}
@@ -133,9 +147,13 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 		}
 		c.now = c.now.Add(time.Hour)
 		receive(t, tr, "")
+
 	})
 
+//line transporttest.ego:134
 	t.Run("retrying", func(t *testing.T) {
+
+//line transporttest.ego:135
 		tr, c := setup(t)
 		tr.Send(ctx, msg("a", c.now))
 		lease := receive(t, tr, "a")
@@ -144,15 +162,19 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 		if err := lease.Retry(ctx, m); err != nil {
 			t.Fatal(err)
 		}
-		receive(t, tr, "")
+		receive(t, tr, "") // not yet
 		c.now = c.now.Add(time.Second)
 		got := receive(t, tr, "a").Message()
 		if got.Attempts != 1 || got.Error != "the server is down" {
 			t.Errorf("retried %+v", got)
 		}
+
 	})
 
+//line transporttest.ego:151
 	t.Run("browsing", func(t *testing.T) {
+
+//line transporttest.ego:152
 		tr, c := setup(t)
 		b, ok := tr.(messenger.Browser)
 		if !ok {
@@ -174,5 +196,6 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 		b.Remove(ctx, "a")
 		receive(t, tr, "b")
 		receive(t, tr, "")
+
 	})
 }

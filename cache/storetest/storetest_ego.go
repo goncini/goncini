@@ -23,12 +23,14 @@ import (
 func Run(t *testing.T, newStore func(t *testing.T) cache.Store) {
 	ctx := context.Background()
 	t.Run("get, set and delete", func(t *testing.T) {
+
+//line storetest.ego:22
 		s := newStore(t)
 		if err := s.Set(ctx, "a", []byte("1"), 0); err != nil {
 			t.Fatal(err)
 		}
 		s.Set(ctx, "b", []byte("2"), time.Hour)
-		s.Set(ctx, "a", []byte("3"), 0)
+		s.Set(ctx, "a", []byte("3"), 0) // replaced
 		got, err := s.Get(ctx, "a", "b", "c")
 		if err != nil || string(got["a"]) != "3" || string(got["b"]) != "2" || got["c"] != nil || len(got) != 2 {
 			t.Fatalf("got %q, %v", got, err)
@@ -43,8 +45,12 @@ func Run(t *testing.T, newStore func(t *testing.T) cache.Store) {
 		if got, err := s.Get(ctx); err != nil || len(got) != 0 {
 			t.Errorf("no keys: %q, %v", got, err)
 		}
+
 	})
+//line storetest.ego:43
 	t.Run("expiry", func(t *testing.T) {
+
+//line storetest.ego:44
 		s := newStore(t)
 		s.Set(ctx, "short", []byte("1"), time.Second)
 		s.Set(ctx, "long", []byte("2"), time.Hour)
@@ -53,5 +59,6 @@ func Run(t *testing.T, newStore func(t *testing.T) cache.Store) {
 		if got["short"] != nil || string(got["long"]) != "2" {
 			t.Errorf("after a second: %q", got)
 		}
+
 	})
 }

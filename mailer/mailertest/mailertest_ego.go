@@ -44,9 +44,13 @@ func NewServer(t testing.TB) *Server {
 	s := &Server{ln: ln}
 	s.wg.Go(s.accept)
 	t.Cleanup(func() {
+
+//line mailertest.ego:43
 		ln.Close()
 		s.wg.Wait()
+
 	})
+//line mailertest.ego:46
 	return s
 }
 
@@ -77,6 +81,7 @@ func (s *Server) serve(conn net.Conn) {
 	defer conn.Close()
 	r := textproto.NewReader(bufio.NewReader(conn))
 	reply := func(line string) {
+//line mailertest.ego:75
 		conn.Write([]byte(line + "\r\n"))
 	}
 //line mailertest.ego:76

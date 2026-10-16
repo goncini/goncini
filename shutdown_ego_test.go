@@ -28,10 +28,13 @@ type slowRoutes struct{ log func(string) }
 
 func (s slowRoutes) Routes(r *routing.Router) {
 	r.Get("/slow", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+
+//line shutdown_test.ego:25
 		s.log("request started")
 		time.Sleep(200 * time.Millisecond)
 		io.WriteString(w, "done")
 		s.log("request ended")
+
 	}))
 }
 
@@ -39,6 +42,8 @@ func (s slowRoutes) Routes(r *routing.Router) {
 // SIGTERM stops it, during a slow request, the request completes, the
 // resources the app's scope holds, such as its database, are released
 // after it, and no goroutine is left.
+//
+//line shutdown_test.ego:36
 func TestShutdownDuringASlowRequest(t *testing.T) {
 	before := runtime.NumGoroutine()
 	var mu sync.Mutex

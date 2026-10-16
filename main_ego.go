@@ -48,10 +48,13 @@ func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C)
 	}
 	var usage error
 	scope.Main(func(s *scope.Scope) error {
+
+//line main.ego:47
 		app, err2 := build(s.Context(), s, cfg)
 		if err2 != nil {
 			return err2
 		}
+//line main.ego:48
 		slog.SetDefault(app.Logger)
 		err := Run(s.Context(), os.Stdout, env, cfg, app, os.Args[1:])
 		if console.IsUsage(err) {
@@ -59,6 +62,7 @@ func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C)
 			return nil
 		}
 		return err
+
 	})
 //line main.ego:56
 	if usage != nil {

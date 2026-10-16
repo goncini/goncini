@@ -40,9 +40,13 @@ func (f Filter) where() (string, []any) {
 	var conds []string
 	var args []any
 	add := func(cond string, arg any) {
+
+//line store.ego:36
 		conds = append(conds, cond)
 		args = append(args, arg)
+
 	}
+//line store.ego:39
 	if f.Tag != "" {
 		add("EXISTS (SELECT 1 FROM article_tags t WHERE t.article_id = a.id AND t.tag = ?)", f.Tag)
 	}

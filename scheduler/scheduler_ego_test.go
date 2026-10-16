@@ -88,6 +88,8 @@ func TestEvery(t *testing.T) {
 func TestOneInstancePerTick(t *testing.T) {
 	for _, shared := range []bool{true, false} {
 		synctest.Test(t, func(t *testing.T) {
+
+//line scheduler_test.ego:68
 			var mu sync.Mutex
 			runs := map[string]int{}
 			var locks lock.Store
@@ -100,20 +102,27 @@ func TestOneInstancePerTick(t *testing.T) {
 			for _, instance := range []string{"a", "b"} {
 				s := scheduler.New(scheduler.Config{}, locks, nil, slog.New(slog.DiscardHandler))
 				s.Add("report", scheduler.Every(time.Minute), func(ctx context.Context) error {
+
+//line scheduler_test.ego:80
 					mu.Lock()
 					defer mu.Unlock()
 					runs[instance]++
 					return nil
+
 				})
+//line scheduler_test.ego:85
 				wg.Go(func() {
+//line scheduler_test.ego:85
 					s.Run(ctx)
 				})
 			}
+//line scheduler_test.ego:87
 			wg.Wait()
 			total := runs["a"] + runs["b"]
 			if shared && total != 10 || !shared && (runs["a"] != 10 || runs["b"] != 10) {
 				t.Errorf("shared %v: runs %v", shared, runs)
 			}
+
 		})
 	}
 }
@@ -125,6 +134,8 @@ func TestOneInstancePerTick(t *testing.T) {
 //line scheduler_test.ego:99
 func TestNoOverlap(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line scheduler_test.ego:101
 		var mu sync.Mutex
 		running, most, runs := 0, 0, 0
 		locks := &lock.MemoryStore{}
@@ -134,6 +145,8 @@ func TestNoOverlap(t *testing.T) {
 		for range 2 {
 			s := scheduler.New(scheduler.Config{}, locks, nil, slog.New(slog.DiscardHandler))
 			s.Add("report", scheduler.Every(time.Minute), func(ctx context.Context) error {
+
+//line scheduler_test.ego:110
 				mu.Lock()
 				running++
 				runs++
@@ -144,15 +157,20 @@ func TestNoOverlap(t *testing.T) {
 				running--
 				mu.Unlock()
 				return nil
+
 			})
+//line scheduler_test.ego:121
 			wg.Go(func() {
+//line scheduler_test.ego:121
 				s.Run(ctx)
 			})
 		}
+//line scheduler_test.ego:123
 		wg.Wait()
 		if most != 1 || runs != 5 {
 			t.Errorf("%d runs, %d at once at most; want 5, one at a time", runs, most)
 		}
+
 	})
 }
 
@@ -163,39 +181,53 @@ func TestNoOverlap(t *testing.T) {
 //line scheduler_test.ego:133
 func TestFailures(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line scheduler_test.ego:135
 		var logs strings.Builder
 		var mu sync.Mutex
 		runs := 0
 		s := scheduler.New(scheduler.Config{}, nil, nil, slog.New(slog.NewTextHandler(&logs, nil)))
 		s.Add("panics", scheduler.Every(time.Minute), func(ctx context.Context) error {
+
+//line scheduler_test.ego:140
 			mu.Lock()
 			runs++
 			mu.Unlock()
 			panic("boom")
+
 		})
+//line scheduler_test.ego:145
 		ctx, stop := context.WithTimeout(context.Background(), 2*time.Minute+time.Second)
 		defer stop()
 		if err := s.Run(ctx); err != nil {
 			panic(err)
 		}
+//line scheduler_test.ego:148
 		if runs != 2 || !strings.Contains(logs.String(), "the task panicked: boom") || !strings.Contains(logs.String(), "scheduler_test") {
 			t.Errorf("%d runs, logs:\n%s", runs, logs.String())
 		}
+
 		logs.Reset()
 		runs = 0
 		s = scheduler.New(scheduler.Config{}, failingStore{}, nil, slog.New(slog.NewTextHandler(&logs, nil)))
 		s.Add("locked", scheduler.Every(time.Minute), func(ctx context.Context) error {
+
+//line scheduler_test.ego:156
 			runs++
 			return nil
+
 		})
+//line scheduler_test.ego:159
 		ctx, stop = context.WithTimeout(context.Background(), time.Minute+time.Second)
 		defer stop()
 		if err := s.Run(ctx); err != nil {
 			panic(err)
 		}
+//line scheduler_test.ego:162
 		if runs != 0 || !strings.Contains(logs.String(), "taking the task's lock failed") {
 			t.Errorf("%d runs, logs:\n%s", runs, logs.String())
 		}
+
 	})
 }
 

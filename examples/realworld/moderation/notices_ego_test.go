@@ -28,6 +28,8 @@ func TestRemovalNotices(t *testing.T) {
 	var mu sync.Mutex
 	var chat []string
 	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+//line notices_test.ego:27
 		var msg struct {
 			Text string `json:"text"`
 		}
@@ -35,7 +37,9 @@ func TestRemovalNotices(t *testing.T) {
 		mu.Lock()
 		chat = append(chat, msg.Text)
 		mu.Unlock()
+
 	}))
+//line notices_test.ego:35
 	defer hook.Close()
 	smtp := mailertest.NewServer(t)
 	t.Setenv("MODERATORS_CHAT_URL", hook.URL)

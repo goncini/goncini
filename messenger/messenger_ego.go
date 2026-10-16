@@ -190,14 +190,14 @@ func (c Config) queues() []string {
 	if len(queues) == 0 {
 		queues = []string{"async"}
 	}
-	arg := slices.Clone(queues)
-	var v string
+	v := slices.Clone(queues)
+	var v2 string
 	if c.Failed == "" {
-		v = "failed"
+		v2 = "failed"
 	} else {
-		v = c.Failed
+		v2 = c.Failed
 	}
-	return append(arg, v)
+	return append(v, v2)
 }
 
 // Background runs a worker of the queues until ctx is done, if
@@ -232,6 +232,7 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 	if c.Retries == 0 {
 		retries = 3
 	} else {
+//line messenger.ego:213
 		retries = max(c.Retries, 0)
 	}
 //line messenger.ego:214
@@ -312,6 +313,7 @@ type Option func(*Message)
 // DelayStamp does.
 func Delay(d time.Duration) Option {
 	return func(m *Message) {
+//line messenger.ego:277
 		m.AvailableAt = m.AvailableAt.Add(d)
 	}
 }

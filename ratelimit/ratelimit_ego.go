@@ -159,6 +159,7 @@ func (l *Limiter) Take(ctx context.Context, key string, n int) (Result, error) {
 //line ratelimit.ego:128
 	var res Result
 	err := l.store().Update(ctx, key, now, l.Policy.TTL(), func(st *State) {
+//line ratelimit.ego:129
 		res = l.Policy.Take(st, n, now)
 	})
 //line ratelimit.ego:130
@@ -168,11 +169,13 @@ func (l *Limiter) Take(ctx context.Context, key string, n int) (Result, error) {
 // Reset forgets key's state: it has its whole limit again, as after a
 // successful login.
 func (l *Limiter) Reset(ctx context.Context, key string) error {
-	v := l.Now
-	if v == nil {
-		v = time.Now
+	v := l.store().Update
+	v2 := l.Now
+	if v2 == nil {
+		v2 = time.Now
 	}
-	return l.store().Update(ctx, key, (v)(), l.Policy.TTL(), func(st *State) {
+	return v(ctx, key, (v2)(), l.Policy.TTL(), func(st *State) {
+//line ratelimit.ego:136
 		*st = State{}
 	})
 }
@@ -185,6 +188,7 @@ func (l *Limiter) store() Store {
 		return l.Store
 	}
 	l.once.Do(func() {
+//line ratelimit.ego:144
 		l.mem = &MemoryStore{}
 	})
 //line ratelimit.ego:145

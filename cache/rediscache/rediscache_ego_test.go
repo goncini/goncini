@@ -27,6 +27,7 @@ func store(t *testing.T) *rediscache.Store {
 	}
 //line rediscache_test.ego:21
 	t.Cleanup(func() {
+//line rediscache_test.ego:21
 		closeClient()
 	})
 //line rediscache_test.ego:22

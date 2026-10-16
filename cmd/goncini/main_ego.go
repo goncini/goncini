@@ -116,12 +116,16 @@ func main() {
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, usage) }
 	args := func(min, max int) {
+
+//line main.ego:116
 		fs.Parse(os.Args[2:])
 		if fs.NArg() < min || fs.NArg() > max {
 			fs.Usage()
 			os.Exit(2)
 		}
+
 	}
+//line main.ego:122
 	var err error
 	var files []string // that a maker wrote
 	switch cmd {

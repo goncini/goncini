@@ -20,12 +20,17 @@ import (
 //line console_test.ego:17
 func echo(name string) console.Command {
 	return console.New(name, "Echoes "+name, func(ctx context.Context, out io.Writer, args []string) error {
+
+//line console_test.ego:19
 		_, err := io.WriteString(out, name+" "+strings.Join(args, " "))
 		return err
+
 	})
 }
 
 // migrate is a command with flags.
+//
+//line console_test.ego:25
 type migrate struct{ steps int }
 
 func (*migrate) Name() string    { return "db:migrate" }

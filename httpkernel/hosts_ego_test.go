@@ -25,6 +25,7 @@ func TestTrustHosts(t *testing.T) {
 //line hosts_test.ego:15
 	k := &httpkernel.Kernel{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
 		}),
 		Middleware: []httpkernel.Middleware{proxies.Middleware, trust},
 	}

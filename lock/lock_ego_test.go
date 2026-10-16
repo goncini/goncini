@@ -29,6 +29,7 @@ var stores = map[string]func(t *testing.T) lock.Store{
 //line lock_test.ego:22
 		pool.SetMaxOpenConns(1) // one database: each connection to :memory: has its own
 		t.Cleanup(func() {
+//line lock_test.ego:23
 			pool.Close()
 		})
 //line lock_test.ego:24
@@ -44,6 +45,8 @@ var stores = map[string]func(t *testing.T) lock.Store{
 func TestStores(t *testing.T) {
 	for name, newStore := range stores {
 		t.Run(name, func(t *testing.T) {
+
+//line lock_test.ego:32
 			ctx := context.Background()
 			f := &lock.Factory{Store: newStore(t), TTL: 100 * time.Millisecond}
 			a, b := f.New("report"), f.New("report")
@@ -51,46 +54,55 @@ func TestStores(t *testing.T) {
 			if err != nil {
 				panic(err)
 			}
+//line lock_test.ego:36
 			gotB, err := b.Acquire(ctx)
 			if err != nil {
 				panic(err)
 			}
+//line lock_test.ego:37
 			again, err := a.Acquire(ctx)
 			if err != nil {
 				panic(err)
-			}
+			} // its owner may take it again
+//line lock_test.ego:38
 			other, err := f.New("other").Acquire(ctx)
 			if err != nil {
 				panic(err)
 			}
+//line lock_test.ego:39
 			if !gotA || gotB || !again || !other {
 				t.Fatalf("a %v, b %v, a again %v, another key %v", gotA, gotB, again, other)
 			}
 			if err := b.Release(ctx); err != nil {
 				panic(err)
-			}
+			} // not b's: nothing happens
+//line lock_test.ego:43
 			afterB, err := b.Acquire(ctx)
 			if err != nil {
 				panic(err)
 			}
+//line lock_test.ego:44
 			if afterB {
 				t.Error("b released a's lock")
 			}
 			if err := a.Release(ctx); err != nil {
 				panic(err)
 			}
+//line lock_test.ego:48
 			released, err := b.Acquire(ctx)
 			if err != nil {
 				panic(err)
 			}
+//line lock_test.ego:49
 			if !released {
 				t.Error("b can't take a released lock")
 			}
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(150 * time.Millisecond) // b's hold expires
 			expired, err := a.Acquire(ctx)
 			if err != nil {
 				panic(err)
 			}
+//line lock_test.ego:54
 			if !expired {
 				t.Error("a can't take an expired lock")
 			}
@@ -98,9 +110,11 @@ func TestStores(t *testing.T) {
 			if err != nil {
 				panic(err)
 			}
+//line lock_test.ego:58
 			if refreshed {
 				t.Error("b refreshed a lock it lost")
 			}
+
 		})
 	}
 }
@@ -112,6 +126,8 @@ func TestStores(t *testing.T) {
 func TestRun(t *testing.T) {
 	for name, newStore := range stores {
 		t.Run(name, func(t *testing.T) {
+
+//line lock_test.ego:70
 			f := &lock.Factory{Store: newStore(t), TTL: 60 * time.Millisecond}
 			ctx := context.Background()
 			var mu sync.Mutex
@@ -119,6 +135,8 @@ func TestRun(t *testing.T) {
 			var wg sync.WaitGroup
 			for range 2 {
 				wg.Go(func() {
+
+//line lock_test.ego:77
 					if _, err := f.New("job").Run(ctx, func(ctx context.Context) error {
 						mu.Lock()
 						ran++
@@ -128,8 +146,10 @@ func TestRun(t *testing.T) {
 					}); err != nil {
 						panic(err)
 					}
+
 				})
 			}
+//line lock_test.ego:86
 			wg.Wait()
 			if ran != 1 {
 				t.Errorf("%d runs, want 1", ran)
@@ -138,9 +158,11 @@ func TestRun(t *testing.T) {
 			if err != nil {
 				panic(err)
 			}
+//line lock_test.ego:91
 			if !held {
 				t.Error("Run didn't release the lock")
 			}
+
 		})
 	}
 }
@@ -182,6 +204,7 @@ func TestPrune(t *testing.T) {
 //line lock_test.ego:127
 	pool.SetMaxOpenConns(1)
 	t.Cleanup(func() {
+//line lock_test.ego:128
 		pool.Close()
 	})
 //line lock_test.ego:129

@@ -65,10 +65,13 @@ func dispatched[E any](k *Kernel, r *http.Request, e *E) {
 // requestEvents returns a handler that dispatches RequestEvent before h.
 func requestEvents(k *Kernel, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+//line events.ego:64
 		if err := event.Dispatch(r.Context(), k.Events, &RequestEvent{Request: r}); err != nil {
 			WriteError(w, r, err)
 			return
 		}
 		h.ServeHTTP(w, r)
+
 	})
 }

@@ -145,12 +145,16 @@ func Problem(err error) httpkernel.Problem {
 	if err == nil {
 		v = httpkernel.Problem{}
 	} else if _, ok := errors.AsType[NoArticle](err); ok {
+//line articles.ego:64
 		v = conduit.Problem(http.StatusNotFound, "article", "not found")
 	} else if _, ok := errors.AsType[NotAuthor](err); ok {
+//line articles.ego:65
 		v = conduit.Problem(http.StatusForbidden, "article", "forbidden")
 	} else if _, ok := errors.AsType[NoComment](err); ok {
+//line articles.ego:66
 		v = conduit.Problem(http.StatusNotFound, "comment", "not found")
 	} else if _, ok := errors.AsType[NotCommentAuthor](err); ok {
+//line articles.ego:67
 		v = conduit.Problem(http.StatusForbidden, "comment", "forbidden")
 	} else if _, ok := errors.AsType[Unavailable](err); ok {
 		v = httpkernel.Problem{Status: http.StatusServiceUnavailable}

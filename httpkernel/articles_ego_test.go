@@ -77,8 +77,10 @@ func articleProblem(err error) httpkernel.Problem {
 	if err == nil {
 		v = httpkernel.Problem{}
 	} else if e, ok := errors.AsType[ArticleNotFound](err); ok {
+//line articles_test.ego:21
 		v = httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
 	} else if e, ok := errors.AsType[ArticleLocked](err); ok {
+//line articles_test.ego:22
 		v = httpkernel.Problem{Status: http.StatusConflict, Detail: e.Error()}
 	} else if _, ok := errors.AsType[ArticleStorage](err); ok {
 		v = httpkernel.Problem{Status: http.StatusServiceUnavailable, Detail: "try again later"}

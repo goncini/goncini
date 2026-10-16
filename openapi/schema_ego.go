@@ -337,7 +337,7 @@ func (s *schemas) inner(p *Schema, t reflect.Type, m mode) *Schema {
 	}
 	if p.Ref != "" {
 		v, ok := s.components[schemaKey{t, m}]
-		if !ok {
+		if !ok || v == nil {
 			v = &Schema{}
 		}
 		return v
@@ -414,6 +414,7 @@ func (s *schemas) finish() map[string]*Schema {
 			if len(ts) == 1 {
 				base[t] = b
 			} else {
+//line schema.ego:378
 				base[t] = exported(packageName(t)) + b
 			}
 		}

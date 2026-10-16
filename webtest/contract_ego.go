@@ -24,6 +24,8 @@ import (
 //line contract.ego:21
 func Contract(t testing.TB, doc *openapi.Document, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+//line contract.ego:23
 		var reqBody []byte
 		if r.Body != nil && r.Body != http.NoBody {
 			var err error
@@ -46,10 +48,13 @@ func Contract(t testing.TB, doc *openapi.Document, h http.Handler) http.Handler 
 		if err != nil {
 			t.Errorf("the API breaks its OpenAPI document: %v", err)
 		}
+
 	})
 }
 
 // failing is a reader that fails with err, or ends if it is nil.
+//
+//line contract.ego:49
 type failing struct{ err error }
 
 func (f failing) Read([]byte) (int, error) {

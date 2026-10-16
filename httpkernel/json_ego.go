@@ -151,6 +151,7 @@ func describeType(t reflect.Type) string {
 	case reflect.Bool:
 		v = "a boolean"
 	case reflect.Slice, reflect.Array:
+//line json.ego:144
 		if t.Elem().Kind() == reflect.Uint8 {
 			v = "a base64 string"
 		} else {
@@ -178,15 +179,19 @@ func expectedKind(t reflect.Type) jsontext.Kind {
 	var v jsontext.Kind
 	switch t.Kind() {
 	case reflect.String:
+//line json.ego:160
 		v = jsontext.Kind('"')
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64:
 		v = '0'
 	case reflect.Bool:
 		v = 't'
 	case reflect.Slice, reflect.Array:
+//line json.ego:165
 		if t.Elem().Kind() == reflect.Uint8 {
+//line json.ego:165
 			v = jsontext.Kind('"')
 		} else {
+//line json.ego:165
 			v = jsontext.Kind('[')
 		}
 	case reflect.Map, reflect.Struct:

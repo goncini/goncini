@@ -299,10 +299,14 @@ func load(root string) (*app, error) {
 //line generate.ego:252
 	var errs []error
 	packages.Visit(pkgs, nil, func(p *egopackages.Package) {
+
+//line generate.ego:254
 		for _, e := range p.Errors {
 			errs = append(errs, errors.New(e.Error()))
 		}
+
 	})
+//line generate.ego:258
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
@@ -394,8 +398,10 @@ func isFunc(info *types.Info, x ast.Expr, path, name string) bool {
 	}
 	var v bool
 	if path == "" {
+//line generate.ego:332
 		v = obj.Parent() == types.Universe
 	} else {
+//line generate.ego:332
 		v = obj.Pkg() != nil && obj.Pkg().Path() == path
 	}
 	return v
@@ -457,10 +463,14 @@ func (a *app) addProvidersIn(info *types.Info, args []ast.Expr, seen map[types.O
 func (a *app) varInit(v *types.Var) (ast.Expr, *types.Info) {
 	var pkg *packages.Package
 	packages.Visit(a.all, nil, func(p *egopackages.Package) {
+
+//line generate.ego:389
 		if p.Types == v.Pkg() {
 			pkg = p
 		}
+
 	})
+//line generate.ego:393
 	if pkg == nil {
 		return nil, nil
 	}
@@ -535,12 +545,16 @@ func (a *app) lookup(name string) types.Type {
 //line generate.ego:459
 	var found types.Type
 	packages.Visit(a.all, nil, func(p *egopackages.Package) {
+
+//line generate.ego:461
 		if found == nil && p.PkgPath == path {
 			if obj := p.Types.Scope().Lookup(typeName); obj != nil {
 				found = obj.Type()
 			}
 		}
+
 	})
+//line generate.ego:467
 	return found
 }
 
@@ -548,10 +562,14 @@ func (a *app) lookup(name string) types.Type {
 func (a *app) collect(k kind, elem types.Type) (params []string, values string) {
 	var items []string
 	add := func(t types.Type, value string) {
+
+//line generate.ego:474
 		p := "p" + strconv.Itoa(len(params)+1)
 		params = append(params, p+" "+a.typeString(t))
 		items = append(items, strings.ReplaceAll(value, "$", p))
+
 	}
+//line generate.ego:478
 	switch k.name {
 	case "autoProblems":
 
@@ -752,6 +770,7 @@ func describe(root string) ([]service, error) {
 		if pkg == p.Types {
 			v = ""
 		} else {
+//line generate.ego:663
 			v = pkg.Name()
 		}
 		return v

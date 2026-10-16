@@ -60,8 +60,8 @@ func (d *Document) Check(x Exchange) error {
 		}
 	}
 	res, ok := op.Responses[strconv.Itoa(x.Status)]
-	if !ok {
-		if v, ok2 := op.Responses[fmt.Sprintf("%dXX", x.Status/100)]; ok2 {
+	if !ok || res == nil {
+		if v, ok2 := op.Responses[fmt.Sprintf("%dXX", x.Status/100)]; ok2 && v != nil {
 			res = v
 		} else {
 			res = op.Responses["default"]
@@ -152,7 +152,7 @@ func (d *Document) requestBody(rb *RequestBody) *RequestBody {
 	}
 	if name, ok := strings.CutPrefix(rb.Ref, "#/components/requestBodies/"); ok {
 		v, ok2 := d.Components.RequestBodies[name]
-		if !ok2 {
+		if !ok2 || v == nil {
 			v = &RequestBody{}
 		}
 		return v
@@ -165,7 +165,7 @@ func (d *Document) requestBody(rb *RequestBody) *RequestBody {
 func (d *Document) response(r *Response) *Response {
 	if name, ok := strings.CutPrefix(r.Ref, "#/components/responses/"); ok {
 		v, ok2 := d.Components.Responses[name]
-		if !ok2 {
+		if !ok2 || v == nil {
 			v = &Response{}
 		}
 		return v
@@ -265,7 +265,7 @@ func (c *checker) value(s *Schema, v any, at string) {
 			c.value(s.Items, item, fmt.Sprintf("%s/%d", at, i))
 		}
 
-	} else if members, ok := v.(map[string]any); ok {
+	} else if members, ok5 := v.(map[string]any); ok5 {
 
 //line check.ego:238
 		for _, name := range s.Required {
@@ -274,8 +274,8 @@ func (c *checker) value(s *Schema, v any, at string) {
 			}
 		}
 		for name, m := range members {
-			p, ok5 := s.Properties[name]
-			if !ok5 {
+			p, ok6 := s.Properties[name]
+			if !ok6 || p == nil {
 				p = s.AdditionalProperties
 			}
 //line check.ego:245
@@ -321,6 +321,7 @@ func kindOf(v any) string {
 	} else if _, ok := v.(bool); ok {
 		v2 = "boolean"
 	} else if n, ok := v.(float64); ok {
+//line check.ego:282
 		if n == math.Trunc(n) {
 			v2 = "integer"
 		} else {

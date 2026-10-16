@@ -27,12 +27,16 @@ import (
 //
 //line client_test.ego:23
 var echo = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+//line client_test.ego:24
 	body, _ := io.ReadAll(r.Body)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Seen", r.Header.Get("Authorization"))
 	fmt.Fprintf(w, `{"method":%q,"uri":%q,"type":%q,"body":%q}`, r.Method, r.URL.RequestURI(), r.Header.Get("Content-Type"), body)
+
 })
 
+//line client_test.ego:30
 type echoed struct {
 	Method string `json:"method"`
 	URI    string `json:"uri"`
@@ -108,28 +112,36 @@ func TestFailedChecks(t *testing.T) {
 	problem := webtest.NewClient(rec, &httpkernel.Kernel{}) // answers 404 problems
 	for i, check := range []func(){
 		func() {
+//line client_test.ego:100
 			c.Get("/x").Status(201)
 		},
 		func() {
+//line client_test.ego:101
 			c.Get("/x").HasHeader("X-Seen", "Token")
 		},
 		func() {
+//line client_test.ego:102
 			c.Get("/x").Contains("nope")
 		},
 		func() {
+//line client_test.ego:103
 			var v []int
 			c.Get("/x").JSON(&v)
 		},
 		func() {
+//line client_test.ego:104
 			c.Get("/x").Problem(200)
 		},
 		func() {
+//line client_test.ego:105
 			problem.Get("/x").Problem(404).HasDetail("nope")
 		},
 		func() {
+//line client_test.ego:106
 			problem.Get("/x").Problem(404).Violation("#/title", "is required")
 		},
 		func() {
+//line client_test.ego:107
 			var v map[string]any
 			webtest.NewClient(rec, http.NotFoundHandler()).Get("/x").JSON(&v)
 		},
@@ -157,6 +169,7 @@ func (i *isolator) InTx(ctx context.Context, fn func(context.Context) error) err
 
 func (i *isolator) Isolate(ctx context.Context) (context.Context, func() error, error) {
 	return context.WithValue(ctx, marker{}, true), func() error {
+//line client_test.ego:130
 		i.rolledBack = true
 		return nil
 	}, nil
@@ -166,11 +179,17 @@ func (i *isolator) Isolate(ctx context.Context) (context.Context, func() error, 
 func TestIsolate(t *testing.T) {
 	iso := &isolator{}
 	t.Run("test", func(t *testing.T) {
+
+//line client_test.ego:136
 		ctx := webtest.Isolate(t, iso)
 		seen := false
 		h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+//line client_test.ego:139
 			seen = r.Context().Value(marker{}) == true
+
 		})
+//line client_test.ego:141
 		webtest.NewClient(t, h).WithContext(ctx).Get("/")
 		if !seen {
 			t.Error("the request's context isn't the isolated one")
@@ -178,7 +197,9 @@ func TestIsolate(t *testing.T) {
 		if iso.rolledBack {
 			t.Error("rolled back before the test ended")
 		}
+
 	})
+//line client_test.ego:149
 	if !iso.rolledBack {
 		t.Error("not rolled back when the test ended")
 	}
@@ -188,9 +209,12 @@ func TestIsolate(t *testing.T) {
 // an hour-long request takes no time.
 func TestInABubble(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line client_test.ego:158
 		build := func(ctx context.Context, s *scope.Scope, cfg string) (*goncini.App, error) {
 			r := routing.New()
 			r.Get("/slow", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//line client_test.ego:160
 				time.Sleep(time.Hour)
 			}))
 //line client_test.ego:161
@@ -202,9 +226,11 @@ func TestInABubble(t *testing.T) {
 		if d := time.Since(start); d != time.Hour {
 			t.Errorf("the request took %v of fake time", d)
 		}
+
 	})
 }
 
+//line client_test.ego:172
 type greeting struct {
 	Hello string `json:"hello"`
 }
@@ -243,10 +269,14 @@ func TestContract(t *testing.T) {
 func TestContractPassesReadErrors(t *testing.T) {
 	var got error
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+//line client_test.ego:206
 		_, got = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusEarlyHints)
 		w.WriteHeader(http.StatusNoContent)
+
 	})
+//line client_test.ego:210
 	r := routing.New()
 	r.Post("/", h)
 	doc := &openapi.Document{Paths: map[string]*openapi.PathItem{"/": {Post: &openapi.Operation{Responses: map[string]*openapi.Response{"204": {}}}}}}

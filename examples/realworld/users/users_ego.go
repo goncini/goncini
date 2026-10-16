@@ -136,12 +136,16 @@ func Problem(err error) httpkernel.Problem {
 	if err == nil {
 		v = httpkernel.Problem{}
 	} else if e, ok := errors.AsType[Taken](err); ok {
+//line users.ego:55
 		v = conduit.Problem(http.StatusConflict, e.Field, "has already been taken")
 	} else if _, ok := errors.AsType[BadCredentials](err); ok {
+//line users.ego:56
 		v = conduit.Problem(http.StatusUnauthorized, "credentials", "invalid")
 	} else if e, ok := errors.AsType[TooManyLogins](err); ok {
+//line users.ego:57
 		v = tooManyLogins(e)
 	} else if _, ok := errors.AsType[NoProfile](err); ok {
+//line users.ego:58
 		v = conduit.Problem(http.StatusNotFound, "profile", "not found")
 	} else if _, ok := errors.AsType[Unavailable](err); ok {
 		v = httpkernel.Problem{Status: http.StatusServiceUnavailable}

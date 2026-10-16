@@ -143,10 +143,14 @@ func TestBaseURL(t *testing.T) {
 	// A plain handler, behind the proxies' middleware.
 	plain := &httpkernel.Kernel{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+//line proxy_test.ego:135
 			ip = httpkernel.ClientIPOf(r.Context())
+
 		}),
 		Middleware: []httpkernel.Middleware{proxies.Middleware},
 	}
+//line proxy_test.ego:139
 	plain.ServeHTTP(httptest.NewRecorder(), proxied)
 	if ip.String() != "198.51.100.9" {
 		t.Errorf("ClientIPOf in a plain handler = %v", ip)

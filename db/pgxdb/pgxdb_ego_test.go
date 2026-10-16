@@ -35,6 +35,7 @@ func open(t *testing.T) *pgxdb.Transactor {
 	}
 //line pgxdb_test.ego:26
 	t.Cleanup(func() {
+//line pgxdb_test.ego:26
 		pool.Exec(context.Background(), "DROP TABLE pgxdb_articles")
 	})
 //line pgxdb_test.ego:27
@@ -44,6 +45,7 @@ func open(t *testing.T) *pgxdb.Transactor {
 	}
 //line pgxdb_test.ego:28
 	t.Cleanup(func() {
+//line pgxdb_test.ego:28
 		closeDB()
 	})
 //line pgxdb_test.ego:29
@@ -127,6 +129,8 @@ func TestOpen(t *testing.T) {
 func TestIsolate(t *testing.T) {
 	tr := open(t)
 	t.Run("test", func(t *testing.T) {
+
+//line pgxdb_test.ego:90
 		ctx := webtest.Isolate(t, tr)
 		if err := tr.InTx(ctx, func(ctx context.Context) error {
 			_, err := tr.Conn(ctx).Exec(ctx, "INSERT INTO pgxdb_articles VALUES ('isolated')")
@@ -134,13 +138,16 @@ func TestIsolate(t *testing.T) {
 		}); err != nil {
 			panic(err)
 		}
+//line pgxdb_test.ego:95
 		var n int
 		if err := tr.Conn(ctx).QueryRow(ctx, "SELECT count(*) FROM pgxdb_articles").Scan(&n); err != nil {
 			panic(err)
 		}
+//line pgxdb_test.ego:97
 		if n != 1 {
 			t.Errorf("%d rows inside the test", n)
 		}
+
 	})
 //line pgxdb_test.ego:101
 	var n int

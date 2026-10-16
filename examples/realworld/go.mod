@@ -9,7 +9,7 @@ tool (
 )
 
 require (
-	github.com/effect-go/effect-go v0.3.5
+	github.com/effect-go/effect-go v0.4.0
 	github.com/goncini/goncini v0.1.0
 	github.com/goncini/goncini/db/goosedb v0.0.0
 	github.com/oapi-codegen/runtime v1.7.0

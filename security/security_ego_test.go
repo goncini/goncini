@@ -124,22 +124,28 @@ func TestTokens(t *testing.T) {
 
 func TestTokensExpire(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+
+//line security_test.ego:76
 		tokens, err := security.NewTokens(security.Config{Secret: secret, TTL: time.Hour})
 		if err != nil {
 			panic(err)
 		}
+//line security_test.ego:77
 		token, err := tokens.Issue("42")
 		if err != nil {
 			panic(err)
 		}
+//line security_test.ego:78
 		time.Sleep(59 * time.Minute)
 		if _, err := tokens.Verify(token); err != nil {
 			panic(err)
 		}
+//line security_test.ego:80
 		time.Sleep(2 * time.Minute)
 		if _, err := tokens.Verify(token); err == nil || err.Error() != "invalid token: it has expired" {
 			t.Errorf("after the TTL: %v", err)
 		}
+
 	})
 }
 

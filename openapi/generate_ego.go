@@ -316,6 +316,7 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 	if d.Status == 0 {
 		status = "2XX"
 	} else {
+//line generate.ego:287
 		status = strconv.Itoa(d.Status)
 	}
 //line generate.ego:288
@@ -323,6 +324,7 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 	if d.Status == 0 {
 		v5 = "Success"
 	} else {
+//line generate.ego:288
 		v5 = http.StatusText(d.Status)
 	}
 	res := &Response{Description: v5}

@@ -115,15 +115,19 @@ func TestConcurrentTakes(t *testing.T) {
 	allowed := 0
 	for range 100 {
 		wg.Go(func() {
+
+//line ratelimit_test.ego:92
 			res, err := l.Take(context.Background(), "k", 1)
 			if err != nil {
 				panic(err)
 			}
+//line ratelimit_test.ego:93
 			mu.Lock()
 			defer mu.Unlock()
 			if res.Allowed {
 				allowed++
 			}
+
 		})
 	}
 //line ratelimit_test.ego:100
@@ -136,7 +140,9 @@ func TestConcurrentTakes(t *testing.T) {
 func TestMiddleware(t *testing.T) {
 	l := &ratelimit.Limiter{Policy: ratelimit.FixedWindow{Limit: 2, Interval: time.Minute}}
 	k := &httpkernel.Kernel{Handler: l.Middleware(ratelimit.ByIP)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
 	}))}
+//line ratelimit_test.ego:110
 	get := func(addr string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		r.RemoteAddr = addr + ":1234"

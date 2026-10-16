@@ -91,6 +91,7 @@ func newBinder(t reflect.Type) *binder {
 				panic(fmt.Sprintf("%s is required and has a default", where))
 			}
 			if p.slice {
+//line bind.ego:88
 				p.def = strings.Split(def, ",")
 			} else {
 				p.def = []string{def}
@@ -116,6 +117,7 @@ func mustNotHide(in, t reflect.Type, index []int) {
 		if ft := f.Type; f.Anonymous && (ft.Kind() == reflect.Struct || ft.Kind() == reflect.Pointer && ft.Elem().Kind() == reflect.Struct) {
 			var v reflect.Type
 			if ft.Kind() == reflect.Pointer {
+//line bind.ego:107
 				v = ft.Elem()
 			} else {
 				v = ft
@@ -208,11 +210,15 @@ func parser(t reflect.Type) (func(string) (reflect.Value, error), bool) {
 		return parsing(t, "must be a duration, such as 1m30s", time.ParseDuration), true
 	case reflect.PointerTo(t).Implements(textUnmarshaler):
 		return func(s string) (reflect.Value, error) {
+
+//line bind.ego:185
 			v := reflect.New(t)
 			if err := v.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(s)); err != nil {
 				return reflect.Value{}, fmt.Errorf("is invalid: %w", err)
 			}
+//line bind.ego:187
 			return v.Elem(), nil
+
 		}, true
 	}
 //line bind.ego:190
@@ -252,15 +258,20 @@ func parser(t reflect.Type) (func(string) (reflect.Value, error), bool) {
 // error.
 func parsing[V any](t reflect.Type, detail string, parse func(string) (V, error)) func(string) (reflect.Value, error) {
 	return func(s string) (reflect.Value, error) {
+
+//line bind.ego:214
 		v, err := parse(s)
 		if err != nil {
 			return reflect.Value{}, fmt.Errorf("%v", detail)
 		}
 		return reflect.ValueOf(v).Convert(t), nil
+
 	}
 }
 
 // asString parses a string: any is fine.
+//
+//line bind.ego:223
 func asString(s string) (string, error) { return s, nil }
 
 // bind fills in from r: the parameters first, then the body. Invalid

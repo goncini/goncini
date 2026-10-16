@@ -78,6 +78,7 @@ func (v *Validator) Validate(ctx context.Context, in any) error {
 	for i, f := range failures {
 		v2, ok := v.messages[f.Tag()]
 		if !ok {
+//line validator.ego:74
 			v2 = detailOf(f)
 		}
 		violations[i] = violation(f, v2)
@@ -215,6 +216,7 @@ func detailOf(f playground.FieldError) string {
 	case "ne":
 		v = fmt.Sprintf("must not be %s", p)
 	case "oneof":
+//line validator.ego:160
 		v = fmt.Sprintf("must be one of %s", strings.ReplaceAll(p, " ", ", "))
 	case "email":
 		v = "must be an email address"
@@ -241,9 +243,12 @@ func detailOf(f playground.FieldError) string {
 	case "unique":
 		v = "must have no duplicates"
 	default:
+//line validator.ego:173
 		if p != "" {
+//line validator.ego:173
 			v = fmt.Sprintf("must satisfy %s=%s", f.Tag(), p)
 		} else {
+//line validator.ego:173
 			v = fmt.Sprintf("must satisfy %s", f.Tag())
 		}
 	}
