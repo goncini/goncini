@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.2.0 (2026-10-16)
+
+Every module is tagged v0.2.0, as for v0.1.0. To upgrade an app, require
+`github.com/goncini/goncini v0.2.0` and its adapters at v0.2.0, then run
+`go tool goncini tidy`. The tool's new commands, `serve`, `check` and the
+app's own, need it: an app on v0.1.0 runs v0.1.0's tool.
 
 goncini requires effect-go v0.4.0, and its generated code is generated
 again with it. What changes for apps:
