@@ -6,7 +6,7 @@ tool github.com/effect-go/effect-go/cmd/ego
 
 require (
 	github.com/glebarez/sqlite v1.11.0
-	github.com/goncini/goncini v0.1.0
+	github.com/goncini/goncini v0.2.0
 	gorm.io/gorm v1.31.2
 )
 

@@ -8,7 +8,7 @@ replace github.com/goncini/goncini => ../..
 
 require (
 	github.com/effect-go/effect-go v0.4.0
-	github.com/goncini/goncini v0.1.0
+	github.com/goncini/goncini v0.2.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0
 	go.opentelemetry.io/proto/otlp v1.11.1
