@@ -56,22 +56,6 @@ func newApp(module, dir, replace string) (err error) {
 		return fmt.Errorf("%s isn't empty", dir)
 	}
 	existed := err == nil
-	if replace != "" {
-		abs := check filepath.Abs(replace) ""
-		if _, err := os.Stat(filepath.Join(abs, "go.mod")); err != nil {
-			return fmt.Errorf("%s isn't a goncini checkout", replace)
-		}
-		// A relative checkout stays relative, from the app: its go.mod can
-		// be committed, as goncini's examples are.
-		if !filepath.IsAbs(replace) {
-			app := check filepath.Abs(dir) ""
-			abs = check filepath.Rel(app, abs) ""
-			if !strings.HasPrefix(abs, ".") {
-				abs = "./" + abs // go.mod's relative paths start with ./ or ../
-			}
-		}
-		replace = filepath.ToSlash(abs)
-	}
 	defer func() { // a failure leaves dir as it was
 		if err != nil {
 			if existed {
@@ -81,9 +65,36 @@ func newApp(module, dir, replace string) (err error) {
 			}
 		}
 	}()
+	if replace != "" {
+		replace = check replacement(dir, replace) ""
+	}
 	prefix, _, _ := modpath.SplitPathVersion(module) // example.com/acme of example.com/acme/v2
 	data := skeletonData{Module: module, Name: path.Base(prefix), Replace: replace}
 	return writeApp(dir, data)
+}
+
+// replacement is the path of the goncini checkout at replace, which the
+// go.mod of the app in dir requires: relative, from the app, if replace is,
+// so that the go.mod can be committed, as goncini's examples are.
+func replacement(dir, replace string) (string, error) {
+	abs := check filepath.Abs(replace) ""
+	if _, err := os.Stat(filepath.Join(abs, "go.mod")); err != nil {
+		return "", fmt.Errorf("%s isn't a goncini checkout", replace)
+	}
+	if filepath.IsAbs(replace) {
+		return filepath.ToSlash(abs), nil
+	}
+	// From the paths that the symlinks lead to: macOS's /var is
+	// /private/var, a level more to climb.
+	check os.MkdirAll(dir, 0o755) ""
+	app := check filepath.Abs(dir) ""
+	app = check filepath.EvalSymlinks(app) ""
+	abs = check filepath.EvalSymlinks(abs) ""
+	rel := check filepath.Rel(app, abs) ""
+	if !strings.HasPrefix(rel, ".") {
+		rel = "./" + rel // go.mod's relative paths start with ./ or ../
+	}
+	return filepath.ToSlash(rel), nil
 }
 
 // empty removes what dir holds.
