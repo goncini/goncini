@@ -1,0 +1,82 @@
+// Package locktest checks that a lock.Store behaves as locks need: a key
+// that one owner holds excludes the others until it releases it or its
+// hold expires, and Run keeps it beyond the TTL.
+//
+//	func TestStore(t *testing.T) {
+//		locktest.Run(t, (t *testing.T) => newStore(t))
+//	}
+package locktest
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/goncini/goncini/lock"
+)
+
+// Run runs the checks on stores that newStore returns, new and empty for
+// each check. TTLs are real: a check waits a few hundred milliseconds.
+func Run(t *testing.T, newStore func(t *testing.T) lock.Store) {
+	ctx := context.Background()
+
+	t.Run("holding", (t *testing.T) => {
+		f := &lock.Factory{Store: newStore(t), TTL: 100 * time.Millisecond}
+		a, b := f.New("report"), f.New("report")
+		gotA := must a.Acquire(ctx)
+		gotB := must b.Acquire(ctx)
+		again := must a.Acquire(ctx) // its owner may take it again
+		other := must f.New("other").Acquire(ctx)
+		if !gotA || gotB || !again || !other {
+			t.Fatalf("a %v, b %v, a again %v, another key %v", gotA, gotB, again, other)
+		}
+		must b.Release(ctx) // not b's: nothing happens
+		afterB := must b.Acquire(ctx)
+		if afterB {
+			t.Error("b released a's lock")
+		}
+		must a.Release(ctx)
+		released := must b.Acquire(ctx)
+		if !released {
+			t.Error("b can't take a released lock")
+		}
+		time.Sleep(150 * time.Millisecond) // b's hold expires
+		expired := must a.Acquire(ctx)
+		if !expired {
+			t.Error("a can't take an expired lock")
+		}
+		refreshed := must b.Refresh(ctx)
+		if refreshed {
+			t.Error("b refreshed a lock it lost")
+		}
+	})
+
+	// Run keeps the lock while its function runs, beyond the TTL, and one
+	// of two concurrent runs gets it.
+	t.Run("running", (t *testing.T) => {
+		f := &lock.Factory{Store: newStore(t), TTL: 60 * time.Millisecond}
+		var mu sync.Mutex
+		ran := 0
+		var wg sync.WaitGroup
+		for range 2 {
+			wg.Go(() => {
+				must f.New("job").Run(ctx, func(ctx context.Context) error {
+					mu.Lock()
+					ran++
+					mu.Unlock()
+					time.Sleep(200 * time.Millisecond) // over three TTLs: refreshed
+					return ctx.Err()
+				})
+			})
+		}
+		wg.Wait()
+		if ran != 1 {
+			t.Errorf("%d runs, want 1", ran)
+		}
+		held := must f.New("job").Acquire(ctx)
+		if !held {
+			t.Error("Run didn't release the lock")
+		}
+	})
+}

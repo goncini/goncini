@@ -160,7 +160,7 @@ var Memory = layer.Set(NewMemoryTransports, NewBus)
 // NewSQLTransports returns the queues of c in pool.
 func NewSQLTransports(pool *sql.DB, c Config) (Transports, error) {
 	ts := Transports{}
-	for _, name := range c.queues() {
+	for _, name := range c.TransportNames() {
 		ts[name] = check NewSQLTransport(pool, name) ""
 	}
 	return ts, nil
@@ -169,14 +169,16 @@ func NewSQLTransports(pool *sql.DB, c Config) (Transports, error) {
 // NewMemoryTransports returns the queues of c in memory.
 func NewMemoryTransports(c Config) Transports {
 	ts := Transports{}
-	for _, name := range c.queues() {
+	for _, name := range c.TransportNames() {
 		ts[name] = &MemoryTransport{}
 	}
 	return ts
 }
 
-// queues are the transports' names, the failure transport's included.
-func (c Config) queues() []string {
+// TransportNames returns the names of the transports that SQL and Memory
+// make, as a transport adapter's provider does: the queues, and the failure
+// transport.
+func (c Config) TransportNames() []string {
 	queues := c.Queues
 	if len(queues) == 0 {
 		queues = []string{"async"}

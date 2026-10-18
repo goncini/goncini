@@ -381,7 +381,10 @@ plain constructors, matched by their result types.
 - `app/services.ego`'s `Services` lists the app's constructors, such as
   `articles.NewStore`: add a new service there. goncini's packages export
   sets of providers to list there too: `messenger.SQL` (a bus whose queues
-  are in the database, from `messenger.Config`), `lock.SQL`, `pgxdb.Layer`.
+  are in the database, from `messenger.Config`), `lock.SQL`, `pgxdb.Layer`;
+  and in the `github.com/goncini/goncini/redis` module, `redis.Messenger`
+  and `redis.Lock`, from a `redis.Config` whose URL is `memory://` in
+  `.env.test`, so that tests need no Redis.
 - `messenger.Config.Consume` and `scheduler.Config.Run` run a worker and
   the scheduled tasks inside `serve`, beside the server, instead of as
   processes of their own.

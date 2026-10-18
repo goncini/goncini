@@ -16,6 +16,7 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/pgxdb"
 	"github.com/goncini/goncini/lock"
+	"github.com/goncini/goncini/lock/locktest"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/messenger/transporttest"
 )
@@ -23,7 +24,7 @@ import (
 // TestLockStore checks goncini's SQL lock store on PostgreSQL, through
 // pgx's database/sql driver.
 //
-//line stores_test.ego:23
+//line stores_test.ego:24
 func TestLockStore(t *testing.T) {
 	url := os.Getenv("PGXDB_TEST_URL")
 	if url == "" {
@@ -34,63 +35,33 @@ func TestLockStore(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:30
+//line stores_test.ego:31
 	t.Cleanup(closePool)
 	sqlDB, closeDB, err := pgxdb.DB(pool)
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:32
+//line stores_test.ego:33
 	t.Cleanup(func() {
-//line stores_test.ego:32
+//line stores_test.ego:33
 		closeDB()
 	})
-//line stores_test.ego:33
-	store, err := lock.NewSQLStore(sqlDB)
-	if err != nil {
-		panic(err)
-	}
 //line stores_test.ego:34
-	store.Table = "pgxdb_test_locks"
-	t.Cleanup(func() {
-//line stores_test.ego:35
+	locktest.Run(t, func(t *testing.T) lock.Store {
+		store, err := lock.NewSQLStore(sqlDB)
+		if err != nil {
+			panic(err)
+		}
+//line stores_test.ego:36
+		store.Table = "pgxdb_test_locks"
 		sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_locks")
+		t.Cleanup(func() {
+//line stores_test.ego:38
+			sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_locks")
+		})
+//line stores_test.ego:39
+		return store
 	})
-
-//line stores_test.ego:37
-	f := &lock.Factory{Store: store, TTL: 200 * time.Millisecond}
-	a, b := f.New("report"), f.New("report")
-	gotA, err := a.Acquire(ctx)
-	if err != nil {
-		panic(err)
-	}
-//line stores_test.ego:40
-	gotB, err := b.Acquire(ctx)
-	if err != nil {
-		panic(err)
-	}
-//line stores_test.ego:41
-	if !gotA || gotB {
-		t.Fatalf("a %v, b %v", gotA, gotB)
-	}
-	time.Sleep(300 * time.Millisecond)
-	expired, err := b.Acquire(ctx)
-	if err != nil {
-		panic(err)
-	}
-//line stores_test.ego:46
-	if err := b.Release(ctx); err != nil {
-		panic(err)
-	}
-//line stores_test.ego:47
-	released, err := a.Acquire(ctx)
-	if err != nil {
-		panic(err)
-	}
-//line stores_test.ego:48
-	if !expired || !released {
-		t.Errorf("after expiry %v, after release %v", expired, released)
-	}
 }
 
 // TestMessengerTransport checks goncini's SQL transport on PostgreSQL.
@@ -104,7 +75,7 @@ func TestMessengerTransport(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line stores_test.ego:61
+//line stores_test.ego:51
 	t.Cleanup(closePool)
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	transporttest.Run(t, func(t *testing.T, now func() time.Time) messenger.Transport {
@@ -112,14 +83,14 @@ func TestMessengerTransport(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line stores_test.ego:65
+//line stores_test.ego:55
 		tr.Table, tr.Now = "pgxdb_test_messages", now
 		sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_messages")
 		t.Cleanup(func() {
-//line stores_test.ego:67
+//line stores_test.ego:57
 			sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_messages")
 		})
-//line stores_test.ego:68
+//line stores_test.ego:58
 		return tr
 	})
 }
@@ -142,25 +113,25 @@ func TestOutbox(t *testing.T) {
 	if err2 != nil {
 		panic(err2)
 	}
-//line stores_test.ego:87
+//line stores_test.ego:77
 	t.Cleanup(closePool)
 	sqlDB, closeDB, err3 := pgxdb.DB(pool)
 	if err3 != nil {
 		panic(err3)
 	}
-//line stores_test.ego:89
+//line stores_test.ego:79
 	t.Cleanup(func() {
-//line stores_test.ego:89
+//line stores_test.ego:79
 		closeDB()
 	})
-//line stores_test.ego:90
+//line stores_test.ego:80
 	tr := pgxdb.New(pool, sqlDB)
 	newBus := func() (*messenger.Bus, *messenger.SQLTransport) {
 		q, err := messenger.NewSQLTransport(sqlDB, "async")
 		if err != nil {
 			panic(err)
 		}
-//line stores_test.ego:93
+//line stores_test.ego:83
 		q.Table = "pgxdb_test_outbox"
 		b := messenger.NewBus(messenger.Config{}, messenger.Transports{"async": q}, nil, slog.New(slog.DiscardHandler))
 		messenger.Route[welcome](b, "async")
@@ -169,30 +140,30 @@ func TestOutbox(t *testing.T) {
 	if _, err4 := sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_outbox"); err4 != nil {
 		panic(err4)
 	}
-//line stores_test.ego:99
+//line stores_test.ego:89
 	t.Cleanup(func() {
-//line stores_test.ego:99
+//line stores_test.ego:89
 		sqlDB.Exec("DROP TABLE IF EXISTS pgxdb_test_outbox")
 	})
-//line stores_test.ego:100
+//line stores_test.ego:90
 	b, q := newBus()
 	rolledBack := errors.New("rolled back")
 	err := tr.InTx(ctx, func(ctx context.Context) error {
 		if err := messenger.Dispatch(ctx, b, welcome{"ann"}); err != nil {
 			return err
 		}
-//line stores_test.ego:104
+//line stores_test.ego:94
 		return rolledBack
 	})
 	if err5 := tr.InTx(ctx, func(ctx context.Context) error { return messenger.Dispatch(ctx, b, welcome{"bob"}) }); err5 != nil {
 		panic(err5)
 	}
-//line stores_test.ego:107
+//line stores_test.ego:97
 	queued, err6 := q.List(ctx)
 	if err6 != nil {
 		panic(err6)
 	}
-//line stores_test.ego:108
+//line stores_test.ego:98
 	if !errors.Is(err, rolledBack) || len(queued) != 1 || !strings.Contains(string(queued[0].Body), "bob") {
 		t.Fatalf("err %v, queued %+v", err, queued)
 	}
@@ -207,7 +178,7 @@ func TestOutbox(t *testing.T) {
 			if err := messenger.Dispatch(ctx, b, welcome{"a1"}); err != nil {
 				return err
 			}
-//line stores_test.ego:120
+//line stores_test.ego:110
 			close(first)
 			<-second
 			return messenger.Dispatch(ctx, b, welcome{"a2"})

@@ -26,8 +26,14 @@ Status: early. [`httpkernel`](httpkernel), [`routing`](routing),
 [`validator`](validator), config as code, the [`console`](console),
 `goncini.Main` and [`db`](db), with adapters for pgx, GORM, goose and
 golang-migrate, [`webtest`](webtest), [`security`](security) with voters,
-API keys and [OpenID Connect](security/oidc), [`openapi`](openapi), [`cors`](cors), [`ratelimit`](ratelimit),
-[`uid`](uid) and [`listing`](listing) are implemented
+API keys and [OpenID Connect](security/oidc), [`openapi`](openapi),
+[`cors`](cors), [`ratelimit`](ratelimit), [`uid`](uid) and
+[`listing`](listing); [`event`](event), [`messenger`](messenger),
+[`scheduler`](scheduler) and [`lock`](lock), in SQL or [Redis](redis);
+[`cache`](cache), [`httpclient`](httpclient), [`mailer`](mailer),
+[`notifier`](notifier), [`translation`](translation) and
+[`workflow`](workflow); the [`profiler`](profiler) and the `goncini` tool
+are implemented
 ([CHANGELOG.md](CHANGELOG.md)). [examples/realworld](examples/realworld), the
 RealWorld API, passes its official test suite, and a client generated from
 its OpenAPI document drives every operation. The plan is in

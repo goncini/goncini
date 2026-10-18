@@ -1,0 +1,161 @@
+package redis
+
+import (
+	"cmp"
+	"context"
+	"encoding/json"
+	"errors"
+	"slices"
+	"time"
+
+	goredis "github.com/redis/go-redis/v9"
+
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/uid"
+)
+
+// Transport keeps the messages of a queue in Redis, in three keys that
+// share a hash slot, for Redis Cluster: a hash of the messages by ID, a
+// sorted set of their IDs by when a worker may receive them next, and a
+// hash of the leases' tokens by ID. A lease moves its message's time to
+// the lease's end, so that a message whose lease runs out is received
+// again.
+type Transport struct {
+	client                goredis.UniversalClient
+	messages, due, leases string
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
+}
+
+// NewTransport returns the transport of the queue, whose keys start with
+// prefix.
+func NewTransport(client goredis.UniversalClient, prefix, queue string) *Transport {
+	key := prefix + "messenger:{" + queue + "}:"
+	return &Transport{client: client, messages: key + "messages", due: key + "due", leases: key + "leases"}
+}
+
+func (t *Transport) now() time.Time {
+	return (t.Now ?? time.Now)()
+}
+
+func (t *Transport) keys() []string {
+	return []string{t.messages, t.due, t.leases}
+}
+
+// stored is a message as the messages' hash keeps it, without its ID.
+type stored struct {
+	Type        string          `json:"type"`
+	Body        json.RawMessage `json:"body"`
+	Attempts    int             `json:"attempts"`
+	Error       string          `json:"error,omitempty"`
+	AvailableAt int64           `json:"availableAt"` // in Unix milliseconds
+}
+
+func encode(m messenger.Message) (string, error) {
+	b := check json.Marshal(stored{Type: m.Type, Body: m.Body, Attempts: m.Attempts, Error: m.Error, AvailableAt: m.AvailableAt.UnixMilli()}) ""
+	return string(b), nil
+}
+
+func decode(id, value string) (messenger.Message, error) {
+	var s stored
+	check json.Unmarshal([]byte(value), &s) ""
+	return messenger.Message{ID: id, Type: s.Type, Body: s.Body, Attempts: s.Attempts, Error: s.Error, AvailableAt: time.UnixMilli(s.AvailableAt)}, nil
+}
+
+func (t *Transport) Send(ctx context.Context, m messenger.Message) error {
+	value := check encode(m) ""
+	_, err := t.client.TxPipelined(ctx, func(p goredis.Pipeliner) error {
+		p.HSet(ctx, t.messages, m.ID, value)
+		p.ZAdd(ctx, t.due, goredis.Z{Score: float64(m.AvailableAt.UnixMilli()), Member: m.ID})
+		p.HDel(ctx, t.leases, m.ID)
+		return nil
+	})
+	return err
+}
+
+// receive leases the first message that is due, and returns its ID and
+// value: ARGV now, the lease's end, and its token.
+var receive = goredis.NewScript(`
+local ids = redis.call('ZRANGE', KEYS[2], '-inf', ARGV[1], 'BYSCORE', 'LIMIT', 0, 1)
+if #ids == 0 then return false end
+redis.call('ZADD', KEYS[2], ARGV[2], ids[1])
+redis.call('HSET', KEYS[3], ids[1], ARGV[3])
+return {ids[1], redis.call('HGET', KEYS[1], ids[1])}`)
+
+func (t *Transport) Receive(ctx context.Context, ttl time.Duration) (messenger.Lease, bool, error) {
+	now := t.now()
+	token := uid.NewV4().String()
+	got, err := receive.Run(ctx, t.client, t.keys(), now.UnixMilli(), now.Add(ttl).UnixMilli(), token).StringSlice()
+	if errors.Is(err, goredis.Nil) {
+		return nil, false, nil
+	}
+	check err ""
+	m := check decode(got[0], got[1]) ""
+	return &lease{t: t, msg: m, token: token}, true, nil
+}
+
+func (t *Transport) List(ctx context.Context) ([]messenger.Message, error) {
+	all := check t.client.HGetAll(ctx, t.messages).Result() ""
+	out := make([]messenger.Message, 0, len(all))
+	for id, value := range all {
+		m := check decode(id, value) ""
+		out = append(out, m)
+	}
+	slices.SortFunc(out, (a, b messenger.Message) => cmp.Or(a.AvailableAt.Compare(b.AvailableAt), cmp.Compare(a.ID, b.ID)))
+	return out, nil
+}
+
+func (t *Transport) Remove(ctx context.Context, id string) error {
+	_, err := t.client.TxPipelined(ctx, func(p goredis.Pipeliner) error {
+		p.HDel(ctx, t.messages, id)
+		p.ZRem(ctx, t.due, id)
+		p.HDel(ctx, t.leases, id)
+		return nil
+	})
+	return err
+}
+
+// lease is a message that a worker leased, with the lease's token.
+type lease struct {
+	t     *Transport
+	msg   messenger.Message
+	token string
+}
+
+func (l *lease) Message() messenger.Message { return l.msg }
+
+// extend moves the message's time to the lease's new end, if the token
+// still holds it: ARGV the ID, the token, and the end.
+var extend = goredis.NewScript(`
+if redis.call('HGET', KEYS[3], ARGV[1]) ~= ARGV[2] then return 0 end
+redis.call('ZADD', KEYS[2], ARGV[3], ARGV[1])
+return 1`)
+
+func (l *lease) Extend(ctx context.Context, ttl time.Duration) (bool, error) {
+	n := check extend.Run(ctx, l.t.client, l.t.keys(), l.msg.ID, l.token, l.t.now().Add(ttl).UnixMilli()).Int() ""
+	return n == 1, nil
+}
+
+// settle ends the lease, if the token still holds it: it removes the
+// message, or replaces it with the value of a retry, due then. ARGV the
+// ID, the token, and for a retry, the value and its time.
+var settle = goredis.NewScript(`
+if redis.call('HGET', KEYS[3], ARGV[1]) ~= ARGV[2] then return 0 end
+redis.call('HDEL', KEYS[3], ARGV[1])
+if ARGV[3] then
+	redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
+	redis.call('ZADD', KEYS[2], ARGV[4], ARGV[1])
+else
+	redis.call('HDEL', KEYS[1], ARGV[1])
+	redis.call('ZREM', KEYS[2], ARGV[1])
+end
+return 1`)
+
+func (l *lease) Ack(ctx context.Context) error {
+	return settle.Run(ctx, l.t.client, l.t.keys(), l.msg.ID, l.token).Err()
+}
+
+func (l *lease) Retry(ctx context.Context, m messenger.Message) error {
+	value := check encode(m) ""
+	return settle.Run(ctx, l.t.client, l.t.keys(), l.msg.ID, l.token, value, m.AvailableAt.UnixMilli()).Err()
+}

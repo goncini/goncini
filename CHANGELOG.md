@@ -53,6 +53,23 @@ new` and the makers.
   authenticated the request, which a verifier records with
   `security.SetClaims`, as oidc's does: `Load` reads them to create the
   user of a first request.
+- **redis**, a new module, keeps messages and locks in Redis:
+  `redis.Messenger` is a bus whose queues are in Redis, and `redis.Lock` a
+  lock store, as the scheduler's, which share a `redis.Client` from a
+  `redis.Config`. A queue is three keys in one hash slot, for Redis
+  Cluster, which scripts change at once: a message's lease is the time it
+  is due again. The URL `memory://` keeps them in the app's memory, for
+  tests, as Symfony's `in-memory://` transport does. A message dispatched
+  in a database transaction is sent at once, unlike to `messenger.SQL`'s
+  queues.
+- **lock/locktest** checks a `lock.Store`, as `transporttest` checks a
+  transport: the memory, SQL, PostgreSQL and Redis stores pass it.
+- **messenger:** `Config.TransportNames` returns the names of the
+  transports that a bus of the config has, for a transport adapter.
+- **The goncini tool:** `goncini generate` counts a function listed in
+  several sets once, as `layer` does: a client in two of a module's sets
+  was pinged twice before serving. `goncini tidy` works in a module
+  without an app, as a bundle's.
 - **examples/heartbeat**, the new example, has projects whose API keys
   authenticate them, checks in a workflow, public pings with raw bodies
   and a rate limit, a scheduled sweep, alerts by email and webhook through

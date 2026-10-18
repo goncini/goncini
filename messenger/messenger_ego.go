@@ -164,7 +164,7 @@ var Memory = layer.Set(NewMemoryTransports, NewBus)
 // NewSQLTransports returns the queues of c in pool.
 func NewSQLTransports(pool *sql.DB, c Config) (Transports, error) {
 	ts := Transports{}
-	for _, name := range c.queues() {
+	for _, name := range c.TransportNames() {
 		v, err := NewSQLTransport(pool, name)
 		if err != nil {
 			return nil, err
@@ -178,14 +178,16 @@ func NewSQLTransports(pool *sql.DB, c Config) (Transports, error) {
 // NewMemoryTransports returns the queues of c in memory.
 func NewMemoryTransports(c Config) Transports {
 	ts := Transports{}
-	for _, name := range c.queues() {
+	for _, name := range c.TransportNames() {
 		ts[name] = &MemoryTransport{}
 	}
 	return ts
 }
 
-// queues are the transports' names, the failure transport's included.
-func (c Config) queues() []string {
+// TransportNames returns the names of the transports that SQL and Memory
+// make, as a transport adapter's provider does: the queues, and the failure
+// transport.
+func (c Config) TransportNames() []string {
 	queues := c.Queues
 	if len(queues) == 0 {
 		queues = []string{"async"}
@@ -203,7 +205,7 @@ func (c Config) queues() []string {
 // Background runs a worker of the queues until ctx is done, if
 // Config.Consume says so: serve runs it beside the server.
 //
-//line messenger.ego:189
+//line messenger.ego:191
 func (b *Bus) Background(ctx context.Context) error {
 	if !b.Config.Consume {
 		return nil
@@ -232,17 +234,17 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 	if c.Retries == 0 {
 		retries = 3
 	} else {
-//line messenger.ego:213
+//line messenger.ego:215
 		retries = max(c.Retries, 0)
 	}
-//line messenger.ego:214
+//line messenger.ego:216
 	var delay time.Duration
 	if c.Delay == 0 {
 		delay = time.Second
 	} else {
 		delay = c.Delay
 	}
-//line messenger.ego:215
+//line messenger.ego:217
 	var v string
 	if c.Failed == "" {
 		v = "failed"
@@ -256,7 +258,7 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 		Config:     c,
 		Logger:     logger,
 	}
-//line messenger.ego:222
+//line messenger.ego:224
 	for _, h := range handlers {
 		h.Handlers(b)
 	}
@@ -313,7 +315,7 @@ type Option func(*Message)
 // DelayStamp does.
 func Delay(d time.Duration) Option {
 	return func(m *Message) {
-//line messenger.ego:277
+//line messenger.ego:279
 		m.AvailableAt = m.AvailableAt.Add(d)
 	}
 }
@@ -321,7 +323,7 @@ func Delay(d time.Duration) Option {
 // Dispatch handles m now, if its type has no route, or sends it to its
 // transport.
 //
-//line messenger.ego:282
+//line messenger.ego:284
 func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
 	t := reflect.TypeFor[M]()
 	b.mu.RLock()
@@ -339,7 +341,7 @@ func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
 	if err != nil {
 		return err
 	}
-//line messenger.ego:296
+//line messenger.ego:298
 	msg := Message{ID: uid.NewV7().String(), Type: name, Body: body, AvailableAt: b.now()}
 	for _, o := range opts {
 		o(&msg)
@@ -360,7 +362,7 @@ func (b *Bus) handle(ctx context.Context, t reflect.Type, m any) error {
 			return err
 		}
 	}
-//line messenger.ego:314
+//line messenger.ego:316
 	return nil
 }
 

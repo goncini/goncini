@@ -7,170 +7,44 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/goncini/goncini/lock"
+	"github.com/goncini/goncini/lock/locktest"
 )
 
-// stores are the stores to test, made new for each test.
-//
-//line lock_test.ego:18
-var stores = map[string]func(t *testing.T) lock.Store{
-	"memory": func(t *testing.T) lock.Store { return &lock.MemoryStore{} },
-	"sqlite": func(t *testing.T) lock.Store {
+//line lock_test.ego:17
+func TestMemoryStore(t *testing.T) {
+	locktest.Run(t, func(t *testing.T) lock.Store { return &lock.MemoryStore{} })
+}
+
+func TestSQLStore(t *testing.T) {
+	locktest.Run(t, func(t *testing.T) lock.Store {
 		pool, err := sql.Open("sqlite", "file::memory:")
 		if err != nil {
 			panic(err)
 		}
-//line lock_test.ego:22
+//line lock_test.ego:24
 		pool.SetMaxOpenConns(1) // one database: each connection to :memory: has its own
 		t.Cleanup(func() {
-//line lock_test.ego:23
+//line lock_test.ego:25
 			pool.Close()
 		})
-//line lock_test.ego:24
+//line lock_test.ego:26
 		s, err := lock.NewSQLStore(pool)
 		if err != nil {
 			panic(err)
 		}
-//line lock_test.ego:25
+//line lock_test.ego:27
 		return s
-	},
-}
-
-func TestStores(t *testing.T) {
-	for name, newStore := range stores {
-		t.Run(name, func(t *testing.T) {
-
-//line lock_test.ego:32
-			ctx := context.Background()
-			f := &lock.Factory{Store: newStore(t), TTL: 100 * time.Millisecond}
-			a, b := f.New("report"), f.New("report")
-			gotA, err := a.Acquire(ctx)
-			if err != nil {
-				panic(err)
-			}
-//line lock_test.ego:36
-			gotB, err := b.Acquire(ctx)
-			if err != nil {
-				panic(err)
-			}
-//line lock_test.ego:37
-			again, err := a.Acquire(ctx)
-			if err != nil {
-				panic(err)
-			} // its owner may take it again
-//line lock_test.ego:38
-			other, err := f.New("other").Acquire(ctx)
-			if err != nil {
-				panic(err)
-			}
-//line lock_test.ego:39
-			if !gotA || gotB || !again || !other {
-				t.Fatalf("a %v, b %v, a again %v, another key %v", gotA, gotB, again, other)
-			}
-			if err := b.Release(ctx); err != nil {
-				panic(err)
-			} // not b's: nothing happens
-//line lock_test.ego:43
-			afterB, err := b.Acquire(ctx)
-			if err != nil {
-				panic(err)
-			}
-//line lock_test.ego:44
-			if afterB {
-				t.Error("b released a's lock")
-			}
-			if err := a.Release(ctx); err != nil {
-				panic(err)
-			}
-//line lock_test.ego:48
-			released, err := b.Acquire(ctx)
-			if err != nil {
-				panic(err)
-			}
-//line lock_test.ego:49
-			if !released {
-				t.Error("b can't take a released lock")
-			}
-			time.Sleep(150 * time.Millisecond) // b's hold expires
-			expired, err := a.Acquire(ctx)
-			if err != nil {
-				panic(err)
-			}
-//line lock_test.ego:54
-			if !expired {
-				t.Error("a can't take an expired lock")
-			}
-			refreshed, err := b.Refresh(ctx)
-			if err != nil {
-				panic(err)
-			}
-//line lock_test.ego:58
-			if refreshed {
-				t.Error("b refreshed a lock it lost")
-			}
-
-		})
-	}
-}
-
-// TestRun checks that Run keeps the lock while its function runs, beyond
-// the TTL, and that one of two concurrent runs gets it.
-//
-//line lock_test.ego:67
-func TestRun(t *testing.T) {
-	for name, newStore := range stores {
-		t.Run(name, func(t *testing.T) {
-
-//line lock_test.ego:70
-			f := &lock.Factory{Store: newStore(t), TTL: 60 * time.Millisecond}
-			ctx := context.Background()
-			var mu sync.Mutex
-			ran := 0
-			var wg sync.WaitGroup
-			for range 2 {
-				wg.Go(func() {
-
-//line lock_test.ego:77
-					if _, err := f.New("job").Run(ctx, func(ctx context.Context) error {
-						mu.Lock()
-						ran++
-						mu.Unlock()
-						time.Sleep(200 * time.Millisecond) // over three TTLs: refreshed
-						return ctx.Err()
-					}); err != nil {
-						panic(err)
-					}
-
-				})
-			}
-//line lock_test.ego:86
-			wg.Wait()
-			if ran != 1 {
-				t.Errorf("%d runs, want 1", ran)
-			}
-			held, err := f.New("job").Acquire(ctx)
-			if err != nil {
-				panic(err)
-			}
-//line lock_test.ego:91
-			if !held {
-				t.Error("Run didn't release the lock")
-			}
-
-		})
-	}
+	})
 }
 
 // lossy is a store that loses every lock after its first acquisition, as
 // if it had expired and another owner took it.
-//
-//line lock_test.ego:100
 type lossy struct{ acquired bool }
 
 func (l *lossy) Acquire(ctx context.Context, key, owner string, ttl time.Duration) (bool, error) {
@@ -201,35 +75,35 @@ func TestPrune(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line lock_test.ego:127
+//line lock_test.ego:60
 	pool.SetMaxOpenConns(1)
 	t.Cleanup(func() {
-//line lock_test.ego:128
+//line lock_test.ego:61
 		pool.Close()
 	})
-//line lock_test.ego:129
+//line lock_test.ego:62
 	s, err := lock.NewSQLStore(pool)
 	if err != nil {
 		panic(err)
 	}
-//line lock_test.ego:130
+//line lock_test.ego:63
 	ctx := context.Background()
 	for i := range 255 {
 		if _, err := s.Acquire(ctx, fmt.Sprint("tick:", i), "a", time.Millisecond); err != nil {
 			panic(err)
 		}
 	}
-//line lock_test.ego:134
+//line lock_test.ego:67
 	time.Sleep(2 * time.Millisecond)
 	if _, err := s.Acquire(ctx, "tick:last", "a", time.Hour); err != nil {
 		panic(err)
 	} // the 256th prunes
-//line lock_test.ego:136
+//line lock_test.ego:69
 	var n int
 	if err := pool.QueryRow("SELECT count(*) FROM goncini_locks").Scan(&n); err != nil {
 		panic(err)
 	}
-//line lock_test.ego:138
+//line lock_test.ego:71
 	if n != 1 {
 		t.Errorf("%d locks, want the one that hasn't expired", n)
 	}
