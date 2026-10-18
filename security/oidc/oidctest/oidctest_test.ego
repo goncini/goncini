@@ -1,0 +1,35 @@
+package oidctest_test
+
+import (
+	"context"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/goncini/goncini/httpclient"
+	"github.com/goncini/goncini/security/oidc"
+	"github.com/goncini/goncini/security/oidc/oidctest"
+)
+
+// TestProvider checks that a verifier of the provider's verifies its
+// tokens, in a synctest bubble whose time moves while the provider is up.
+func TestProvider(t *testing.T) {
+	idp := oidctest.NewProvider(t)
+	synctest.Test(t, (t *testing.T) => {
+		v := must oidc.New(oidc.Config{Issuer: idp.Issuer(), Audience: "api://notes"}, httpclient.New(httpclient.Config{}))
+		token := idp.Token("api://notes", "ann", nil)
+		ctx := context.Background()
+		sub := must v.Verify(ctx, token)
+		if sub != "ann" {
+			t.Errorf("verified %q", sub)
+		}
+		if _, err := v.Verify(ctx, idp.Token("api://other", "ann", nil)); err == nil {
+			t.Error("a token for another API is verified")
+		}
+		time.Sleep(2 * time.Hour) // the keys are fetched again
+		if _, err := v.Verify(ctx, token); err == nil {
+			t.Error("an expired token is verified")
+		}
+		must v.Verify(ctx, idp.Token("api://notes", "ann", nil))
+	})
+}

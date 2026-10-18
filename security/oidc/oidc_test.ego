@@ -1,0 +1,269 @@
+package oidc_test
+
+import (
+	"cmp"
+	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"math/big"
+	"net/http"
+	"sync"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/goncini/goncini/httpclient"
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/security"
+	"github.com/goncini/goncini/security/oidc"
+	"github.com/goncini/goncini/webtest"
+)
+
+const (
+	issuer   = "https://idp.example"
+	audience = "api://notes"
+)
+
+// provider is an OpenID provider for tests: its discovery document, and
+// the JWKS of the keys it signs with.
+type provider struct {
+	mu      sync.Mutex
+	keys    map[string]crypto.Signer
+	fetches int
+	down    bool
+	issuer  string // that the document names; issuer if empty
+}
+
+// The provider's keys.
+var (
+	rsaKey *rsa.PrivateKey
+	ecKey  *ecdsa.PrivateKey
+	edKey  = ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+)
+
+func init() {
+	rsaKey = must rsa.GenerateKey(rand.Reader, 2048)
+	ecKey = must ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+}
+
+func newProvider() *provider {
+	return &provider{keys: map[string]crypto.Signer{"rsa": rsaKey, "ec": ecKey, "ed": edKey}}
+}
+
+func (p *provider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	switch r.URL.Path {
+	case "/.well-known/openid-configuration":
+		json.NewEncoder(w).Encode(map[string]string{"issuer": cmp.Or(p.issuer, issuer), "jwks_uri": issuer + "/jwks"})
+	case "/jwks":
+		p.fetches++
+		if p.down {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		var keys []map[string]string
+		for kid, k := range p.keys {
+			keys = append(keys, jwkOf(kid, k.Public()))
+		}
+		// A key for encryption, which isn't for verifying.
+		keys = append(keys, map[string]string{"kty": "RSA", "kid": "enc", "use": "enc", "n": "AQAB", "e": "AQAB"})
+		json.NewEncoder(w).Encode(map[string]any{"keys": keys})
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+// jwkOf is the JWK of a public key.
+func jwkOf(kid string, key crypto.PublicKey) map[string]string {
+	b64 := base64.RawURLEncoding.EncodeToString
+	switch k := key.(type) {
+	case *rsa.PublicKey:
+		return map[string]string{"kty": "RSA", "kid": kid, "use": "sig", "n": b64(k.N.Bytes()), "e": b64(big.NewInt(int64(k.E)).Bytes())}
+	case *ecdsa.PublicKey:
+		raw := must k.Bytes() // 4, x, y
+		return map[string]string{"kty": "EC", "kid": kid, "crv": "P-256", "x": b64(raw[1:33]), "y": b64(raw[33:])}
+	case ed25519.PublicKey:
+		return map[string]string{"kty": "OKP", "kid": kid, "crv": "Ed25519", "x": b64(k), "alg": "EdDSA"}
+	}
+	panic("a key of another type")
+}
+
+// token is a token that the key kid signs with the method, of claims,
+// which are the provider's for ann, valid for an hour, unless changed.
+func token(method jwt.SigningMethod, kid string, key any, change func(jwt.MapClaims)) string {
+	claims := jwt.MapClaims{"iss": issuer, "aud": audience, "sub": "ann", "email": "ann@example.com", "exp": time.Now().Add(time.Hour).Unix()}
+	if change != nil {
+		change(claims)
+	}
+	t := jwt.NewWithClaims(method, claims)
+	if kid != "" {
+		t.Header["kid"] = kid
+	}
+	signed := must t.SignedString(key)
+	return signed
+}
+
+// api serves /me, the email of the user that the provider's token names,
+// behind a firewall that verifies them with v.
+func api(t *testing.T, v *oidc.Verifier) *webtest.Client {
+	fw := &security.Firewall[string]{
+		Tokens: v,
+		Load: func(ctx context.Context, subject string) (string, bool, error) {
+			email, _ := security.Claims(ctx)["email"].(string)
+			return subject + " <" + email + ">", true, nil
+		},
+	}
+	me := httpkernel.Endpoint(func(ctx context.Context, in struct{}) (string, error) {
+		u := check security.CurrentUser[string](ctx) ""
+		return u, nil
+	})
+	r := routing.New()
+	r.With(security.Required).Get("/me", me)
+	k := &httpkernel.Kernel{Handler: r, Middleware: []httpkernel.Middleware{fw.Middleware}, Logger: slog.New(slog.DiscardHandler)}
+	return webtest.NewClient(t, k)
+}
+
+func verifier(t *testing.T, p *provider, c oidc.Config) *oidc.Verifier {
+	client := httpclient.New(httpclient.Config{Retries: -1})
+	client.Transport = httpclient.Handler(p)
+	c.Issuer, c.Audience = cmp.Or(c.Issuer, issuer), cmp.Or(c.Audience, audience)
+	v := must oidc.New(c, client)
+	return v
+}
+
+func bearer(c *webtest.Client, token string) *webtest.Response {
+	return c.WithHeader("Authorization", "Bearer "+token).Get("/me")
+}
+
+// TestVerify checks that the provider's tokens authenticate their users,
+// with their claims, and that tokens that aren't its, for the API, in
+// their time, don't.
+func TestVerify(t *testing.T) {
+	synctest.Test(t, (t *testing.T) => {
+		p := newProvider()
+		c := api(t, verifier(t, p, oidc.Config{}))
+		for name, tok := range map[string]string{
+			"RS256": token(jwt.SigningMethodRS256, "rsa", rsaKey, nil),
+			"PS256": token(jwt.SigningMethodPS256, "rsa", rsaKey, nil),
+			"ES256": token(jwt.SigningMethodES256, "ec", ecKey, nil),
+			"EdDSA": token(jwt.SigningMethodEdDSA, "ed", edKey, nil),
+		} {
+			t.Log(name)
+			bearer(c, tok).Status(200).Contains(`"ann <ann@example.com>"`)
+		}
+		other := must rsa.GenerateKey(rand.Reader, 2048)
+		hmac := []byte("a secret that the API doesn't have, however long")
+		for detail, tok := range map[string]string{
+			"it isn't for this API": token(jwt.SigningMethodRS256, "rsa", rsaKey, (c jwt.MapClaims) => {
+				c["aud"] = "api://other"
+			}),
+			"it isn't the identity provider's": token(jwt.SigningMethodRS256, "rsa", rsaKey, (c jwt.MapClaims) => {
+				c["iss"] = "https://evil.example"
+			}),
+			"it names no user": token(jwt.SigningMethodRS256, "rsa", rsaKey, (c jwt.MapClaims) => {
+				delete(c, "sub")
+			}),
+		} {
+			bearer(c, tok).Problem(401).HasDetail("invalid token: " + detail)
+		}
+		for name, tok := range map[string]string{
+			"another key":        token(jwt.SigningMethodRS256, "rsa", other, nil),
+			"an unknown key":     token(jwt.SigningMethodRS256, "nope", other, nil),
+			"HMAC":               token(jwt.SigningMethodHS256, "rsa", hmac, nil),
+			"none":               token(jwt.SigningMethodNone, "rsa", jwt.UnsafeAllowNoneSignatureType, nil),
+			"no expiry":          token(jwt.SigningMethodRS256, "rsa", rsaKey, (c jwt.MapClaims) => { delete(c, "exp") }),
+			"an encryption key":  token(jwt.SigningMethodRS256, "enc", rsaKey, nil),
+			"no key, and others": token(jwt.SigningMethodRS256, "", rsaKey, nil),
+		} {
+			t.Log(name)
+			bearer(c, tok).Problem(401).HasDetail("invalid token: it isn't the identity provider's")
+		}
+		tok := token(jwt.SigningMethodRS256, "rsa", rsaKey, nil)
+		time.Sleep(time.Hour + 59*time.Second) // within the leeway
+		bearer(c, tok).Status(200)
+		time.Sleep(2 * time.Second)
+		bearer(c, tok).Problem(401).HasDetail("invalid token: it has expired")
+	})
+}
+
+// TestKeys checks that the keys are fetched when needed only: a new key of
+// the provider's is fetched, once a minute at most, and the keys it had
+// serve while the provider is down.
+func TestKeys(t *testing.T) {
+	synctest.Test(t, (t *testing.T) => {
+		p := newProvider()
+		c := api(t, verifier(t, p, oidc.Config{}))
+		bearer(c, token(jwt.SigningMethodRS256, "rsa", rsaKey, nil)).Status(200)
+		bearer(c, token(jwt.SigningMethodES256, "ec", ecKey, nil)).Status(200)
+		next := must ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		p.mu.Lock()
+		p.keys["next"] = next
+		p.mu.Unlock()
+		rotated := token(jwt.SigningMethodES256, "next", next, nil)
+		bearer(c, rotated).Problem(401) // fetched less than a minute ago
+		bearer(c, token(jwt.SigningMethodES256, "made-up", next, nil)).Problem(401)
+		time.Sleep(time.Minute)
+		bearer(c, rotated).Status(200)
+		bearer(c, token(jwt.SigningMethodES256, "made-up", next, nil)).Problem(401)
+		bearer(c, token(jwt.SigningMethodES256, "made-up", next, nil)).Problem(401)
+		if p.fetches != 2 {
+			t.Errorf("%d fetches, want 2", p.fetches)
+		}
+
+		p.mu.Lock()
+		p.down = true
+		p.mu.Unlock()
+		time.Sleep(time.Hour) // the keys are old, and the provider down
+		bearer(c, token(jwt.SigningMethodRS256, "rsa", rsaKey, nil)).Status(200)
+		if p.fetches != 3 {
+			t.Errorf("%d fetches, want 3", p.fetches)
+		}
+
+		// A verifier that never had the keys answers 503.
+		down := api(t, verifier(t, p, oidc.Config{}))
+		bearer(down, token(jwt.SigningMethodRS256, "rsa", rsaKey, nil)).Problem(503).HasDetail("the identity provider is unavailable")
+	})
+}
+
+// TestConfig checks the config, and the provider's discovery document.
+func TestConfig(t *testing.T) {
+	for _, c := range []oidc.Config{
+		{Issuer: issuer},
+		{Audience: audience},
+		{Issuer: "http://idp.example", Audience: audience},
+		{Issuer: issuer, Audience: audience, JWKS: "http://idp.example/jwks"},
+	} {
+		if _, err := oidc.New(c, httpclient.New(httpclient.Config{})); err == nil {
+			t.Errorf("%+v is accepted", c)
+		}
+	}
+	must oidc.New(oidc.Config{Issuer: "http://localhost:8080/realms/dev", Audience: audience}, httpclient.New(httpclient.Config{}))
+
+	p := newProvider()
+	p.issuer = "https://evil.example"
+	_, err := verifier(t, p, oidc.Config{}).Verify(context.Background(), token(jwt.SigningMethodRS256, "rsa", rsaKey, nil))
+	if _, ok := errors.AsType[oidc.Unavailable](err); !ok {
+		t.Errorf("a document of another issuer: %v", err)
+	}
+	// Without a document, the JWKS's URL is configured; the subject is
+	// another claim.
+	p = newProvider()
+	v := verifier(t, p, oidc.Config{JWKS: issuer + "/jwks", Claim: "email"})
+	sub := must v.Verify(context.Background(), token(jwt.SigningMethodRS256, "rsa", rsaKey, nil))
+	if sub != "ann@example.com" {
+		t.Errorf("subject %q", sub)
+	}
+}

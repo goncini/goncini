@@ -121,7 +121,8 @@ type Firewall[U any] struct {
 // state is what a firewall found out about a request.
 type state struct {
 	scheme string
-	user   any // nil for an anonymous request
+	user   any            // nil for an anonymous request
+	claims map[string]any // the token's, if its verifier gives them
 }
 
 type stateKey struct{}
@@ -140,16 +141,18 @@ type firewalled[U any] struct {
 
 func (h *firewalled[U]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	st := &state{scheme: h.scheme}
+	ctx := context.WithValue(r.Context(), stateKey{}, st)
 	header := r.Header.Get("Authorization")
 	if header != "" {
-		user, err := h.f.authenticate(r.Context(), h.scheme, header)
+		// The verifier and Load see st, for the claims, but no user yet.
+		user, err := h.f.authenticate(ctx, h.scheme, header)
 		if err != nil {
 			httpkernel.WriteError(w, r, err)
 			return
 		}
 		st.user = user
 	}
-	h.next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), stateKey{}, st)))
+	h.next.ServeHTTP(w, r.WithContext(ctx))
 }
 
 // DescribeOperation says that the operation takes a token, which it may
@@ -188,7 +191,7 @@ func (f *Firewall[U]) authenticate(ctx context.Context, scheme, header string) (
 		if err != nil {
 			return *new(U), err
 		}
-//line firewall.ego:151
+//line firewall.ego:154
 		if !ok {
 			return zero, InvalidToken{Scheme: scheme, Reason: "it isn't one of the API's keys"}
 		}
@@ -202,21 +205,45 @@ func (f *Firewall[U]) authenticate(ctx context.Context, scheme, header string) (
 	if err != nil {
 		return *new(U), err
 	}
-//line firewall.ego:162
+//line firewall.ego:165
 	user, ok, err2 := f.Load(ctx, subject)
 	if err2 != nil {
 		return *new(U), err2
 	}
-//line firewall.ego:163
+//line firewall.ego:166
 	if !ok {
 		return zero, InvalidToken{Scheme: scheme, Reason: "its user doesn't exist"}
 	}
 	return user, nil
 }
 
+// SetClaims records the claims of the token that a Verifier verifies, with
+// the ctx that the firewall gives it: Load, then the request, read them
+// with Claims. Outside a firewall, it does nothing.
+func SetClaims(ctx context.Context, claims map[string]any) {
+	if st, ok := ctx.Value(stateKey{}).(*state); ok {
+		st.claims = claims
+	}
+}
+
+// Claims returns the claims of the token that authenticated the request
+// ctx belongs to, if its verifier gives them, as oidc's does: Load reads
+// them to create the user of a first request, from its email or name, and
+// an endpoint its scopes.
+func Claims(ctx context.Context) map[string]any {
+	st, _ := ctx.Value(stateKey{}).(*state)
+	var v map[string]any
+	if st != nil {
+		v = st.claims
+	}
+	return v
+}
+
 // User returns the user that the request ctx belongs to was authenticated
 // as, and reports whether it was: false for an anonymous request, or a
 // request no firewall saw.
+//
+//line firewall.ego:193
 func User[U any](ctx context.Context) (U, bool) {
 	st, _ := ctx.Value(stateKey{}).(*state)
 	var v any
@@ -224,7 +251,7 @@ func User[U any](ctx context.Context) (U, bool) {
 		v = st.user
 	}
 	u, ok := v.(U)
-//line firewall.ego:175
+//line firewall.ego:196
 	return u, ok
 }
 
@@ -249,7 +276,7 @@ func CurrentUser[U any](ctx context.Context) (U, error) {
 //
 //	r.With(security.Required).Post("/articles", httpkernel.Endpoint(a.Create))
 //
-//line firewall.ego:194
+//line firewall.ego:215
 func Required(next http.Handler) http.Handler {
 	return required{next}
 }
@@ -266,13 +293,13 @@ func (h required) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		v = st.user
 	}
 	if v == nil {
-//line firewall.ego:206
+//line firewall.ego:227
 		var v2 string
 		if st != nil {
 			v2 = st.scheme
 		}
 		httpkernel.WriteError(w, r, Unauthenticated{Scheme: v2})
-//line firewall.ego:207
+//line firewall.ego:228
 		return
 	}
 	h.next.ServeHTTP(w, r)

@@ -36,6 +36,23 @@ new` and the makers.
   - When an import of a `.ego` file isn't in `go.mod`, as when an app
     first imports a goncini package with dependencies of its own, the
     error says that `go tool goncini tidy` adds it.
+- **security/oidc:** an `oidc.Verifier`, a firewall's `Tokens`, verifies
+  the tokens of an OpenID Connect provider, as Symfony's OIDC token
+  handler does. It discovers the provider's keys from its issuer, or takes
+  their JWKS's URL, and fetches them when they are an hour old, or a token
+  names another, once a minute at most; while the provider is down, the
+  keys it had serve, and a verifier that never had them answers 503. A
+  token must be signed by one of them with an asymmetric algorithm (RSA,
+  RSA-PSS, ECDSA or Ed25519; HMAC and none are refused), name the issuer
+  and the API's audience, and not have expired, within a minute's leeway.
+  Its `sub`, or another claim, names the user. `oidctest.NewProvider(t)`
+  is a provider for an app's tests, which issues tokens with
+  `Token(audience, subject, claims)`; its connections close after each
+  response, so that a synctest bubble's time moves while it is up.
+- **security:** `security.Claims(ctx)` returns the claims of the token that
+  authenticated the request, which a verifier records with
+  `security.SetClaims`, as oidc's does: `Load` reads them to create the
+  user of a first request.
 - **examples/heartbeat**, the new example, has projects whose API keys
   authenticate them, checks in a workflow, public pings with raw bodies
   and a rate limit, a scheduled sweep, alerts by email and webhook through

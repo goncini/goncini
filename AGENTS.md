@@ -239,6 +239,14 @@ moderators' API keys under `/api/admin`. A firewall without `Tokens`
 hands the token to `Load` as is: an API key that the app looks up in its
 database, by its hash.
 
+Users who sign in with an identity provider, such as Google, Auth0 or
+Keycloak, send its tokens, which an `oidc.Verifier` verifies as the
+firewall's `Tokens`, from an `oidc.Config{Issuer, Audience}` and the
+provider's keys. `security.Claims(ctx)` gives `Load` the token's claims,
+such as `email`, to create the user of a first request. In tests,
+`oidctest.NewProvider(t)` is the provider: set the config's issuer to its
+`Issuer()`, with `t.Setenv`, and send its `Token(audience, subject, claims)`.
+
 ## Database
 
 Stores query through `db.SQL`, with `db.All`, `db.One` and `db.Value`:

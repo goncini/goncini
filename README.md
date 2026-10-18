@@ -25,8 +25,8 @@ its ecosystem, and [effect-go](https://github.com/effect-go/effect-go).
 Status: early. [`httpkernel`](httpkernel), [`routing`](routing),
 [`validator`](validator), config as code, the [`console`](console),
 `goncini.Main` and [`db`](db), with adapters for pgx, GORM, goose and
-golang-migrate, [`webtest`](webtest), [`security`](security) with voters and
-API keys, [`openapi`](openapi), [`cors`](cors), [`ratelimit`](ratelimit),
+golang-migrate, [`webtest`](webtest), [`security`](security) with voters,
+API keys and [OpenID Connect](security/oidc), [`openapi`](openapi), [`cors`](cors), [`ratelimit`](ratelimit),
 [`uid`](uid) and [`listing`](listing) are implemented
 ([CHANGELOG.md](CHANGELOG.md)). [examples/realworld](examples/realworld), the
 RealWorld API, passes its official test suite, and a client generated from

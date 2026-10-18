@@ -1,0 +1,81 @@
+// Package oidctest is an OpenID Connect provider for tests, on a local
+// port: an app whose oidc.Config.Issuer is its Issuer verifies the tokens
+// that it issues.
+//
+//	idp := oidctest.NewProvider(t)
+//	t.Setenv("OIDC_ISSUER", idp.Issuer())
+//	a := webtest.Boot(t, config.Load, app.Build)
+//	ann := webtest.NewClient(t, a).WithHeader("Authorization", "Bearer "+idp.Token("api://notes", "ann", nil))
+//
+// Its connections close after each response: an app in a testing/synctest
+// bubble, whose time moves only while no goroutine waits on the network,
+// can sleep, if the provider is made outside the bubble.
+package oidctest
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+)
+
+// Provider is the provider: its discovery document, and the JWKS of the
+// key it signs with.
+type Provider struct {
+	srv *httptest.Server
+	key *ecdsa.PrivateKey
+}
+
+// keyID is the ID of the provider's key.
+const keyID = "oidctest"
+
+// NewProvider starts a provider, which stops when the test ends.
+func NewProvider(t testing.TB) *Provider {
+	key := must ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	p := &Provider{key: key}
+	p.srv = httptest.NewServer(http.HandlerFunc(p.serve))
+	t.Cleanup(p.srv.Close)
+	return p
+}
+
+// Issuer is the provider's URL, which its tokens name as their issuer.
+func (p *Provider) Issuer() string { return p.srv.URL }
+
+// Token returns a token for the audience that names the subject, valid for
+// an hour from time.Now, with the claims, such as email, which may replace
+// the others.
+func (p *Provider) Token(audience, subject string, claims map[string]any) string {
+	now := time.Now()
+	c := jwt.MapClaims{"iss": p.Issuer(), "aud": audience, "sub": subject, "iat": now.Unix(), "exp": now.Add(time.Hour).Unix()}
+	for name, value := range claims {
+		c[name] = value
+	}
+	t := jwt.NewWithClaims(jwt.SigningMethodES256, c)
+	t.Header["kid"] = keyID
+	signed := must t.SignedString(p.key)
+	return signed
+}
+
+func (p *Provider) serve(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Connection", "close")
+	w.Header().Set("Content-Type", "application/json")
+	switch r.URL.Path {
+	case "/.well-known/openid-configuration":
+		json.NewEncoder(w).Encode(map[string]string{"issuer": p.Issuer(), "jwks_uri": p.Issuer() + "/jwks"})
+	case "/jwks":
+		raw := must p.key.PublicKey.Bytes() // 4, then x and y
+		b64 := base64.RawURLEncoding.EncodeToString
+		json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{
+			{"kty": "EC", "kid": keyID, "use": "sig", "alg": "ES256", "crv": "P-256", "x": b64(raw[1:33]), "y": b64(raw[33:])},
+		}})
+	default:
+		http.NotFound(w, r)
+	}
+}

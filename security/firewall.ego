@@ -84,7 +84,8 @@ type Firewall[U any] struct {
 // state is what a firewall found out about a request.
 type state struct {
 	scheme string
-	user   any // nil for an anonymous request
+	user   any            // nil for an anonymous request
+	claims map[string]any // the token's, if its verifier gives them
 }
 
 type stateKey struct{}
@@ -103,16 +104,18 @@ type firewalled[U any] struct {
 
 func (h *firewalled[U]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	st := &state{scheme: h.scheme}
+	ctx := context.WithValue(r.Context(), stateKey{}, st)
 	header := r.Header.Get("Authorization")
 	if header != "" {
-		user, err := h.f.authenticate(r.Context(), h.scheme, header)
+		// The verifier and Load see st, for the claims, but no user yet.
+		user, err := h.f.authenticate(ctx, h.scheme, header)
 		if err != nil {
 			httpkernel.WriteError(w, r, err)
 			return
 		}
 		st.user = user
 	}
-	h.next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), stateKey{}, st)))
+	h.next.ServeHTTP(w, r.WithContext(ctx))
 }
 
 // DescribeOperation says that the operation takes a token, which it may
@@ -164,6 +167,24 @@ func (f *Firewall[U]) authenticate(ctx context.Context, scheme, header string) (
 		return zero, InvalidToken{Scheme: scheme, Reason: "its user doesn't exist"}
 	}
 	return user, nil
+}
+
+// SetClaims records the claims of the token that a Verifier verifies, with
+// the ctx that the firewall gives it: Load, then the request, read them
+// with Claims. Outside a firewall, it does nothing.
+func SetClaims(ctx context.Context, claims map[string]any) {
+	if st, ok := ctx.Value(stateKey{}).(*state); ok {
+		st.claims = claims
+	}
+}
+
+// Claims returns the claims of the token that authenticated the request
+// ctx belongs to, if its verifier gives them, as oidc's does: Load reads
+// them to create the user of a first request, from its email or name, and
+// an endpoint its scopes.
+func Claims(ctx context.Context) map[string]any {
+	st, _ := ctx.Value(stateKey{}).(*state)
+	return st?.claims
 }
 
 // User returns the user that the request ctx belongs to was authenticated
