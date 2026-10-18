@@ -169,6 +169,36 @@ func TestEndpointBodyLimit(t *testing.T) {
 	}
 }
 
+// logLine and logBlob take their bodies as they are.
+type logLine struct{ Body string }
+type logBlob struct{ Body []byte }
+
+func TestEndpointRawBodies(t *testing.T) {
+	var line logLine
+	h := capture("POST /log", &line)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/log", strings.NewReader("job done\n"))
+	req.Header.Set("Content-Type", "text/plain")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || line.Body != "job done\n" {
+		t.Errorf("a text body: %d %q", rec.Code, line.Body)
+	}
+	var blob logBlob
+	h = capture("POST /log", &blob)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/log", nil)) // no Content-Type, no body
+	if rec.Code != http.StatusNoContent || len(blob.Body) != 0 {
+		t.Errorf("no body: %d %q", rec.Code, blob.Body)
+	}
+	k := &httpkernel.Kernel{Handler: capture("POST /log", &blob), BodyLimit: 4}
+	k.Logger, _ = logged()
+	rec = httptest.NewRecorder()
+	k.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/log", strings.NewReader("too long")))
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("a body too large: %d", rec.Code)
+	}
+}
+
 func TestEndpointResponders(t *testing.T) {
 	type job struct {
 		ID int `json:"id"`

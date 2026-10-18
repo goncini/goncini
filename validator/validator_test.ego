@@ -76,6 +76,36 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// TestOptional checks that the tags of an httpkernel.Optional check its
+// value, when the member is present.
+func TestOptional(t *testing.T) {
+	type updateInput struct {
+		Body struct {
+			Title httpkernel.Optional[string]   `json:"title" validate:"omitempty,max=5"`
+			Tags  httpkernel.Optional[[]string] `json:"tags" validate:"omitempty,dive,min=2"`
+			Email httpkernel.Optional[string]   `json:"email" validate:"required,email"`
+		}
+	}
+	var in updateInput
+	in.Body.Title = httpkernel.Optional[string]{Set: true, Value: "too long"}
+	in.Body.Tags = httpkernel.Optional[[]string]{Set: true, Value: []string{"go", "x"}}
+	err := validator.New().Validate(context.Background(), &in)
+	var p httpkernel.Problem
+	if !errors.As(err, &p) || !reflect.DeepEqual(p.Errors, []httpkernel.Violation{
+		{Pointer: "#/title", Detail: "must have at most 5 characters"},
+		{Pointer: "#/tags/1", Detail: "must have at least 2 characters"},
+		{Pointer: "#/email", Detail: "is required"},
+	}) {
+		t.Errorf("%v: %+v", err, p.Errors)
+	}
+	in = updateInput{}
+	in.Body.Title = httpkernel.Optional[string]{Set: true, Null: true}
+	in.Body.Email = httpkernel.Optional[string]{Set: true, Value: "ann@example.com"}
+	if err := validator.New().Validate(context.Background(), &in); err != nil {
+		t.Errorf("absent and null members: %v", err)
+	}
+}
+
 func TestBadTag(t *testing.T) {
 	type input struct {
 		Name string `validate:"nosuchrule"`

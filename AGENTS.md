@@ -153,7 +153,11 @@ type UpdateInput struct {
   tags and returns `httpkernel.Invalid(httpkernel.Violation{Pointer:
   "#/article/title", Detail: "can't be blank"})`.
 - `httpkernel.Optional[T]` tells an absent member from `null` and from a
-  value, for updates: `.Set`, `.Null`, `.Value`, `.Present()`.
+  value, for updates: `.Set`, `.Null`, `.Value`, `.Present()`. Its
+  `validate` tags check its value when it is present:
+  `validate:"omitempty,max=120"`.
+- A `Body string` or `Body []byte` is the raw body, of any type, up to the
+  kernel's `BodyLimit`, such as a job's output.
 - IDs are `uid.UUID`, made with `uid.NewV7()`, or `uid.ULID`: they bind,
   scan, and route with `.Require("id", routing.UUID)`.
 - A list embeds `listing.Window` (`?limit=20&offset=40`) and returns a
@@ -231,7 +235,9 @@ if !a.access.IsGranted(ctx, "edit", art) {
 `access.Require("ROLE_MODERATOR")` is middleware for routes that need a
 role. A firewall goes on a group of routes, `routing.With(fw.Middleware,
 …)`, so that parts of the API authenticate differently, such as the
-moderators' API keys under `/api/admin`.
+moderators' API keys under `/api/admin`. A firewall without `Tokens`
+hands the token to `Load` as is: an API key that the app looks up in its
+database, by its hash.
 
 ## Database
 
@@ -310,6 +316,9 @@ func (n *Notifications) Schedule(s *scheduler.Scheduler) {
 }
 ```
 
+`scheduler:trigger notifications:prune` runs a task now, once: by hand, or
+in a test.
+
 A message dispatched inside `InTx`, to a queue in the same database
 (`messenger.SQL`), is queued only if the transaction commits: write what
 changed and dispatch its messages in one transaction.
@@ -317,6 +326,9 @@ changed and dispatch its messages in one transaction.
 A test runs the worker for the messages it expects:
 `webtest.Run(t, a, "messenger:consume", "-drain")`, which stops once no
 message is available: those whose delay or retry isn't due stay queued.
+In a `testing/synctest` bubble, `time.Sleep` makes them due, unless the
+app talks over a real socket meanwhile, as to `mailertest`'s server: the
+bubble's time doesn't move then, and the test waits in real time.
 
 ## Caching
 

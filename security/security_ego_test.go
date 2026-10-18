@@ -85,7 +85,7 @@ func TestTokens(t *testing.T) {
 		panic(err)
 	}
 //line security_test.ego:57
-	sub, err := tokens.Verify(token)
+	sub, err := tokens.Verify(context.Background(), token)
 	if err != nil {
 		panic(err)
 	}
@@ -115,7 +115,7 @@ func TestTokens(t *testing.T) {
 //line security_test.ego:65
 	unsigned := "eyJhbGciOiJub25lIn0.eyJzdWIiOiI0MiJ9."
 	for name, bad := range map[string]string{"foreign": foreign, "wrong issuer": wrongIssuer, "unsigned": unsigned, "garbage": "x.y.z", "tampered": token[:len(token)-2] + "xx"} {
-		_, err := tokens.Verify(bad)
+		_, err := tokens.Verify(context.Background(), bad)
 		if e, ok := errors.AsType[security.InvalidToken](err); !ok || e.Reason != "it isn't one of the API's" {
 			t.Errorf("%s: %v", name, err)
 		}
@@ -137,12 +137,12 @@ func TestTokensExpire(t *testing.T) {
 		}
 //line security_test.ego:78
 		time.Sleep(59 * time.Minute)
-		if _, err := tokens.Verify(token); err != nil {
+		if _, err := tokens.Verify(context.Background(), token); err != nil {
 			panic(err)
 		}
 //line security_test.ego:80
 		time.Sleep(2 * time.Minute)
-		if _, err := tokens.Verify(token); err == nil || err.Error() != "invalid token: it has expired" {
+		if _, err := tokens.Verify(context.Background(), token); err == nil || err.Error() != "invalid token: it has expired" {
 			t.Errorf("after the TTL: %v", err)
 		}
 
@@ -160,7 +160,7 @@ func api(t *testing.T) (*webtest.Client, *security.Tokens) {
 		panic(err)
 	}
 //line security_test.ego:93
-	fw := &security.Firewall[*user]{
+	return serve(t, &security.Firewall[*user]{
 		Config: security.Config{Scheme: "Token"},
 		Tokens: tokens,
 		Load: func(ctx context.Context, id string) (*user, bool, error) {
@@ -176,7 +176,11 @@ func api(t *testing.T) (*webtest.Client, *security.Tokens) {
 				return nil, false, nil
 			}
 		},
-	}
+	}), tokens
+}
+
+// serve serves a public route and routes that need a user, behind fw.
+func serve(t *testing.T, fw *security.Firewall[*user]) *webtest.Client {
 	whoami := httpkernel.Endpoint(func(ctx context.Context, in struct{}) (string, error) {
 		if u, ok := security.User[*user](ctx); ok {
 			return u.Name, nil
@@ -188,7 +192,7 @@ func api(t *testing.T) (*webtest.Client, *security.Tokens) {
 		if err != nil {
 			return "", err
 		}
-//line security_test.ego:112
+//line security_test.ego:116
 		return u.Name, nil
 	})
 	r := routing.New()
@@ -196,7 +200,7 @@ func api(t *testing.T) (*webtest.Client, *security.Tokens) {
 	r.With(security.Required).Get("/me", me)
 	r.Get("/me-unguarded", me) // CurrentUser fails without Required
 	k := &httpkernel.Kernel{Handler: r, Middleware: []httpkernel.Middleware{fw.Middleware}, Logger: slog.New(slog.DiscardHandler)}
-	return webtest.NewClient(t, k), tokens
+	return webtest.NewClient(t, k)
 }
 
 func TestFirewall(t *testing.T) {
@@ -205,17 +209,17 @@ func TestFirewall(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line security_test.ego:125
+//line security_test.ego:129
 	nobodyToken, err := tokens.Issue("2")
 	if err != nil {
 		panic(err)
 	}
-//line security_test.ego:126
+//line security_test.ego:130
 	downToken, err := tokens.Issue("down")
 	if err != nil {
 		panic(err)
 	}
-//line security_test.ego:127
+//line security_test.ego:131
 	ann := c.WithHeader("Authorization", "Token "+annToken)
 
 	c.Get("/whoami").Status(200).Contains(`"anonymous"`)
@@ -236,6 +240,18 @@ func TestFirewall(t *testing.T) {
 	}
 	c.WithHeader("Authorization", "token "+annToken).Get("/whoami").Status(200) // schemes ignore case
 	c.WithHeader("Authorization", "Token "+downToken).Get("/whoami").Problem(500)
+}
+
+// TestFirewallWithoutTokens checks a firewall that hands Load the token
+// itself: an API key that the app looks up.
+func TestFirewallWithoutTokens(t *testing.T) {
+	c := serve(t, &security.Firewall[*user]{
+		Load: func(ctx context.Context, key string) (*user, bool, error) {
+			return &user{Name: "ann"}, key == annKey, nil
+		},
+	})
+	c.WithHeader("Authorization", "Bearer "+annKey).Get("/me").Status(200).Contains(`"ann"`)
+	c.WithHeader("Authorization", "Bearer "+bobKey).Get("/me").Problem(401).HasDetail("invalid token: it isn't one of the API's keys")
 }
 
 func TestCurrentUserWithoutAFirewall(t *testing.T) {

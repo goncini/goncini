@@ -257,7 +257,11 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 			validated, invalid = true, httpkernel.Violation{Parameter: p.Name, Detail: "is invalid"}
 		}
 	}
-	if d.Body != nil {
+	if d.Body != nil && httpkernel.RawBody(d.Body) {
+		// Any media type, as it is: OpenAPI 3.1 says so without a schema.
+		op.RequestBody = &RequestBody{Description: inDoc.Fields["Body"], Content: map[string]*MediaType{"*/*": {}}}
+		op.Errors = append(op.Errors, httpkernel.BodyTooLarge{Limit: httpkernel.DefaultBodyLimit})
+	} else if d.Body != nil {
 		t := d.Body
 		required := t.Kind() != reflect.Pointer
 		if !required {

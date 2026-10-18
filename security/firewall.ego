@@ -72,6 +72,8 @@ type Firewall[U any] struct {
 	// Config gives the scheme of the Authorization header.
 	Config Config
 	// Tokens verifies the tokens: *Tokens, APIKeys, or another Verifier.
+	// Without, a token is its own subject: an API key that Load looks up,
+	// as in the app's database.
 	Tokens Verifier
 	// Load returns the user that a token's subject identifies, and reports
 	// whether there is one: a user that isn't nil, when it does. Its errors
@@ -143,7 +145,15 @@ func (f *Firewall[U]) authenticate(ctx context.Context, scheme, header string) (
 	if !strings.EqualFold(got, scheme) || token == "" {
 		return zero, InvalidToken{Scheme: scheme, Reason: f"the Authorization header isn't {scheme} and a token"}
 	}
-	subject, err := f.Tokens.Verify(strings.TrimSpace(token))
+	subject := strings.TrimSpace(token)
+	if f.Tokens == nil {
+		user, ok := check f.Load(ctx, subject) ""
+		if !ok {
+			return zero, InvalidToken{Scheme: scheme, Reason: "it isn't one of the API's keys"}
+		}
+		return user, nil
+	}
+	subject, err := f.Tokens.Verify(ctx, subject)
 	if e, ok := errors.AsType[InvalidToken](err); ok {
 		e.Scheme = scheme
 		return zero, e

@@ -1,0 +1,50 @@
+package checks
+
+import (
+	"context"
+
+	"github.com/goncini/goncini/cache"
+	"github.com/goncini/goncini/uid"
+)
+
+type BadgeInput struct {
+	Project uid.UUID `path:"project"`
+}
+
+// Badge is the status of a project's checks, as shields.io's endpoint
+// badges read it: https://img.shields.io/endpoint?url=<the badge's URL>.
+type Badge struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Label         string `json:"label"`
+	Message       string `json:"message"` // up, or how many checks are down
+	Color         string `json:"color"`
+}
+
+// Badge returns the badge of a project's checks: public, as a project's
+// ID is no secret, and cached until a check changes status.
+effect (c *Checks) Badge(in BadgeInput) (Badge, CheckError) {
+	b := check cache.Get(ctx, c.cache, badgeTag(in.Project), func(ctx context.Context, item *cache.Item) (Badge, error) {
+		item.Tags = []string{badgeTag(in.Project)}
+		counts := check c.store.Statuses(ctx, in.Project) ""
+		return badge(counts), nil
+	}) as Unavailable
+	return b, nil
+}
+
+// badge is the badge of checks, counted by status.
+func badge(counts map[string]int) Badge {
+	b := Badge{SchemaVersion: 1, Label: "heartbeat", Message: "up", Color: "brightgreen"}
+	switch {
+	case counts[Down] > 0:
+		b.Message, b.Color = f"{counts[Down]} down", "red"
+	case counts[Up] == 0:
+		b.Message, b.Color = "no data", "lightgrey" // new or paused, if any
+	}
+	return b
+}
+
+// badgeTag is the cache's tag of a project's badge, which a change of its
+// checks' statuses invalidates.
+func badgeTag(project uid.UUID) string {
+	return "badge:" + project.String()
+}

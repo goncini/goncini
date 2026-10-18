@@ -1,0 +1,96 @@
+package channels
+
+import (
+	"net/mail"
+	"net/url"
+	"time"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/listing"
+	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/security"
+	"github.com/goncini/goncini/uid"
+
+	"github.com/goncini/goncini/examples/heartbeat/projects"
+)
+
+// Channels serves the channels of the authenticated project.
+type Channels struct {
+	store *Store
+	now   func() time.Time
+}
+
+func NewChannels(store *Store, now func() time.Time) *Channels {
+	return &Channels{store: store, now: now}
+}
+
+// Routes registers the endpoints, which need a project.
+func (c *Channels) Routes(r *routing.Router) {
+	api := r.With(security.Required)
+	api.Get("/channels", httpkernel.Endpoint(c.List)).Name("channel_list")
+	api.Post("/channels", httpkernel.Endpoint(c.Create)).Name("channel_create")
+	api.Get("/channels/{id}", httpkernel.Endpoint(c.Show)).Name("channel_show").Require("id", routing.UUID)
+	api.Delete("/channels/{id}", httpkernel.Endpoint(c.Delete)).Name("channel_delete").Require("id", routing.UUID)
+}
+
+type ListInput struct {
+	listing.Window
+}
+
+// List returns a page of the project's channels, the newest first.
+effect (c *Channels) List(in ListInput) (listing.Page[Channel], ChannelError) {
+	list, count := check c.store.List(projects.Current(ctx).ID, in.Limit, in.Offset) as Unavailable
+	return listing.Page[Channel]{Items: list, Total: count, Window: in.Window}, nil
+}
+
+type IDInput struct {
+	ID uid.UUID `path:"id"`
+}
+
+// Show returns a channel.
+effect (c *Channels) Show(in IDInput) (Channel, ChannelError) {
+	ch, ok := check c.store.Get(projects.Current(ctx).ID, in.ID) as Unavailable
+	if !ok {
+		fail NotFound{ID: in.ID}
+	}
+	return ch, nil
+}
+
+type CreateInput struct {
+	Body struct {
+		Kind   string `json:"kind" validate:"required,oneof=email webhook"`
+		Target string `json:"target" validate:"required,max=2000"` // the email address, or the webhook's URL
+	}
+}
+
+// Validate checks the target of the channel's kind.
+func (in *CreateInput) Validate() error {
+	b := in.Body
+	switch b.Kind {
+	case Email:
+		if a, err := mail.ParseAddress(b.Target); err != nil || a.Address != b.Target {
+			return httpkernel.Invalid(httpkernel.Violation{Pointer: "#/target", Detail: "must be an email address"})
+		}
+	case Webhook:
+		if u, err := url.Parse(b.Target); err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Host == "" {
+			return httpkernel.Invalid(httpkernel.Violation{Pointer: "#/target", Detail: "must be an http or https URL"})
+		}
+	}
+	return nil
+}
+
+// Create adds a channel, which the project's next flips alert.
+effect (c *Channels) Create(in CreateInput) (httpkernel.Created[Channel], ChannelError) {
+	ch := Channel{ID: uid.NewV7(), ProjectID: projects.Current(ctx).ID, Kind: in.Body.Kind, Target: in.Body.Target, CreatedAt: c.now().UTC()}
+	check c.store.Add(ch) as Unavailable
+	return httpkernel.Created[Channel]{Body: ch}, nil
+}
+
+// Delete removes a channel.
+effect (c *Channels) Delete(in IDInput) (httpkernel.NoContent, ChannelError) {
+	deleted := check c.store.Delete(projects.Current(ctx).ID, in.ID) as Unavailable
+	if !deleted {
+		fail NotFound{ID: in.ID}
+	}
+	return httpkernel.NoContent{}, nil
+}

@@ -29,7 +29,7 @@ var skeleton embed.FS
 type skeletonData struct {
 	Module  string // the module path, such as example.com/acme
 	Name    string // its last element: acme
-	Replace string // a goncini checkout to require instead of a version
+	Replace string // a goncini checkout to require instead of a version: absolute, or from the app
 }
 
 // deps is the new app's dependencies, which a file of blank imports keeps
@@ -71,6 +71,24 @@ func newApp(module, dir, replace string) (err error) {
 		if _, err := os.Stat(filepath.Join(abs, "go.mod")); err != nil {
 			return fmt.Errorf("%s isn't a goncini checkout", replace)
 		}
+		// A relative checkout stays relative, from the app: its go.mod can
+		// be committed, as goncini's examples are.
+		if !filepath.IsAbs(replace) {
+			app, err4 := filepath.Abs(dir)
+			if err4 != nil {
+				return err4
+			}
+//line new.ego:68
+			v, err5 := filepath.Rel(app, abs)
+			if err5 != nil {
+				return err5
+			}
+			abs = v
+//line new.ego:69
+			if !strings.HasPrefix(abs, ".") {
+				abs = "./" + abs // go.mod's relative paths start with ./ or ../
+			}
+		}
 		replace = filepath.ToSlash(abs)
 	}
 	defer func() { // a failure leaves dir as it was
@@ -105,7 +123,7 @@ func writeApp(dir string, data skeletonData) error {
 	}
 	// Blank imports keep the dependencies while the module is tidied:
 	// tidy doesn't read .ego files, and their Go isn't generated yet.
-//line new.ego:96
+//line new.ego:105
 	var imports strings.Builder
 	for _, d := range deps {
 		imports.WriteString(fmt.Sprintf("\t_ %q\n", d))
@@ -114,39 +132,39 @@ func writeApp(dir string, data skeletonData) error {
 	if err := os.WriteFile(depsFile, []byte("//go:build tools\n\npackage main\n\nimport (\n"+imports.String()+")\n"), 0o644); err != nil {
 		return err
 	}
-//line new.ego:102
+//line new.ego:111
 	if data.Replace != "" {
 		if err := run(dir, "go", "mod", "edit", "-require=github.com/goncini/goncini@v0.0.0", "-require=github.com/goncini/goncini/db/goosedb@v0.0.0"); err != nil {
 			return err
 		}
 	} else {
-//line new.ego:105
+//line new.ego:114
 		v := version()
 		if err := run(dir, "go", "get", "github.com/goncini/goncini@"+v, "github.com/goncini/goncini/db/goosedb@"+v); err != nil {
 			return err
 		}
 	}
-//line new.ego:108
+//line new.ego:117
 	if err := run(dir, "go", "mod", "tidy"); err != nil {
 		return err
 	}
-//line new.ego:109
+//line new.ego:118
 	if err := write(dir, data, func(rel string) bool { return !injector(rel) }); err != nil {
 		return err
 	}
-//line new.ego:110
+//line new.ego:119
 	if err := run(dir, "go", "tool", "goncini", "generate"); err != nil {
 		return err
 	}
-//line new.ego:111
+//line new.ego:120
 	if err := os.Remove(depsFile); err != nil {
 		return err
 	}
-//line new.ego:112
+//line new.ego:121
 	if err := run(dir, "go", "mod", "tidy"); err != nil {
 		return err
 	}
-//line new.ego:113
+//line new.ego:122
 	return nil
 }
 
@@ -156,7 +174,7 @@ func write(dir string, data skeletonData, skip func(rel string) bool) error {
 		if err != nil {
 			return err
 		}
-//line new.ego:120
+//line new.ego:129
 		if d.IsDir() {
 			return nil
 		}
@@ -171,22 +189,22 @@ func write(dir string, data skeletonData, skip func(rel string) bool) error {
 		if err2 != nil {
 			return err2
 		}
-//line new.ego:131
+//line new.ego:140
 		t, err3 := template.New(rel).Delims("<%", "%>").Parse(string(src))
 		if err3 != nil {
 			return err3
 		}
-//line new.ego:132
+//line new.ego:141
 		var out bytes.Buffer
 		if err4 := t.Execute(&out, data); err4 != nil {
 			return err4
 		}
-//line new.ego:134
+//line new.ego:143
 		target := filepath.Join(dir, filepath.FromSlash(rel))
 		if err5 := os.MkdirAll(filepath.Dir(target), 0o755); err5 != nil {
 			return err5
 		}
-//line new.ego:136
+//line new.ego:145
 		return os.WriteFile(target, out.Bytes(), 0o644)
 	})
 }

@@ -1,4 +1,4 @@
-// Package <%.Package%> is the <%.Package%> feature: what a <%.Var%> is, how it
+// Package <%.Package%> is the <%.Package%> feature: what <%.A%> is, how it
 // fails, and the endpoints that serve it.
 package <%.Package%>
 
@@ -19,7 +19,7 @@ type <%.Type%> struct {
 
 // <%.Type%>Error is everything the <%.Package%> endpoints fail with.
 error <%.Type%>Error {
-	NotFound{ ID uid.UUID } "no <%.Var%> {ID}"
+	NotFound{ ID uid.UUID } "no <%.Noun%> {ID}"
 	// Unavailable means that the store failed.
 	Unavailable{ Cause error } "the <%.Package%> are unavailable"
 }

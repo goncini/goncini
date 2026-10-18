@@ -109,6 +109,8 @@ type Firewall[U any] struct {
 	// Config gives the scheme of the Authorization header.
 	Config Config
 	// Tokens verifies the tokens: *Tokens, APIKeys, or another Verifier.
+	// Without, a token is its own subject: an API key that Load looks up,
+	// as in the app's database.
 	Tokens Verifier
 	// Load returns the user that a token's subject identifies, and reports
 	// whether there is one: a user that isn't nil, when it does. Its errors
@@ -180,7 +182,19 @@ func (f *Firewall[U]) authenticate(ctx context.Context, scheme, header string) (
 	if !strings.EqualFold(got, scheme) || token == "" {
 		return zero, InvalidToken{Scheme: scheme, Reason: fmt.Sprintf("the Authorization header isn't %s and a token", scheme)}
 	}
-	subject, err := f.Tokens.Verify(strings.TrimSpace(token))
+	subject := strings.TrimSpace(token)
+	if f.Tokens == nil {
+		user, ok, err := f.Load(ctx, subject)
+		if err != nil {
+			return *new(U), err
+		}
+//line firewall.ego:151
+		if !ok {
+			return zero, InvalidToken{Scheme: scheme, Reason: "it isn't one of the API's keys"}
+		}
+		return user, nil
+	}
+	subject, err := f.Tokens.Verify(ctx, subject)
 	if e, ok := errors.AsType[InvalidToken](err); ok {
 		e.Scheme = scheme
 		return zero, e
@@ -188,12 +202,12 @@ func (f *Firewall[U]) authenticate(ctx context.Context, scheme, header string) (
 	if err != nil {
 		return *new(U), err
 	}
-//line firewall.ego:152
+//line firewall.ego:162
 	user, ok, err2 := f.Load(ctx, subject)
 	if err2 != nil {
 		return *new(U), err2
 	}
-//line firewall.ego:153
+//line firewall.ego:163
 	if !ok {
 		return zero, InvalidToken{Scheme: scheme, Reason: "its user doesn't exist"}
 	}
@@ -210,7 +224,7 @@ func User[U any](ctx context.Context) (U, bool) {
 		v = st.user
 	}
 	u, ok := v.(U)
-//line firewall.ego:165
+//line firewall.ego:175
 	return u, ok
 }
 
@@ -235,7 +249,7 @@ func CurrentUser[U any](ctx context.Context) (U, error) {
 //
 //	r.With(security.Required).Post("/articles", httpkernel.Endpoint(a.Create))
 //
-//line firewall.ego:184
+//line firewall.ego:194
 func Required(next http.Handler) http.Handler {
 	return required{next}
 }
@@ -252,13 +266,13 @@ func (h required) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		v = st.user
 	}
 	if v == nil {
-//line firewall.ego:196
+//line firewall.ego:206
 		var v2 string
 		if st != nil {
 			v2 = st.scheme
 		}
 		httpkernel.WriteError(w, r, Unauthenticated{Scheme: v2})
-//line firewall.ego:197
+//line firewall.ego:207
 		return
 	}
 	h.next.ServeHTTP(w, r)

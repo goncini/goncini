@@ -1,0 +1,45 @@
+// Package channels is the alert channels of the projects: each flip of a
+// check alerts its project's channels, by email or webhook.
+package channels
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/uid"
+)
+
+// The kinds of channels.
+const (
+	Email   = "email"
+	Webhook = "webhook" // a POST of the Alert, as JSON
+)
+
+// Channel is where a project's alerts go.
+type Channel struct {
+	ID        uid.UUID  `json:"id"`
+	ProjectID uid.UUID  `json:"-"`
+	Kind      string    `json:"kind"`   // email or webhook
+	Target    string    `json:"target"` // the email address, or the webhook's URL
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// ChannelError is everything the channels endpoints fail with.
+error ChannelError {
+	NotFound{ ID uid.UUID } "no channel {ID}"
+	// Unavailable means that the store failed.
+	Unavailable{ Cause error } "the channels are unavailable"
+}
+
+// Problem says what each ChannelError looks like over HTTP.
+func Problem(err ChannelError) httpkernel.Problem {
+	return match err {
+		nil            => httpkernel.Problem{}
+		NotFound(e)    => httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
+		Unavailable(_) => httpkernel.Problem{Status: http.StatusServiceUnavailable}
+	}
+}
+
+// Problems is what the kernel registers to answer ChannelErrors.
+var Problems = httpkernel.Map[ChannelError](Problem)

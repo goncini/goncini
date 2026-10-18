@@ -26,7 +26,7 @@ var skeleton embed.FS
 type skeletonData struct {
 	Module  string // the module path, such as example.com/acme
 	Name    string // its last element: acme
-	Replace string // a goncini checkout to require instead of a version
+	Replace string // a goncini checkout to require instead of a version: absolute, or from the app
 }
 
 // deps is the new app's dependencies, which a file of blank imports keeps
@@ -60,6 +60,15 @@ func newApp(module, dir, replace string) (err error) {
 		abs := check filepath.Abs(replace) ""
 		if _, err := os.Stat(filepath.Join(abs, "go.mod")); err != nil {
 			return fmt.Errorf("%s isn't a goncini checkout", replace)
+		}
+		// A relative checkout stays relative, from the app: its go.mod can
+		// be committed, as goncini's examples are.
+		if !filepath.IsAbs(replace) {
+			app := check filepath.Abs(dir) ""
+			abs = check filepath.Rel(app, abs) ""
+			if !strings.HasPrefix(abs, ".") {
+				abs = "./" + abs // go.mod's relative paths start with ./ or ../
+			}
 		}
 		replace = filepath.ToSlash(abs)
 	}

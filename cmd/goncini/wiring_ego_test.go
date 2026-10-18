@@ -33,15 +33,18 @@ func TestNames(t *testing.T) {
 
 func TestNewFeature(t *testing.T) {
 	for _, c := range []struct{ name, typ, want string }{
-		{"notes", "", "Note Notes n note"},
-		{"people", "Person", "Person People p person"},
-		{"news", "", "News NewsController n news"},
-		{"reports", "", "Report Reports re report"}, // r is the router
-		{"times", "", "Time Times t item"},          // time is a package
-		{"ranges", "", "Range Ranges ra item"},      // range is a keyword
+		{"notes", "", "Note Notes n note, a note"},
+		{"people", "Person", "Person People p person, a person"},
+		{"news", "", "News NewsController n news, a news"},
+		{"reports", "", "Report Reports re report, a report"}, // r is the router
+		{"times", "", "Time Times t item, a time"},            // time is a package
+		{"ranges", "", "Range Ranges ra item, a range"},       // range is a keyword
+		{"checks", "", "Check Checks c item, a check"},        // check is ego's
+		{"articles", "", "Article Articles a article, an article"},
+		{"prices", "PriceList", "PriceList Prices p priceList, a price list"},
 	} {
 		d, err := newFeature("example.com/acme", c.name, c.typ)
-		got := strings.Join([]string{d.Type, d.Plural, d.Recv, d.Var}, " ")
+		got := strings.Join([]string{d.Type, d.Plural, d.Recv, d.Var}, " ") + ", " + d.A
 		if err != nil || got != c.want {
 			t.Errorf("%s: %s, %v; want %s", c.name, got, err, c.want)
 		}
@@ -72,21 +75,21 @@ func TestAddServices(t *testing.T) {
 		if err := os.Mkdir(filepath.Join(root, "app"), 0o755); err != nil {
 			panic(err)
 		}
-//line wiring_test.ego:70
+//line wiring_test.ego:73
 		if err := os.WriteFile(filepath.Join(root, servicesFile), []byte(strings.ReplaceAll(c.in, "\n", "\r\n")), 0o644); err != nil {
 			panic(err)
 		} // as Windows checks it out
-//line wiring_test.ego:71
+//line wiring_test.ego:74
 		ch := newChange(root)
 		if err := addServices(ch, "example.com/acme/notes", "notes.NewStore"); err != nil {
 			panic(err)
 		}
-//line wiring_test.ego:73
+//line wiring_test.ego:76
 		got, err := ch.read(servicesFile)
 		if err != nil {
 			panic(err)
 		}
-//line wiring_test.ego:74
+//line wiring_test.ego:77
 		if got != c.want {
 			t.Errorf("got\n%s\nwant\n%s", got, c.want)
 		}
@@ -102,6 +105,15 @@ func TestAddImport(t *testing.T) {
 	if got != want {
 		t.Errorf("got\n%s\nwant\n%s", got, want)
 	}
+	// An app whose module goncini's owner owns too, as its examples are.
+	src = "import (\n\t\"github.com/goncini/goncini/db\"\n\n\t\"github.com/goncini/goncini/examples/notes/home\"\n)\n"
+	got = addImport(src, "github.com/goncini/goncini/messenger")
+	got = addImport(got, "github.com/goncini/goncini/examples/notes/notes")
+	got = addImport(got, "modernc.org/sqlite")
+	want = "import (\n\t\"github.com/goncini/goncini/db\"\n\t\"github.com/goncini/goncini/messenger\"\n\n\t\"github.com/goncini/goncini/examples/notes/home\"\n\t\"github.com/goncini/goncini/examples/notes/notes\"\n\t\"modernc.org/sqlite\"\n)\n"
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
 	if names := strings.Join(importNames("import (\n\t\"database/sql\"\n\t_ \"modernc.org/sqlite\"\n\tsq \"x/squirrel\"\n)\n"), " "); names != "sql _ sq" {
 		t.Errorf("import names %s", names)
 	}
@@ -112,16 +124,16 @@ func TestMakeMigration(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, "migrations"), 0o755); err != nil {
 		panic(err)
 	}
-//line wiring_test.ego:97
+//line wiring_test.ego:109
 	if err := os.WriteFile(filepath.Join(root, "migrations", "00009_old.sql"), nil, 0o644); err != nil {
 		panic(err)
 	}
-//line wiring_test.ego:98
+//line wiring_test.ego:110
 	files, err := makeMigration(root, "add_tags")
 	if err != nil {
 		panic(err)
 	}
-//line wiring_test.ego:99
+//line wiring_test.ego:111
 	if len(files) != 1 || files[0] != filepath.Join("migrations", "00010_add_tags.sql") {
 		t.Errorf("files %v", files)
 	}

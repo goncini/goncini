@@ -1,0 +1,160 @@
+package checks
+
+import (
+	"database/sql"
+	"time"
+
+	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/uid"
+)
+
+// Store keeps the checks, and their pings, in the database.
+type Store struct {
+	sql *db.SQL
+}
+
+func NewStore(s *db.SQL) *Store {
+	return &Store{sql: s}
+}
+
+// columns are what scan reads.
+const columns = "SELECT id, project_id, name, period, grace, status, last_ping, started_at, due_at, created_at FROM checks"
+
+// List returns at most limit of the project's checks from offset, the
+// newest first, and how many there are in all: those with the status, if
+// it isn't empty.
+effect (s *Store) List(project uid.UUID, status string, limit, offset int) ([]Check, int, error) {
+	conn := s.sql.Conn(ctx)
+	where := " WHERE project_id = ? AND (? = '' OR status = ?)"
+	count := check db.Value[int](ctx, conn, "SELECT count(*) FROM checks"+where, project, status, status)
+	list := check db.All(ctx, conn, scan, columns+where+" ORDER BY created_at DESC, id LIMIT ? OFFSET ?", project, status, status, limit, offset)
+	return list, count, nil
+}
+
+// Get returns the project's check with the ID, and reports whether there
+// is one.
+effect (s *Store) Get(project, id uid.UUID) (Check, bool, error) {
+	return db.One(ctx, s.sql.Conn(ctx), scan, columns+" WHERE id = ? AND project_id = ?", id, project)
+}
+
+// ByID returns the check with the ID, whichever its project: for pings,
+// which only its ID authenticates.
+effect (s *Store) ByID(id uid.UUID) (Check, bool, error) {
+	return db.One(ctx, s.sql.Conn(ctx), scan, columns+" WHERE id = ?", id)
+}
+
+// Statuses returns how many of the project's checks have each status.
+effect (s *Store) Statuses(project uid.UUID) (map[string]int, error) {
+	type count struct {
+		status string
+		n      int
+	}
+	rows := check db.All(ctx, s.sql.Conn(ctx), func(row db.Scanner) (count, error) {
+		var c count
+		err := row.Scan(&c.status, &c.n)
+		return c, err
+	}, "SELECT status, count(*) FROM checks WHERE project_id = ? GROUP BY status", project)
+	counts := map[string]int{}
+	for _, c := range rows {
+		counts[c.status] = c.n
+	}
+	return counts, nil
+}
+
+// Due returns the checks that are up, and due before at: those that the
+// sweep takes down.
+effect (s *Store) Due(at time.Time) ([]Check, error) {
+	return db.All(ctx, s.sql.Conn(ctx), scan, columns+" WHERE status = ? AND due_at < ? ORDER BY due_at", Up, at.UnixMicro())
+}
+
+// Add adds a check.
+effect (s *Store) Add(c Check) error {
+	check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO checks (id, project_id, name, period, grace, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		c.ID, c.ProjectID, c.Name, c.Period, c.Grace, c.Status, c.CreatedAt.UnixMicro())
+	return nil
+}
+
+// Update saves a check's name, period and grace, and when it is due.
+effect (s *Store) Update(c Check) error {
+	check s.sql.Conn(ctx).ExecContext(ctx, "UPDATE checks SET name = ?, period = ?, grace = ?, due_at = ? WHERE id = ?",
+		c.Name, c.Period, c.Grace, micros(c.due(c.Status)), c.ID)
+	return nil
+}
+
+// Delete removes the project's check with the ID, and its pings, and
+// reports whether there was one.
+effect (s *Store) Delete(project, id uid.UUID) (bool, error) {
+	res := check s.sql.Conn(ctx).ExecContext(ctx, "DELETE FROM checks WHERE id = ? AND project_id = ?", id, project)
+	n := check res.RowsAffected()
+	return n == 1, nil
+}
+
+// Move saves the check's status, and its pings' times, if its status is
+// still from, and reports whether it was: another request moved it
+// otherwise.
+effect (s *Store) Move(c Check, from, to string) (bool, error) {
+	res := check s.sql.Conn(ctx).ExecContext(ctx, "UPDATE checks SET status = ?, last_ping = ?, started_at = ?, due_at = ? WHERE id = ? AND status = ?",
+		to, micros(c.LastPing), micros(c.StartedAt), micros(c.due(to)), c.ID, from)
+	n := check res.RowsAffected()
+	return n == 1, nil
+}
+
+// Started saves when the check's job started its run.
+effect (s *Store) Started(id uid.UUID, at time.Time) error {
+	check s.sql.Conn(ctx).ExecContext(ctx, "UPDATE checks SET started_at = ? WHERE id = ?", at.UnixMicro(), id)
+	return nil
+}
+
+// AddPing adds a ping.
+effect (s *Store) AddPing(p Ping) error {
+	check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO pings (check_id, kind, body, user_agent, duration, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		p.Check, p.Kind, p.Body, p.UserAgent, sql.Null[int64]{V: int64(p.Duration * 1e6), Valid: p.Duration > 0}, p.CreatedAt.UnixMicro())
+	return nil
+}
+
+// Pings returns at most limit of the check's pings after the one with the
+// ID, if it isn't 0, the newest first.
+effect (s *Store) Pings(check uid.UUID, after int64, limit int) ([]Ping, error) {
+	return db.All(ctx, s.sql.Conn(ctx), scanPing,
+		"SELECT id, check_id, kind, body, user_agent, duration, created_at FROM pings WHERE check_id = ? AND (? = 0 OR id < ?) ORDER BY id DESC LIMIT ?",
+		check, after, after, limit)
+}
+
+// PrunePings removes the pings older than before, and returns how many.
+effect (s *Store) PrunePings(before time.Time) (int64, error) {
+	res := check s.sql.Conn(ctx).ExecContext(ctx, "DELETE FROM pings WHERE created_at < ?", before.UnixMicro())
+	return res.RowsAffected()
+}
+
+// micros is t in Unix microseconds, or NULL if t is zero.
+func micros(t time.Time) sql.Null[int64] {
+	return sql.Null[int64]{V: t.UnixMicro(), Valid: !t.IsZero()}
+}
+
+// fromMicros is the time of Unix microseconds, or zero for NULL.
+func fromMicros(n sql.Null[int64]) time.Time {
+	if !n.Valid {
+		return time.Time{}
+	}
+	return time.UnixMicro(n.V).UTC()
+}
+
+func scan(row db.Scanner) (Check, error) {
+	var c Check
+	var last, started, due sql.Null[int64]
+	var created int64
+	check row.Scan(&c.ID, &c.ProjectID, &c.Name, &c.Period, &c.Grace, &c.Status, &last, &started, &due, &created) ""
+	c.LastPing, c.StartedAt, c.DueAt = fromMicros(last), fromMicros(started), fromMicros(due)
+	c.CreatedAt = time.UnixMicro(created).UTC()
+	return c, nil
+}
+
+func scanPing(row db.Scanner) (Ping, error) {
+	var p Ping
+	var duration sql.Null[int64]
+	var created int64
+	check row.Scan(&p.ID, &p.Check, &p.Kind, &p.Body, &p.UserAgent, &duration, &created) ""
+	p.Duration = float64(duration.V) / 1e6
+	p.CreatedAt = time.UnixMicro(created).UTC()
+	return p, nil
+}

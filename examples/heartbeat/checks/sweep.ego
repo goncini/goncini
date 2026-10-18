@@ -1,0 +1,52 @@
+package checks
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/goncini/goncini/scheduler"
+)
+
+// pingsKept is how long pings are kept.
+const pingsKept = 30 * 24 * time.Hour
+
+// Schedule sweeps the checks every minute, taking down those whose ping is
+// late, and prunes the old pings every hour.
+func (c *Checks) Schedule(s *scheduler.Scheduler) {
+	s.Add("checks:sweep", scheduler.Every(time.Minute), c.sweep)
+	s.Add("pings:prune", scheduler.Every(time.Hour), c.prune)
+}
+
+// sweep takes down the checks that are up and due, each in a transaction
+// of its own: one pinged since it was read is still up.
+func (c *Checks) sweep(ctx context.Context) error {
+	now := c.now()
+	due := check c.store.Due(ctx, now) ""
+	var errs []error
+	for _, d := range due {
+		var was, moved Check
+		err := c.tx.InTx(ctx, func(ctx context.Context) error {
+			found := false
+			was, found = check c.store.ByID(ctx, d.ID) ""
+			if !found || was.Status != Up || !was.DueAt.Before(now) {
+				moved = was
+				return nil
+			}
+			moved = check c.move(ctx, was, "expire") ""
+			return nil
+		})
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		errs = append(errs, c.changed(ctx, was.Status, moved))
+	}
+	return errors.Join(errs...)
+}
+
+// prune removes the pings older than pingsKept.
+func (c *Checks) prune(ctx context.Context) error {
+	_, err := c.store.PrunePings(ctx, c.now().Add(-pingsKept))
+	return err
+}

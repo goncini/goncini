@@ -1,0 +1,118 @@
+package channels_test
+
+import (
+	"bytes"
+	"encoding/json"
+	stdmime "mime"
+	"net/http"
+	"net/http/httptest"
+	"net/mail"
+	"slices"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/goncini/goncini/mailer/mailertest"
+	"github.com/goncini/goncini/webtest"
+
+	"github.com/goncini/goncini/examples/heartbeat/testapp"
+)
+
+// TestChannels checks the API's channels, and their targets.
+func TestChannels(t *testing.T) {
+	a, acme := testapp.Boot(t)
+	var ch struct {
+		ID string `json:"id"`
+	}
+	acme.Post("/api/v1/channels", `{"kind":"email","target":"ops@example.com"}`).Status(201).JSON(&ch)
+	acme.Get("/api/v1/channels").Status(200).Contains(`"total":1`)
+	acme.Get("/api/v1/channels/" + ch.ID).Status(200).Contains(`"target":"ops@example.com"`)
+	for body, violation := range map[string]string{
+		`{"kind":"email","target":"Ops <ops@example.com>"}`: "must be an email address",
+		`{"kind":"webhook","target":"ftp://example.com/x"}`: "must be an http or https URL",
+		`{"kind":"sms","target":"+33600000000"}`:            "must be one of email, webhook",
+	} {
+		where := if violation == "must be one of email, webhook" { "#/kind" } else { "#/target" }
+		acme.Post("/api/v1/channels", body).Problem(422).Violation(where, violation)
+	}
+	testapp.Project(t, a, "other").Get("/api/v1/channels/" + ch.ID).Problem(404)
+	acme.Delete("/api/v1/channels/" + ch.ID).Status(204)
+	acme.Get("/api/v1/channels/" + ch.ID).Problem(404)
+}
+
+// hook is a webhook's receiver, which answers each POST with the next of
+// its statuses, then 204.
+type hook struct {
+	mu       sync.Mutex
+	statuses []int
+	alerts   []map[string]any
+	keys     []string
+}
+
+func (h *hook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.keys = append(h.keys, r.Header.Get("Idempotency-Key"))
+	status := http.StatusNoContent
+	if len(h.statuses) > 0 {
+		status, h.statuses = h.statuses[0], h.statuses[1:]
+	}
+	if status < 300 {
+		var alert map[string]any
+		json.NewDecoder(r.Body).Decode(&alert)
+		h.alerts = append(h.alerts, alert)
+	}
+	w.WriteHeader(status)
+}
+
+// TestAlerts checks that each flip of a check alerts its project's
+// channels once, out of the request: a webhook that keeps failing fails
+// the alert, which is retried, without sending its email again. It runs in
+// real time, not in a synctest bubble, whose time doesn't move while the
+// app talks to the SMTP and webhook servers: it waits for the retries.
+func TestAlerts(t *testing.T) {
+	smtp := mailertest.NewServer(t)
+	t.Setenv("MAILER_DSN", smtp.DSN())
+	// The client tries 4 times, then the alert fails.
+	receiver := &hook{statuses: []int{502, 502, 502, 502}}
+	srv := httptest.NewServer(receiver)
+	defer srv.Close()
+	a, acme := testapp.Boot(t)
+	acme.Post("/api/v1/channels", `{"kind":"email","target":"ops@example.com"}`).Status(201)
+	acme.Post("/api/v1/channels", `{"kind":"webhook","target":"`+srv.URL+`/alerts"}`).Status(201)
+	var chk struct {
+		ID string `json:"id"`
+	}
+	acme.Post("/api/v1/checks", `{"name":"backup","period":60,"grace":60}`).Status(201).JSON(&chk)
+	job := webtest.NewClient(t, a)
+
+	job.Post("/ping/"+chk.ID+"/fail", "disk full").Status(204)
+	job.Post("/ping/"+chk.ID+"/fail", "disk full").Status(204) // down already: no flip
+	if len(smtp.Messages()) != 0 {
+		t.Fatal("alerted in the request")
+	}
+	webtest.Run(t, a, "messenger:consume", "-drain")
+	time.Sleep(time.Second) // until the alert's retry is due
+	webtest.Run(t, a, "messenger:consume", "-drain")
+	job.Get("/ping/" + chk.ID).Status(204)
+	webtest.Run(t, a, "messenger:consume", "-drain")
+
+	var subjects []string
+	for _, m := range smtp.Messages() {
+		msg := must mail.ReadMessage(bytes.NewReader(m.Data))
+		subject := must new(stdmime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
+		subjects = append(subjects, m.To[0]+": "+subject)
+	}
+	if want := []string{"ops@example.com: backup is down", "ops@example.com: backup is up"}; !slices.Equal(subjects, want) {
+		t.Errorf("emails %q, want %q", subjects, want)
+	}
+	receiver.mu.Lock()
+	defer receiver.mu.Unlock()
+	if len(receiver.alerts) != 2 || receiver.alerts[0]["status"] != "down" || receiver.alerts[1]["status"] != "up" || receiver.alerts[0]["name"] != "backup" {
+		t.Errorf("webhooks %v", receiver.alerts)
+	}
+	keys := receiver.keys
+	if len(keys) != 6 || slices.Compact(slices.Clone(keys[:5]))[0] != keys[4] || len(slices.Compact(slices.Clone(keys[:5]))) != 1 || keys[5] == keys[0] {
+		t.Errorf("idempotency keys %q: the same for an alert's tries, another for the next", keys)
+	}
+}

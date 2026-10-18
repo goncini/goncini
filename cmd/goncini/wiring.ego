@@ -76,8 +76,10 @@ func importNames(src string) []string {
 }
 
 // addImport adds an import of path to src's import block, unless it has
-// one, after the last import from the same host and owner, such as
-// github.com/goncini, so that it joins their group.
+// one, at the end of the group of the import that shares the most of its
+// path, and at least its host and owner, such as github.com/goncini: the
+// first of those groups, which an app whose module goncini's owner also
+// owns has after goncini's. Without, it goes last.
 func addImport(src, path string) string {
 	quoted := strconv.Quote(path)
 	start := strings.Index(src, "import (\n")
@@ -86,19 +88,34 @@ func addImport(src, path string) string {
 	}
 	start += len("import (\n")
 	end := start + strings.Index(src[start:], "\n)") + 1
-	at := end
-	owner := path
-	if parts := strings.SplitN(path, "/", 3); len(parts) == 3 {
-		owner = parts[0] + "/" + parts[1] + "/"
-	}
+	at, best := end, 1
+	inBest := false // whether the line is in the group of the best match
 	for i := start; i < end; {
 		line := src[i : i+strings.IndexByte(src[i:], '\n')+1]
-		if strings.Contains(line, `"`+owner) {
-			at = i + len(line)
+		if m := importLine.FindStringSubmatch(line); m != nil {
+			if shared := sharedSegments(m[2], path); shared > best {
+				best, inBest = shared, true
+			}
+			if inBest {
+				at = i + len(line)
+			}
+		} else {
+			inBest = false // a blank line ends a group
 		}
 		i += len(line)
 	}
 	return src[:at] + "\t" + quoted + "\n" + src[at:]
+}
+
+// sharedSegments is how many of their first segments two import paths
+// share.
+func sharedSegments(a, b string) int {
+	as, bs := strings.Split(a, "/"), strings.Split(b, "/")
+	n := 0
+	for n < len(as) && n < len(bs) && as[n] == bs[n] {
+		n++
+	}
+	return n
 }
 
 // egoFmt formats .ego files with ego fmt.

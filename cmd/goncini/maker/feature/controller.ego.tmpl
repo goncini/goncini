@@ -41,7 +41,7 @@ type IDInput struct {
 	ID uid.UUID `path:"id"`
 }
 
-// Show returns a <%.Var%>.
+// Show returns <%.A%>.
 effect (<%.Recv%> *<%.Plural%>) Show(in IDInput) (<%.Type%>, <%.Type%>Error) {
 	<%.Var%>, ok := check <%.Recv%>.store.Get(in.ID) as Unavailable
 	if !ok {
@@ -56,14 +56,14 @@ type CreateInput struct {
 	}
 }
 
-// Create adds a <%.Var%>.
+// Create adds <%.A%>.
 effect (<%.Recv%> *<%.Plural%>) Create(in CreateInput) (httpkernel.Created[<%.Type%>], <%.Type%>Error) {
 	<%.Var%> := <%.Type%>{ID: uid.NewV7(), Title: in.Body.Title, CreatedAt: <%.Recv%>.now().UTC()}
 	check <%.Recv%>.store.Add(<%.Var%>) as Unavailable
 	return httpkernel.Created[<%.Type%>]{Body: <%.Var%>}, nil
 }
 
-// Delete removes a <%.Var%>.
+// Delete removes <%.A%>.
 effect (<%.Recv%> *<%.Plural%>) Delete(in IDInput) (httpkernel.NoContent, <%.Type%>Error) {
 	deleted := check <%.Recv%>.store.Delete(in.ID) as Unavailable
 	if !deleted {

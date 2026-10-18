@@ -11,13 +11,14 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"reflect"
 	"strings"
 )
 
 // DefaultBodyLimit is the most bytes DecodeJSON reads from a request body:
 // 1 MiB.
 //
-//line body.ego:16
+//line body.ego:17
 const DefaultBodyLimit = 1 << 20
 
 // BodyError is everything DecodeJSON can fail with. ProblemFor gives each
@@ -163,7 +164,7 @@ func (e BodyUnsupportedType) As(target any) bool {
 // a BodyMalformed even if a value doesn't fit its field. A BodyDecoder has
 // other settings.
 //
-//line body.ego:48
+//line body.ego:49
 func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
 	return BodyDecoder{}.Decode(w, r, v)
 }
@@ -186,7 +187,24 @@ func (d BodyDecoder) Decode(w http.ResponseWriter, r *http.Request, v any) error
 	if !isJSON(ct) {
 		return BodyMediaType{ContentType: ct}
 	}
-	limit := d.Limit
+	b, err := readBody(w, r, d.Limit)
+	if err != nil {
+		return err
+	}
+//line body.ego:72
+	if len(bytes.Trim(b, " \t\r\n")) == 0 {
+		return BodyEmpty{}
+	}
+	if offset, cause := syntaxError(b); cause != nil {
+		return BodyMalformed{Offset: offset, Cause: cause}
+	}
+	return valueError(json.Unmarshal(b, v, json.RejectUnknownMembers(d.RejectUnknown)))
+}
+
+// readBody reads the body of r, of at most limit bytes, or
+// DefaultBodyLimit when limit isn't positive. A body too large also makes
+// the response close the connection, since the rest of it is left unread.
+func readBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
 	if limit <= 0 {
 		limit = DefaultBodyLimit
 	}
@@ -199,18 +217,19 @@ func (d BodyDecoder) Decode(w http.ResponseWriter, r *http.Request, v any) error
 		if w != nil {
 			w.Header().Set("Connection", "close")
 		}
-		return BodyTooLarge{Limit: limit}
+		return nil, BodyTooLarge{Limit: limit}
 	}
 	if err != nil {
-		return BodyUnreadable{Cause: err}
+		return nil, BodyUnreadable{Cause: err}
 	}
-	if len(bytes.Trim(b, " \t\r\n")) == 0 {
-		return BodyEmpty{}
-	}
-	if offset, cause := syntaxError(b); cause != nil {
-		return BodyMalformed{Offset: offset, Cause: cause}
-	}
-	return valueError(json.Unmarshal(b, v, json.RejectUnknownMembers(d.RejectUnknown)))
+	return b, nil
+}
+
+// RawBody reports whether an endpoint's Body field of type t is the raw
+// request body, []byte or a string, of any Content-Type, instead of JSON:
+// for a body that isn't JSON, such as a job's log output.
+func RawBody(t reflect.Type) bool {
+	return t.Kind() == reflect.String || t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8
 }
 
 // isJSON reports whether a Content-Type is JSON: application/json, or a type
@@ -265,22 +284,22 @@ func bodyProblem(err error) Problem {
 	if err == nil {
 		v = Problem{}
 	} else if e, ok := errors.AsType[BodyMediaType](err); ok {
-//line body.ego:147
+//line body.ego:162
 		v = Problem{Status: http.StatusUnsupportedMediaType, Detail: e.Error()}
 	} else if e, ok := errors.AsType[BodyTooLarge](err); ok {
-//line body.ego:148
+//line body.ego:163
 		v = Problem{Status: http.StatusRequestEntityTooLarge, Detail: e.Error()}
 	} else if e, ok := errors.AsType[BodyEmpty](err); ok {
-//line body.ego:149
+//line body.ego:164
 		v = Problem{Status: http.StatusBadRequest, Detail: e.Error()}
 	} else if e, ok := errors.AsType[BodyMalformed](err); ok {
-//line body.ego:150
+//line body.ego:165
 		v = Problem{Status: http.StatusBadRequest, Detail: fmt.Sprintf("%s: %s", e.Error(), syntaxReason(e.Cause))}
 	} else if e, ok := errors.AsType[BodyInvalid](err); ok {
-//line body.ego:151
+//line body.ego:166
 		v = invalidBody(e)
 	} else if e, ok := errors.AsType[BodyUnreadable](err); ok {
-//line body.ego:152
+//line body.ego:167
 		v = Problem{Status: http.StatusBadRequest, Detail: e.Error()}
 	} else if _, ok := errors.AsType[BodyUnsupportedType](err); ok {
 		v = Problem{Status: http.StatusInternalServerError}
@@ -293,7 +312,7 @@ func bodyProblem(err error) Problem {
 // invalidBody is the 422 for a value that doesn't fit its field, with a
 // violation pointing at it.
 //
-//line body.ego:159
+//line body.ego:174
 func invalidBody(e BodyInvalid) Problem {
 	return Problem{
 		Status: http.StatusUnprocessableEntity,

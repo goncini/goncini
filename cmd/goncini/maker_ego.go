@@ -31,6 +31,8 @@ type featureData struct {
 	Type    string // what it serves: Note
 	Plural  string // its controller: Notes
 	Var     string // a variable of Type: note
+	Noun    string // what docs call a Type: price list, for PriceList
+	A       string // Noun after an article: a note, an article
 	Recv    string // the controller's receiver: n
 	Table   string // its table: notes
 	Path    string // its routes' path: /notes
@@ -46,6 +48,10 @@ var (
 	// featureNames are the names that make:feature's templates declare,
 	// which the type and the controller can't take.
 	featureNames = []string{"Store", "Problem", "Problems", "NotFound", "Unavailable", "ListInput", "IDInput", "CreateInput"}
+	// egoWords are the dialect's keywords, which Go's aren't, and error,
+	// which declares error sets: names that the type's variable can't take
+	// either, though it would compile, as in check, ok := check s.Get(id).
+	egoWords = []string{"check", "must", "fail", "match", "effect", "error"}
 	// templateNames are the names that the variable of the type can't
 	// take: the templates' packages, variables and receivers.
 	templateNames = []string{"time", "db", "uid", "http", "httpkernel", "listing", "routing", "list", "count", "ok", "deleted", "in", "s", "n", "res", "row", "created", "conn", "id", "store", "now", "r"}
@@ -68,12 +74,19 @@ func newFeature(module, name, typ string) (featureData, error) {
 		return featureData{}, fmt.Errorf("the feature declares %s already: name its type, as in make:feature %s Item", d.Type, name)
 	}
 	d.Route = snake(d.Type)
+	d.Noun = strings.ReplaceAll(d.Route, "_", " ")
+	if strings.ContainsRune("aeio", rune(d.Noun[0])) {
+		d.A = "an " + d.Noun
+	} else {
+		d.A = "a " + d.Noun
+	}
+//line maker.ego:76
 	d.Recv = strings.ToLower(d.Plural[:1])
 	if d.Recv == "r" { // the router's
 		d.Recv = strings.ToLower(d.Plural[:2])
 	}
 	d.Var = strings.ToLower(d.Type[:1]) + d.Type[1:]
-	if token.IsKeyword(d.Var) || d.Var == d.Recv || slices.Contains(templateNames, d.Var) {
+	if token.IsKeyword(d.Var) || slices.Contains(egoWords, d.Var) || d.Var == d.Recv || slices.Contains(templateNames, d.Var) {
 		d.Var = "item"
 	}
 	return d, nil
@@ -88,18 +101,18 @@ func makeFeature(root, name, typ string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:85
+//line maker.ego:93
 	d, err := newFeature(module, name, typ)
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:86
+//line maker.ego:94
 	c := newChange(root)
 	services, err := c.read(servicesFile)
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:88
+//line maker.ego:96
 	if slices.Contains(importNames(services), name) {
 		return nil, fmt.Errorf("%s imports a package named %s already", servicesFile, name)
 	}
@@ -114,22 +127,22 @@ func makeFeature(root, name, typ string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-//line maker.ego:99
+//line maker.ego:107
 		c.create(path.Join(name, file), code)
 	}
 	sql, err := render("maker/feature/migration.sql.tmpl", d)
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:102
+//line maker.ego:110
 	if err := addMigration(c, "create_"+name, sql); err != nil {
 		return nil, err
 	}
-//line maker.ego:103
+//line maker.ego:111
 	if err := addServices(c, module+"/"+name, name+".NewStore", name+".New"+d.Plural); err != nil {
 		return nil, err
 	}
-//line maker.ego:104
+//line maker.ego:112
 	return c.apply()
 }
 
@@ -168,18 +181,18 @@ func makeEndpoint(root, feature, name, method, at string) ([]string, error) {
 	if err := isFeature(root, feature); err != nil {
 		return nil, err
 	}
-//line maker.ego:140
+//line maker.ego:148
 	if err := undeclared(root, feature, name, name+"Input", name+"Output"); err != nil {
 		return nil, err
 	}
-//line maker.ego:141
+//line maker.ego:149
 	c := newChange(root)
 	file := path.Join(feature, "controller.ego")
 	src, err := c.read(file)
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:144
+//line maker.ego:152
 	m := routesFunc.FindStringSubmatchIndex(src)
 	if m == nil {
 		return nil, fmt.Errorf("%s has no Routes(r *routing.Router) method", file)
@@ -210,7 +223,7 @@ func makeEndpoint(root, feature, name, method, at string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:171
+//line maker.ego:179
 	if len(sets) > 0 {
 		d.Error = sets[0]
 	}
@@ -218,7 +231,7 @@ func makeEndpoint(root, feature, name, method, at string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:175
+//line maker.ego:183
 	c.edit(file, src[:end]+route+"\n"+src[end:]+string(code))
 	return c.apply()
 }
@@ -230,14 +243,14 @@ func featureErrorSets(dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:183
+//line maker.ego:191
 	var sets []string
 	for _, f := range files {
 		src, err := os.ReadFile(f)
 		if err != nil {
 			return nil, err
 		}
-//line maker.ego:186
+//line maker.ego:194
 		for _, m := range errorSet.FindAllSubmatch(src, -1) {
 			sets = append(sets, string(m[1]))
 		}
@@ -255,38 +268,38 @@ func makeMessage(root, feature, name string) ([]string, error) {
 	if err := isFeature(root, feature); err != nil {
 		return nil, err
 	}
-//line maker.ego:201
+//line maker.ego:209
 	if err := undeclared(root, feature, name, name+"Handler", "New"+name+"Handler"); err != nil {
 		return nil, err
 	}
-//line maker.ego:202
+//line maker.ego:210
 	module, err := modulePath(root)
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:203
+//line maker.ego:211
 	c := newChange(root)
 	code, err := render("maker/message.ego.tmpl", featureData{Package: feature, Type: name})
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:205
+//line maker.ego:213
 	c.create(path.Join(feature, snake(name)+".ego"), code)
 	if err := addServices(c, module+"/"+feature, feature+".New"+name+"Handler"); err != nil {
 		return nil, err
 	}
-//line maker.ego:207
+//line maker.ego:215
 	services, err := c.read(servicesFile)
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:208
+//line maker.ego:216
 	if !regexp.MustCompile(`messenger\.(SQL|Memory|NewBus)\b`).MatchString(services) {
 		if err := addServices(c, "github.com/goncini/goncini/messenger", "messenger.SQL"); err != nil {
 			return nil, err
 		}
 	}
-//line maker.ego:211
+//line maker.ego:219
 	return c.apply()
 }
 
@@ -310,28 +323,28 @@ func makeCommand(root, command, summary string) ([]string, error) {
 	if err := isFeature(root, feature); err != nil {
 		return nil, err
 	}
-//line maker.ego:232
+//line maker.ego:240
 	d := commandData{Package: feature, Type: camel(sub) + "Command", Command: command, Summary: summary}
 	if err := undeclared(root, feature, d.Type, "New"+d.Type); err != nil {
 		return nil, err
 	}
-//line maker.ego:234
+//line maker.ego:242
 	module, err := modulePath(root)
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:235
+//line maker.ego:243
 	c := newChange(root)
 	code, err := render("maker/command.ego.tmpl", d)
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:237
+//line maker.ego:245
 	c.create(path.Join(feature, snake(d.Type)+".ego"), code)
 	if err := addServices(c, module+"/"+feature, feature+".New"+d.Type); err != nil {
 		return nil, err
 	}
-//line maker.ego:239
+//line maker.ego:247
 	return c.apply()
 }
 
@@ -342,11 +355,11 @@ func makeMigration(root, name string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:246
+//line maker.ego:254
 	if err := addMigration(c, name, sql); err != nil {
 		return nil, err
 	}
-//line maker.ego:247
+//line maker.ego:255
 	return c.apply()
 }
 
@@ -362,7 +375,7 @@ func addMigration(c *change, name string, sql []byte) error {
 	if err != nil {
 		return err
 	}
-//line maker.ego:259
+//line maker.ego:267
 	last := 0
 	for _, e := range entries {
 		var n int
@@ -392,7 +405,7 @@ func undeclared(root, feature string, names ...string) error {
 	if err != nil {
 		return err
 	}
-//line maker.ego:285
+//line maker.ego:293
 	for _, name := range names {
 		decl := regexp.MustCompile(`(?m)^(?:type|func|effect|var|const)\s+(?:\([^)]*\)\s*)?` + name + `\b`)
 		for _, f := range files {
@@ -400,7 +413,7 @@ func undeclared(root, feature string, names ...string) error {
 			if err != nil {
 				return err
 			}
-//line maker.ego:289
+//line maker.ego:297
 			if decl.Match(src) {
 				return fmt.Errorf("%s declares %s already", filepath.Join(feature, filepath.Base(f)), name)
 			}
@@ -415,17 +428,17 @@ func render(name string, d any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:300
+//line maker.ego:308
 	t, err := template.New(name).Delims("<%", "%>").Parse(string(src))
 	if err != nil {
 		return nil, err
 	}
-//line maker.ego:301
+//line maker.ego:309
 	var out bytes.Buffer
 	if err := t.Execute(&out, d); err != nil {
 		return nil, err
 	}
-//line maker.ego:303
+//line maker.ego:311
 	return out.Bytes(), nil
 }
 
@@ -437,7 +450,7 @@ func modulePath(root string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-//line maker.ego:311
+//line maker.ego:319
 	m := modulePattern.FindSubmatch(mod)
 	if m == nil {
 		return "", fmt.Errorf("%s has no module line", filepath.Join(root, "go.mod"))

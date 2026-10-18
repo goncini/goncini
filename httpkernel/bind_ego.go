@@ -328,6 +328,19 @@ func (b *binder) bind(w http.ResponseWriter, r *http.Request, in reflect.Value, 
 		return nil
 	}
 	body := in.Field(b.body)
+	if RawBody(body.Type()) {
+		raw, err := readBody(w, r, bodyLimit)
+		if err != nil {
+			return err
+		}
+//line bind.ego:275
+		if body.Kind() == reflect.String {
+			body.SetString(string(raw))
+		} else {
+			body.SetBytes(raw)
+		}
+		return nil
+	}
 	if body.Kind() != reflect.Pointer {
 		return BodyDecoder{Limit: bodyLimit}.Decode(w, r, body.Addr().Interface())
 	}

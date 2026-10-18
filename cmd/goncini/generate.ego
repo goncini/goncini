@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -112,8 +113,18 @@ func egoError(err error, out []byte) error {
 func egoGenerate(root, packages string) ([]byte, error) {
 	cmd := exec.Command("go", "tool", "ego", "generate", packages)
 	cmd.Dir = root
-	return cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if err != nil && untidy.Match(out) {
+		out = append(out, "\nThe app's go.mod lacks what its .ego files import: go tool goncini tidy adds it.\n"...)
+	}
+	return out, err
 }
+
+// untidy matches what the type checker says of an import that the app's
+// go.mod doesn't provide: a package of a module that isn't required, or of
+// a required module whose dependencies go.sum lacks, which the app's Go
+// files didn't import yet.
+var untidy = regexp.MustCompile(`could not import|missing go\.sum entry|no required module provides`)
 
 // kind is a kind of service that goncini collects into a slice, and how.
 type kind struct {

@@ -185,6 +185,14 @@ func (d *Document) checkContent(content map[string]*MediaType, contentType strin
 		mt, ok = content["application/json"]
 	}
 	if !ok {
+		// A media range, as OpenAPI allows: text/*, then */*.
+		major, _, _ := strings.Cut(mediaType, "/")
+		mt, ok = content[major+"/*"]
+		if !ok {
+			mt, ok = content["*/*"]
+		}
+	}
+	if !ok {
 		if len(content) == 0 {
 			return errors.New(fmt.Sprintf("its %s body isn't declared", mediaType))
 		}
@@ -253,11 +261,11 @@ func (c *checker) value(s *Schema, v any, at string) {
 	if str, ok2 := v.(string); ok2 {
 		c.text(s, str, at)
 	} else if n, ok3 := v.(float64); ok3 {
-//line check.ego:228
+//line check.ego:236
 		c.number(s, n, at)
 	} else if items, ok4 := v.([]any); ok4 {
 
-//line check.ego:230
+//line check.ego:238
 		if s.MinItems != nil && len(items) < *s.MinItems || s.MaxItems != nil && len(items) > *s.MaxItems {
 			c.fail(at, "has %d items, out of bounds", len(items))
 		}
@@ -267,7 +275,7 @@ func (c *checker) value(s *Schema, v any, at string) {
 
 	} else if members, ok5 := v.(map[string]any); ok5 {
 
-//line check.ego:238
+//line check.ego:246
 		for _, name := range s.Required {
 			if _, ok := members[name]; !ok {
 				c.fail(at, "the required member %q is missing", name)
@@ -278,7 +286,7 @@ func (c *checker) value(s *Schema, v any, at string) {
 			if !ok6 || p == nil {
 				p = s.AdditionalProperties
 			}
-//line check.ego:245
+//line check.ego:253
 			c.value(p, m, at+"/"+strings.ReplaceAll(strings.ReplaceAll(name, "~", "~0"), "/", "~1"))
 		}
 
@@ -289,7 +297,7 @@ func (c *checker) value(s *Schema, v any, at string) {
 
 // text checks a string's length, pattern and date-time format.
 //
-//line check.ego:254
+//line check.ego:262
 func (c *checker) text(s *Schema, str, at string) {
 	n := utf8.RuneCountInString(str)
 	if s.MinLength != nil && n < *s.MinLength || s.MaxLength != nil && n > *s.MaxLength {
@@ -321,7 +329,7 @@ func kindOf(v any) string {
 	} else if _, ok := v.(bool); ok {
 		v2 = "boolean"
 	} else if n, ok := v.(float64); ok {
-//line check.ego:282
+//line check.ego:290
 		if n == math.Trunc(n) {
 			v2 = "integer"
 		} else {
@@ -341,7 +349,7 @@ func kindOf(v any) string {
 
 // describe shows v in a message.
 //
-//line check.ego:291
+//line check.ego:299
 func describe(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil || len(b) > 40 {

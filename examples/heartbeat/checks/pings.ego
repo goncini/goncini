@@ -1,0 +1,122 @@
+package checks
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/ratelimit"
+	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/uid"
+)
+
+// The kinds of pings.
+const (
+	Success = "success"
+	Start   = "start" // the job starts a run, which its next ping ends
+	Failure = "fail"
+)
+
+// Ping is a ping of a check by its job.
+type Ping struct {
+	ID        int64     `json:"id"`
+	Check     uid.UUID  `json:"-"`
+	Kind      string    `json:"kind"` // success, start or fail
+	Body      string    `json:"body"` // the job's output, its first 10 KB
+	UserAgent string    `json:"userAgent"`
+	Duration  float64   `json:"duration,omitzero"` // the seconds since the run's start, if a start ping began it
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// bodyLimit is how much of a ping's body is kept.
+const bodyLimit = 10 << 10
+
+// Pings records the pings of the checks' jobs. They are public, as a
+// check's ID authenticates them, and limited to 30 a minute for each check.
+type Pings struct {
+	checks  *Checks
+	limiter *ratelimit.Limiter
+}
+
+func NewPings(checks *Checks, now func() time.Time) *Pings {
+	return &Pings{
+		checks:  checks,
+		limiter: &ratelimit.Limiter{Policy: ratelimit.SlidingWindow{Limit: 30, Interval: time.Minute}, Now: now},
+	}
+}
+
+// Routes registers the endpoints, each for GET, HEAD and POST, which jobs
+// call as is easiest for them.
+func (p *Pings) Routes(r *routing.Router) {
+	limited := r.With(p.limiter.Middleware((r *http.Request) => r.PathValue("id")))
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		route := strings.ToLower(method)
+		limited.Method(method, "/ping/{id}", httpkernel.Endpoint(p.Success)).Name("ping_"+route).Require("id", routing.UUID)
+		limited.Method(method, `/ping/{id}/{signal<start|fail|\d{1,3}>}`, httpkernel.Endpoint(p.Signal)).Name("ping_signal_"+route).Require("id", routing.UUID)
+	}
+}
+
+type PingInput struct {
+	ID        uid.UUID `path:"id"`
+	UserAgent string   `header:"User-Agent"`
+	Body      string   // the job's output, of which the first 10 KB are kept
+}
+
+// Success records that a check's job succeeded: the check is up.
+effect (p *Pings) Success(in PingInput) (httpkernel.NoContent, CheckError) {
+	return p.record(in.ID, Success, in.Body, in.UserAgent)
+}
+
+type SignalInput struct {
+	ID        uid.UUID `path:"id"`
+	Signal    string   `path:"signal"` // start, fail, or the job's exit status: 0 for a success, a failure otherwise
+	UserAgent string   `header:"User-Agent"`
+	Body      string   // the job's output, of which the first 10 KB are kept
+}
+
+// Signal records that a check's job started a run, failed, or exited with
+// a status: a failure takes the check down.
+effect (p *Pings) Signal(in SignalInput) (httpkernel.NoContent, CheckError) {
+	kind := match in.Signal {
+		"start" => Start
+		"fail"  => Failure
+		"0"     => Success
+		_       => Failure
+	}
+	return p.record(in.ID, kind, in.Body, in.UserAgent)
+}
+
+// record records a ping of the check with the ID, and moves the check: a
+// success brings it up, and a failure down. A start begins the job's
+// run, which the next ping ends.
+effect (p *Pings) record(id uid.UUID, kind, body, agent string) (httpkernel.NoContent, CheckError) {
+	c := p.checks
+	now := c.now().UTC()
+	var was, moved Check
+	check c.tx.InTx(ctx, func(ctx context.Context) error {
+		found := false
+		was, found = check c.store.ByID(ctx, id) ""
+		if !found {
+			return NotFound{ID: id}
+		}
+		ping := Ping{Check: id, Kind: kind, Body: strings.ToValidUTF8(body[:min(len(body), bodyLimit)], ""), UserAgent: agent, CreatedAt: now}
+		if kind == Start {
+			moved = was
+			check c.store.AddPing(ctx, ping) ""
+			return c.store.Started(ctx, id, now)
+		}
+		if !was.StartedAt.IsZero() {
+			ping.Duration = now.Sub(was.StartedAt).Seconds()
+		}
+		check c.store.AddPing(ctx, ping) ""
+		pinged := was
+		pinged.LastPing, pinged.StartedAt = now, time.Time{}
+		transition := if kind == Failure { "fail" } else { "ping" }
+		moved = check c.move(ctx, pinged, transition) ""
+		return nil
+	}) as Unavailable
+	check c.changed(ctx, was.Status, moved) as Unavailable
+	return httpkernel.NoContent{}, nil
+}

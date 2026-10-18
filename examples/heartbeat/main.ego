@@ -1,0 +1,17 @@
+// Command heartbeat is an API built with goncini.
+//
+//	go tool goncini serve        # serves it on :8080, and reloads it when its files change
+//	go tool goncini list         # its commands
+//	go tool goncini db:migrate   # applies the migrations
+//
+// In production, it is a binary: go build, then ./heartbeat serves it.
+package main
+
+import (
+	"github.com/goncini/goncini"
+
+	"github.com/goncini/goncini/examples/heartbeat/app"
+	"github.com/goncini/goncini/examples/heartbeat/config"
+)
+
+func main() { goncini.Main(config.Load, app.Build) }

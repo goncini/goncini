@@ -256,3 +256,17 @@ func TestCheckRefsAndEscapes(t *testing.T) {
 		t.Errorf("%v", err)
 	}
 }
+
+// TestCheckMediaRanges checks bodies against media ranges: the most
+// specific one declared.
+func TestCheckMediaRanges(t *testing.T) {
+	doc := &openapi.Document{Paths: map[string]*openapi.PathItem{"/log": {Post: &openapi.Operation{
+		RequestBody: &openapi.RequestBody{Content: map[string]*openapi.MediaType{"*/*": {}, "text/*": {Schema: &openapi.Schema{Type: openapi.Types{"string"}}}}},
+		Responses:   map[string]*openapi.Response{"204": {}},
+	}}}}
+	for _, typ := range []string{"text/plain; charset=utf-8", "application/octet-stream", ""} {
+		if err := doc.Check(openapi.Exchange{Method: http.MethodPost, Path: "/log", RequestType: typ, RequestBody: []byte("done"), Status: 204, Header: http.Header{}}); err != nil {
+			t.Errorf("%q: %v", typ, err)
+		}
+	}
+}

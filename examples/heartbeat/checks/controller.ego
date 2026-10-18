@@ -1,0 +1,231 @@
+package checks
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/goncini/goncini/cache"
+	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/event"
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/listing"
+	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/security"
+	"github.com/goncini/goncini/uid"
+	"github.com/goncini/goncini/workflow"
+
+	"github.com/goncini/goncini/examples/heartbeat/projects"
+)
+
+// Checks serves the checks of the authenticated project, and moves them
+// through their lifecycle.
+type Checks struct {
+	store     *Store
+	tx        db.Transactor
+	lifecycle *workflow.Workflow
+	events    *event.Dispatcher
+	cache     *cache.Cache // the badges, tagged with their project
+	now       func() time.Time
+}
+
+func NewChecks(store *Store, tx db.Transactor, workflows workflow.Registry, events *event.Dispatcher, c *cache.Cache, now func() time.Time) *Checks {
+	return &Checks{store: store, tx: tx, lifecycle: workflows.Get(Lifecycle.Name), events: events, cache: c, now: now}
+}
+
+// Routes registers the endpoints, which need a project, but the badges.
+func (c *Checks) Routes(r *routing.Router) {
+	api := r.With(security.Required)
+	api.Get("/checks", httpkernel.Endpoint(c.List)).Name("check_list")
+	api.Post("/checks", httpkernel.Endpoint(c.Create)).Name("check_create")
+	api.Get("/checks/{id}", httpkernel.Endpoint(c.Show)).Name("check_show").Require("id", routing.UUID)
+	api.Patch("/checks/{id}", httpkernel.Endpoint(c.Update)).Name("check_update").Require("id", routing.UUID)
+	api.Delete("/checks/{id}", httpkernel.Endpoint(c.Delete)).Name("check_delete").Require("id", routing.UUID)
+	api.Post("/checks/{id}/pause", httpkernel.Endpoint(c.Pause)).Name("check_pause").Require("id", routing.UUID)
+	api.Post("/checks/{id}/resume", httpkernel.Endpoint(c.Resume)).Name("check_resume").Require("id", routing.UUID)
+	api.Get("/checks/{id}/pings", httpkernel.Endpoint(c.Pings)).Name("check_pings").Require("id", routing.UUID)
+	r.Get("/badges/{project}", httpkernel.Endpoint(c.Badge)).Name("badge").Require("project", routing.UUID)
+}
+
+type ListInput struct {
+	listing.Window
+	Status string `query:"status" enum:"new,up,down,paused"` // only the checks with this status
+}
+
+// List returns a page of the project's checks, the newest first.
+effect (c *Checks) List(in ListInput) (listing.Page[Check], CheckError) {
+	list, count := check c.store.List(projects.Current(ctx).ID, in.Status, in.Limit, in.Offset) as Unavailable
+	return listing.Page[Check]{Items: list, Total: count, Window: in.Window}, nil
+}
+
+type IDInput struct {
+	ID uid.UUID `path:"id"`
+}
+
+// Show returns a check.
+effect (c *Checks) Show(in IDInput) (Check, CheckError) {
+	return c.get(in.ID)
+}
+
+// get returns the project's check with the ID.
+effect (c *Checks) get(id uid.UUID) (Check, CheckError) {
+	chk, ok := check c.store.Get(projects.Current(ctx).ID, id) as Unavailable
+	if !ok {
+		fail NotFound{ID: id}
+	}
+	return chk, nil
+}
+
+type CreateInput struct {
+	Body struct {
+		Name   string `json:"name" validate:"required,max=100"`
+		Period int    `json:"period" validate:"min=60,max=31536000"` // the seconds between pings: a minute to a year
+		Grace  int    `json:"grace" validate:"min=60,max=31536000"`  // the seconds a ping may be late by
+	}
+}
+
+// Create adds a check, which is new until its first ping.
+effect (c *Checks) Create(in CreateInput) (httpkernel.Created[Check], CheckError) {
+	chk := Check{
+		ID:        uid.NewV4(), // random: it authenticates the pings
+		ProjectID: projects.Current(ctx).ID,
+		Name:      in.Body.Name,
+		Period:    in.Body.Period,
+		Grace:     in.Body.Grace,
+		Status:    New,
+		CreatedAt: c.now().UTC(),
+	}
+	check c.store.Add(chk) as Unavailable
+	check c.cache.Invalidate(ctx, badgeTag(chk.ProjectID)) as Unavailable
+	return httpkernel.Created[Check]{Body: chk}, nil
+}
+
+type UpdateInput struct {
+	IDInput
+	Body struct {
+		Name   httpkernel.Optional[string] `json:"name" validate:"omitempty,max=100"`
+		Period httpkernel.Optional[int]    `json:"period" validate:"omitempty,min=60,max=31536000"`
+		Grace  httpkernel.Optional[int]    `json:"grace" validate:"omitempty,min=60,max=31536000"`
+	}
+}
+
+// Validate refuses a null, which nothing of a check can be.
+func (in *UpdateInput) Validate() error {
+	var vs []httpkernel.Violation
+	b := in.Body
+	for _, f := range []struct {
+		name string
+		null bool
+	}{{"name", b.Name.Null}, {"period", b.Period.Null}, {"grace", b.Grace.Null}} {
+		if f.null {
+			vs = append(vs, httpkernel.Violation{Pointer: "#/" + f.name, Detail: "can't be null"})
+		}
+	}
+	if len(vs) == 0 {
+		return nil
+	}
+	return httpkernel.Invalid(vs...)
+}
+
+// Update changes a check's name, period or grace: those the body has. A
+// check that is up is due again from its last ping.
+effect (c *Checks) Update(in UpdateInput) (Check, CheckError) {
+	chk := check c.get(in.ID)
+	b := in.Body
+	chk.Name = if b.Name.Set { b.Name.Value } else { chk.Name }
+	chk.Period = if b.Period.Set { b.Period.Value } else { chk.Period }
+	chk.Grace = if b.Grace.Set { b.Grace.Value } else { chk.Grace }
+	chk.DueAt = chk.due(chk.Status)
+	check c.store.Update(chk) as Unavailable
+	return chk, nil
+}
+
+// Delete removes a check, and its pings.
+effect (c *Checks) Delete(in IDInput) (httpkernel.NoContent, CheckError) {
+	project := projects.Current(ctx).ID
+	deleted := check c.store.Delete(project, in.ID) as Unavailable
+	if !deleted {
+		fail NotFound{ID: in.ID}
+	}
+	check c.cache.Invalidate(ctx, badgeTag(project)) as Unavailable
+	return httpkernel.NoContent{}, nil
+}
+
+// Pause stops expecting a check's pings, until it is resumed or pinged.
+effect (c *Checks) Pause(in IDInput) (Check, CheckError) {
+	return c.transition(in.ID, "pause")
+}
+
+// Resume expects a paused check's pings again: it is new until the next.
+effect (c *Checks) Resume(in IDInput) (Check, CheckError) {
+	return c.transition(in.ID, "resume")
+}
+
+// transition moves the project's check with the ID by the transition.
+effect (c *Checks) transition(id uid.UUID, transition string) (Check, CheckError) {
+	chk := check c.get(id)
+	moved := check c.move(chk, transition)
+	check c.changed(ctx, chk.Status, moved) as Unavailable
+	return moved, nil
+}
+
+// move moves chk by the transition, in a transaction or the caller's, and
+// returns it moved: it saves its status and its pings' times, which the
+// caller may have changed, and dispatches Flipped if it flips. The status
+// refusing the transition, or another request moving the check
+// meanwhile, refuses it.
+effect (c *Checks) move(chk Check, transition string) (Check, CheckError) {
+	from := chk.Status
+	check c.tx.InTx(ctx, func(ctx context.Context) error {
+		to, err := c.lifecycle.Apply(ctx, &chk, from, transition, func(ctx context.Context, to string) error {
+			moved := check c.store.Move(ctx, chk, from, to) ""
+			if !moved {
+				return workflow.NotAllowed{Workflow: Lifecycle.Name, Transition: transition, State: from}
+			}
+			return nil
+		})
+		if _, ok := errors.AsType[workflow.NotAllowed](err); ok {
+			return Refused{Cause: err}
+		}
+		check err ""
+		chk.Status, chk.DueAt = to, chk.due(to)
+		if !flips(from, to) {
+			return nil
+		}
+		return event.Dispatch(ctx, c.events, &Flipped{ID: uid.NewV7(), Check: chk, From: from, At: c.now().UTC()})
+	}) as Unavailable
+	return chk, nil
+}
+
+// changed invalidates the badge of a check that moved from a status to
+// another: after the transaction that moved it, which a badge computed
+// meanwhile wouldn't see.
+func (c *Checks) changed(ctx context.Context, from string, moved Check) error {
+	if moved.Status == from {
+		return nil
+	}
+	return c.cache.Invalidate(ctx, badgeTag(moved.ProjectID))
+}
+
+type PingsInput struct {
+	IDInput
+	Limit int                   `query:"limit" default:"20" validate:"min=1,max=100"`
+	After listing.Cursor[int64] `query:"after"`
+}
+
+// PingsBody is a page of a check's pings.
+type PingsBody struct {
+	Items []Ping                `json:"items"`
+	Next  listing.Cursor[int64] `json:"next,omitzero"` // none after the last page
+}
+
+// Pings returns a page of a check's pings, the newest first.
+effect (c *Checks) Pings(in PingsInput) (PingsBody, CheckError) {
+	chk := check c.get(in.ID)
+	list := check c.store.Pings(chk.ID, in.After.Key, in.Limit) as Unavailable
+	body := PingsBody{Items: list}
+	if len(list) == in.Limit {
+		body.Next = listing.After(list[len(list)-1].ID)
+	}
+	return body, nil
+}

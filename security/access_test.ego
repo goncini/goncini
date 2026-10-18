@@ -113,8 +113,8 @@ func TestAPIKeys(t *testing.T) {
 		t.Error("a short key was accepted")
 	}
 	keys := must security.NewAPIKeys(map[string]string{annKey: "ann"})
-	sub := must keys.Verify(annKey)
-	if _, err := keys.Verify(bobKey); sub != "ann" || err == nil {
+	sub := must keys.Verify(context.Background(), annKey)
+	if _, err := keys.Verify(context.Background(), bobKey); sub != "ann" || err == nil {
 		t.Errorf("subject %q, another key: %v", sub, err)
 	}
 }

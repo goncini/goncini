@@ -3,6 +3,7 @@ package scheduler_test
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/lock"
 	"github.com/goncini/goncini/scheduler"
 )
@@ -178,11 +180,39 @@ func TestDebugTable(t *testing.T) {
 	s := scheduler.New(scheduler.Config{}, nil, nil, nil)
 	s.Add("digest", scheduler.MustCron("0 8 * * 1-5"), (ctx context.Context) => nil)
 	var out strings.Builder
-	cmds := scheduler.Commands(s)
-	must cmds[1].Run(context.Background(), &out, nil)
+	must console.Run(context.Background(), &out, scheduler.Commands(s), "", []string{"debug:scheduler"})
 	if !strings.Contains(out.String(), "digest  0 8 * * 1-5") {
 		t.Errorf("table:\n%s", out.String())
 	}
+}
+
+// TestTrigger checks that scheduler:trigger runs the tasks it names now,
+// with now as their tick, and none while one runs in another instance.
+func TestTrigger(t *testing.T) {
+	synctest.Test(t, (t *testing.T) => {
+		locks := &lock.MemoryStore{}
+		s := scheduler.New(scheduler.Config{}, locks, nil, slog.New(slog.DiscardHandler))
+		var ticks []time.Time
+		s.Add("report", scheduler.Every(time.Hour), (ctx context.Context) => {
+			tick, _ := scheduler.Tick(ctx)
+			ticks = append(ticks, tick)
+			return nil
+		})
+		trigger := (args ...string) => console.Run(context.Background(), io.Discard, scheduler.Commands(s), "", append([]string{"scheduler:trigger"}, args...))
+		must trigger("report")
+		if len(ticks) != 1 || !ticks[0].Equal(time.Now()) {
+			t.Errorf("ticks %v, want now", ticks)
+		}
+		for _, args := range [][]string{nil, {"report", "nope"}} {
+			if err := trigger(args...); !console.IsUsage(err) {
+				t.Errorf("%q: %v, want a usage error", args, err)
+			}
+		}
+		must locks.Acquire(context.Background(), "scheduler:report", "another instance", time.Minute)
+		if err := trigger("report"); err == nil || len(ticks) != 1 {
+			t.Errorf("%v, %d runs; want an error, and no run", err, len(ticks))
+		}
+	})
 }
 
 // TestCronDaylightSaving checks New York's clock changes: a time the

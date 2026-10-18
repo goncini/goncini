@@ -1,0 +1,24 @@
+package projects_test
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini/console"
+	"github.com/goncini/goncini/webtest"
+
+	"github.com/goncini/goncini/examples/heartbeat/testapp"
+)
+
+// TestProjects checks that a project's key, which projects:create prints,
+// authenticates it, and that another doesn't.
+func TestProjects(t *testing.T) {
+	a, acme := testapp.Boot(t)
+	acme.Get("/api/v1/project").Status(200).Contains(`"name":"acme"`)
+	c := webtest.NewClient(t, a)
+	c.Get("/api/v1/project").Problem(401)
+	c.WithHeader("Authorization", "Bearer hb_nope").Get("/api/v1/project").Problem(401).HasDetail("invalid token: it isn't one of the API's keys")
+	if err := console.Run(t.Context(), &strings.Builder{}, a.Commands, "", []string{"projects:create"}); !console.IsUsage(err) {
+		t.Errorf("without a name: %v", err)
+	}
+}

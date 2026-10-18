@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"reflect"
 	"strings"
 )
 
@@ -67,7 +68,20 @@ func (d BodyDecoder) Decode(w http.ResponseWriter, r *http.Request, v any) BodyE
 	if !isJSON(ct) {
 		fail BodyMediaType{ContentType: ct}
 	}
-	limit := d.Limit
+	b := check readBody(w, r, d.Limit)
+	if len(bytes.Trim(b, " \t\r\n")) == 0 {
+		fail BodyEmpty{}
+	}
+	if offset, cause := syntaxError(b); cause != nil {
+		fail BodyMalformed{Offset: offset, Cause: cause}
+	}
+	return valueError(json.Unmarshal(b, v, json.RejectUnknownMembers(d.RejectUnknown)))
+}
+
+// readBody reads the body of r, of at most limit bytes, or
+// DefaultBodyLimit when limit isn't positive. A body too large also makes
+// the response close the connection, since the rest of it is left unread.
+func readBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, BodyError) {
 	if limit <= 0 {
 		limit = DefaultBodyLimit
 	}
@@ -85,13 +99,14 @@ func (d BodyDecoder) Decode(w http.ResponseWriter, r *http.Request, v any) BodyE
 	if err != nil {
 		fail BodyUnreadable{Cause: err}
 	}
-	if len(bytes.Trim(b, " \t\r\n")) == 0 {
-		fail BodyEmpty{}
-	}
-	if offset, cause := syntaxError(b); cause != nil {
-		fail BodyMalformed{Offset: offset, Cause: cause}
-	}
-	return valueError(json.Unmarshal(b, v, json.RejectUnknownMembers(d.RejectUnknown)))
+	return b, nil
+}
+
+// RawBody reports whether an endpoint's Body field of type t is the raw
+// request body, []byte or a string, of any Content-Type, instead of JSON:
+// for a body that isn't JSON, such as a job's log output.
+func RawBody(t reflect.Type) bool {
+	return t.Kind() == reflect.String || t.Kind() == reflect.Slice && t.Elem().Kind() == reflect.Uint8
 }
 
 // isJSON reports whether a Content-Type is JSON: application/json, or a type

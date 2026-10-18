@@ -1,0 +1,29 @@
+// Package home is the API's home: what it is, and that it answers.
+package home
+
+import (
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/routing"
+)
+
+// Home serves the API's home.
+type Home struct{}
+
+// NewHome returns the API's home.
+func NewHome() *Home { return &Home{} }
+
+// Routes registers the home's endpoint.
+func (h *Home) Routes(r *routing.Router) {
+	r.Get("/", httpkernel.Endpoint(h.Show)).Name("home")
+}
+
+// Status is what the home says.
+type Status struct {
+	Name   string `json:"name"`
+	Status string `json:"status"` // ok
+}
+
+// Show returns the API's name, and that it is up.
+effect (h *Home) Show(in struct{}) (Status, error) {
+	return Status{Name: "heartbeat", Status: "ok"}, nil
+}

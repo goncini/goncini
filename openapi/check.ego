@@ -158,6 +158,14 @@ func (d *Document) checkContent(content map[string]*MediaType, contentType strin
 		mt, ok = content["application/json"]
 	}
 	if !ok {
+		// A media range, as OpenAPI allows: text/*, then */*.
+		major, _, _ := strings.Cut(mediaType, "/")
+		mt, ok = content[major+"/*"]
+		if !ok {
+			mt, ok = content["*/*"]
+		}
+	}
+	if !ok {
 		if len(content) == 0 {
 			return errors.New(f"its {mediaType} body isn't declared")
 		}

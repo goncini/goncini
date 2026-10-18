@@ -168,19 +168,43 @@ func (s *Scheduler) runOnce(ctx context.Context, log *slog.Logger, t task, tick 
 	if !won {
 		return false, nil // another instance runs it
 	}
-	// And a lock while it runs, so that a run that outlasts its interval
-	// in one instance doesn't overlap the next tick's in another: that
-	// tick is skipped, as it is in an instance alone.
+	held, err := s.exclusive(ctx, t)
+	if !held && err == nil {
+		log.WarnContext(ctx, "the task still runs in another instance: it doesn't run this time")
+	}
+	return held, err
+}
+
+// exclusive runs t while it holds a lock, so that a run that outlasts its
+// interval in one instance doesn't overlap the next tick's in another, nor
+// a triggered run: it reports whether it held the lock, and t ran.
+func (s *Scheduler) exclusive(ctx context.Context, t task) (bool, error) {
+	if s.Locks == nil {
+		return true, s.run(ctx, t)
+	}
 	running := (&lock.Factory{Store: s.Locks}).New("scheduler:" + t.name)
 	var runErr error
 	held := check running.Run(ctx, ctx => {
 		runErr = s.run(ctx, t)
 		return nil
 	}) ""
-	if !held {
-		log.WarnContext(ctx, "the task still runs in another instance: it doesn't run this time")
-	}
 	return held, runErr
+}
+
+// Trigger runs the task named name now, once, as scheduler:trigger does:
+// by hand, or in a test. Its tick is now. It fails, without running, while
+// the task runs in another instance.
+func (s *Scheduler) Trigger(ctx context.Context, name string) error {
+	i := slices.IndexFunc(s.tasks, t => t.name == name)
+	if i < 0 {
+		return fmt.Errorf("scheduler: no task %q", name)
+	}
+	ctx = context.WithValue(ctx, tickKey{}, time.Now())
+	held, err := s.exclusive(ctx, s.tasks[i])
+	if !held && err == nil {
+		return fmt.Errorf("scheduler: the task %q runs in another instance", name)
+	}
+	return err
 }
 
 // tickKey is the context key of the tick being run.
@@ -205,12 +229,31 @@ func (s *Scheduler) run(ctx context.Context, t task) (err error) {
 }
 
 // Commands returns s's console commands: scheduler:run, which runs the
-// tasks until it is told to stop, and debug:scheduler, which lists them.
+// tasks until it is told to stop, scheduler:trigger, which runs the tasks
+// it names now, and debug:scheduler, which lists them.
 func Commands(s *Scheduler) []console.Command {
 	return []console.Command{
 		console.New("scheduler:run", "Runs the scheduled tasks until stopped", (ctx context.Context, out io.Writer, args []string) => s.Run(ctx)),
+		console.New("scheduler:trigger", "Runs the scheduled tasks it names now, once", (ctx context.Context, out io.Writer, args []string) => s.triggerAll(ctx, args)),
 		console.New("debug:scheduler", "Lists the scheduled tasks, and when they run next", (ctx context.Context, out io.Writer, args []string) => s.writeTable(out, time.Now())),
 	}
+}
+
+// triggerAll triggers the named tasks, one after the other, until one
+// fails; none, if a name is unknown.
+func (s *Scheduler) triggerAll(ctx context.Context, names []string) error {
+	if len(names) == 0 {
+		return console.Usage{Command: "scheduler:trigger", Reason: "name the tasks to run"}
+	}
+	for _, name := range names {
+		if !slices.ContainsFunc(s.tasks, t => t.name == name) {
+			return console.Usage{Command: "scheduler:trigger", Reason: f"no task {name:q}: debug:scheduler lists them"}
+		}
+	}
+	for _, name := range names {
+		check s.Trigger(ctx, name) ""
+	}
+	return nil
 }
 
 // writeTable lists the tasks and their next runs after now.

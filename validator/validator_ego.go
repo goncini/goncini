@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	playground "github.com/go-playground/validator/v10"
 
@@ -33,10 +34,14 @@ import (
 
 // Validator checks inputs against their validate tags.
 //
-//line validator.ego:32
+//line validator.ego:33
 type Validator struct {
 	rules    *playground.Validate
 	messages map[string]string
+	// mu keeps the rules from changing while they validate: an input's
+	// type, the first time, registers its optional members' types.
+	mu       sync.RWMutex
+	prepared sync.Map // the types of inputs whose optional members are registered
 }
 
 // New returns a validator with go-playground/validator's rules, as
@@ -69,7 +74,10 @@ func (v *Validator) Rules() *playground.Validate {
 // tags. It returns httpkernel.Invalid with a violation per failing value, or
 // the error of a tag that doesn't parse.
 func (v *Validator) Validate(ctx context.Context, in any) error {
+	v.prepare(reflect.TypeOf(in))
+	v.mu.RLock()
 	err := v.rules.StructCtx(ctx, in)
+	v.mu.RUnlock()
 	var failures playground.ValidationErrors
 	if !errors.As(err, &failures) {
 		return err
@@ -78,13 +86,73 @@ func (v *Validator) Validate(ctx context.Context, in any) error {
 	for i, f := range failures {
 		v2, ok := v.messages[f.Tag()]
 		if !ok {
-//line validator.ego:74
+//line validator.ego:82
 			v2 = detailOf(f)
 		}
 		violations[i] = violation(f, v2)
 	}
-//line validator.ego:76
+//line validator.ego:84
 	return httpkernel.Invalid(violations...)
+}
+
+// optional is an httpkernel.Optional: a member that may be absent, or
+// null, whose tags check its Value when it is present.
+type optional interface {
+	Present() bool
+}
+
+var optionalType = reflect.TypeFor[optional]()
+
+// prepare registers the optional members' types of the inputs of type t,
+// the first time: go-playground checks their tags against what
+// presentValue returns, which omitempty skips when they aren't present.
+func (v *Validator) prepare(t reflect.Type) {
+	if _, ok := v.prepared.Load(t); ok {
+		return
+	}
+	var found []any
+	seen := map[reflect.Type]bool{}
+	var walk func(t reflect.Type)
+	walk = func(t reflect.Type) {
+		if seen[t] {
+			return
+		}
+		seen[t] = true
+		switch t.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Array:
+			walk(t.Elem())
+		case reflect.Map:
+			walk(t.Key())
+			walk(t.Elem())
+		case reflect.Struct:
+			if t.Implements(optionalType) {
+				if value, ok := t.FieldByName("Value"); ok {
+					found = append(found, reflect.Zero(t).Interface())
+					walk(value.Type)
+				}
+				return
+			}
+			for i := range t.NumField() {
+				walk(t.Field(i).Type)
+			}
+		}
+	}
+	walk(t)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if len(found) > 0 {
+		v.rules.RegisterCustomTypeFunc(presentValue, found...)
+	}
+	v.prepared.Store(t, true)
+}
+
+// presentValue is the value of an optional member that is present, or
+// nil.
+func presentValue(f reflect.Value) any {
+	if !f.Interface().(optional).Present() {
+		return nil
+	}
+	return f.FieldByName("Value").Interface()
 }
 
 // A field that isn't a JSON member is named source:name behind a marker,
@@ -116,7 +184,7 @@ func fieldName(f reflect.StructField) string {
 
 // violation is where f failed, with the detail.
 //
-//line validator.ego:102
+//line validator.ego:170
 func violation(f playground.FieldError, detail string) httpkernel.Violation {
 	segments := strings.Split(f.Namespace(), ".")[1:] // without the input's type
 	for _, s := range segments {
@@ -136,7 +204,7 @@ func violation(f playground.FieldError, detail string) httpkernel.Violation {
 		}
 		return v
 	}
-//line validator.ego:116
+//line validator.ego:184
 	if len(segments) > 0 && segments[0] == "Body" {
 		segments = segments[1:]
 	}
@@ -176,7 +244,7 @@ func detailOf(f playground.FieldError) string {
 	default:
 		size = ""
 	}
-//line validator.ego:151
+//line validator.ego:219
 	var v string
 	switch f.Tag() {
 	case "required", "required_if", "required_unless", "required_with", "required_without":
@@ -216,7 +284,7 @@ func detailOf(f playground.FieldError) string {
 	case "ne":
 		v = fmt.Sprintf("must not be %s", p)
 	case "oneof":
-//line validator.ego:160
+//line validator.ego:228
 		v = fmt.Sprintf("must be one of %s", strings.ReplaceAll(p, " ", ", "))
 	case "email":
 		v = "must be an email address"
@@ -243,12 +311,12 @@ func detailOf(f playground.FieldError) string {
 	case "unique":
 		v = "must have no duplicates"
 	default:
-//line validator.ego:173
+//line validator.ego:241
 		if p != "" {
-//line validator.ego:173
+//line validator.ego:241
 			v = fmt.Sprintf("must satisfy %s=%s", f.Tag(), p)
 		} else {
-//line validator.ego:173
+//line validator.ego:241
 			v = fmt.Sprintf("must satisfy %s", f.Tag())
 		}
 	}

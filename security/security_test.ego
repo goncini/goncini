@@ -54,7 +54,7 @@ func TestTokens(t *testing.T) {
 	}
 	tokens := must security.NewTokens(security.Config{Secret: secret, Issuer: "api"})
 	token := must tokens.Issue("42")
-	sub := must tokens.Verify(token)
+	sub := must tokens.Verify(context.Background(), token)
 	if sub != "42" {
 		t.Errorf("subject %q", sub)
 	}
@@ -64,7 +64,7 @@ func TestTokens(t *testing.T) {
 	wrongIssuer := must otherIssuer.Issue("42")
 	unsigned := "eyJhbGciOiJub25lIn0.eyJzdWIiOiI0MiJ9."
 	for name, bad := range map[string]string{"foreign": foreign, "wrong issuer": wrongIssuer, "unsigned": unsigned, "garbage": "x.y.z", "tampered": token[:len(token)-2] + "xx"} {
-		_, err := tokens.Verify(bad)
+		_, err := tokens.Verify(context.Background(), bad)
 		if e, ok := errors.AsType[security.InvalidToken](err); !ok || e.Reason != "it isn't one of the API's" {
 			t.Errorf("%s: %v", name, err)
 		}
@@ -76,9 +76,9 @@ func TestTokensExpire(t *testing.T) {
 		tokens := must security.NewTokens(security.Config{Secret: secret, TTL: time.Hour})
 		token := must tokens.Issue("42")
 		time.Sleep(59 * time.Minute)
-		must tokens.Verify(token)
+		must tokens.Verify(context.Background(), token)
 		time.Sleep(2 * time.Minute)
-		if _, err := tokens.Verify(token); err == nil || err.Error() != "invalid token: it has expired" {
+		if _, err := tokens.Verify(context.Background(), token); err == nil || err.Error() != "invalid token: it has expired" {
 			t.Errorf("after the TTL: %v", err)
 		}
 	})
@@ -90,7 +90,7 @@ type user struct{ Name string }
 // a firewall whose users are ann (1) and, when the store is down, nobody.
 func api(t *testing.T) (*webtest.Client, *security.Tokens) {
 	tokens := must security.NewTokens(security.Config{Secret: secret})
-	fw := &security.Firewall[*user]{
+	return serve(t, &security.Firewall[*user]{
 		Config: security.Config{Scheme: "Token"},
 		Tokens: tokens,
 		Load: func(ctx context.Context, id string) (*user, bool, error) {
@@ -100,7 +100,11 @@ func api(t *testing.T) (*webtest.Client, *security.Tokens) {
 				_      => return nil, false, nil
 			}
 		},
-	}
+	}), tokens
+}
+
+// serve serves a public route and routes that need a user, behind fw.
+func serve(t *testing.T, fw *security.Firewall[*user]) *webtest.Client {
 	whoami := httpkernel.Endpoint(func(ctx context.Context, in struct{}) (string, error) {
 		if u, ok := security.User[*user](ctx); ok {
 			return u.Name, nil
@@ -116,7 +120,7 @@ func api(t *testing.T) (*webtest.Client, *security.Tokens) {
 	r.With(security.Required).Get("/me", me)
 	r.Get("/me-unguarded", me) // CurrentUser fails without Required
 	k := &httpkernel.Kernel{Handler: r, Middleware: []httpkernel.Middleware{fw.Middleware}, Logger: slog.New(slog.DiscardHandler)}
-	return webtest.NewClient(t, k), tokens
+	return webtest.NewClient(t, k)
 }
 
 func TestFirewall(t *testing.T) {
@@ -144,6 +148,18 @@ func TestFirewall(t *testing.T) {
 	}
 	c.WithHeader("Authorization", "token "+annToken).Get("/whoami").Status(200) // schemes ignore case
 	c.WithHeader("Authorization", "Token "+downToken).Get("/whoami").Problem(500)
+}
+
+// TestFirewallWithoutTokens checks a firewall that hands Load the token
+// itself: an API key that the app looks up.
+func TestFirewallWithoutTokens(t *testing.T) {
+	c := serve(t, &security.Firewall[*user]{
+		Load: func(ctx context.Context, key string) (*user, bool, error) {
+			return &user{Name: "ann"}, key == annKey, nil
+		},
+	})
+	c.WithHeader("Authorization", "Bearer "+annKey).Get("/me").Status(200).Contains(`"ann"`)
+	c.WithHeader("Authorization", "Bearer "+bobKey).Get("/me").Problem(401).HasDetail("invalid token: it isn't one of the API's keys")
 }
 
 func TestCurrentUserWithoutAFirewall(t *testing.T) {

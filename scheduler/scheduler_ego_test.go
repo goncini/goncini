@@ -5,6 +5,7 @@ package scheduler_test
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -12,11 +13,12 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/lock"
 	"github.com/goncini/goncini/scheduler"
 )
 
-//line scheduler_test.ego:17
+//line scheduler_test.ego:19
 func TestCron(t *testing.T) {
 	from := time.Date(2026, 10, 7, 12, 34, 56, 0, time.UTC) // a Wednesday
 	for expr, want := range map[string]string{
@@ -34,7 +36,7 @@ func TestCron(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line scheduler_test.ego:31
+//line scheduler_test.ego:33
 		if got := c.Next(from).Format(time.RFC3339); got != want {
 			t.Errorf("%s: %s, want %s", expr, got, want)
 		}
@@ -44,7 +46,7 @@ func TestCron(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line scheduler_test.ego:37
+//line scheduler_test.ego:39
 	if got := leap.Next(time.Date(2096, 3, 1, 0, 0, 0, 0, time.UTC)); got.Year() != 2104 {
 		t.Errorf("after 2096's February 29th: %v", got)
 	}
@@ -52,7 +54,7 @@ func TestCron(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line scheduler_test.ego:41
+//line scheduler_test.ego:43
 	if !never.Next(from).IsZero() {
 		t.Error("February 30th came")
 	}
@@ -65,12 +67,12 @@ func TestCron(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line scheduler_test.ego:50
+//line scheduler_test.ego:52
 	local, err := scheduler.CronIn("30 2 * * *", paris)
 	if err != nil {
 		panic(err)
 	}
-//line scheduler_test.ego:51
+//line scheduler_test.ego:53
 	if got := local.Next(from); !got.Equal(time.Date(2026, 10, 8, 2, 30, 0, 0, paris)) {
 		t.Errorf("in Paris: %v", got)
 	}
@@ -89,7 +91,7 @@ func TestOneInstancePerTick(t *testing.T) {
 	for _, shared := range []bool{true, false} {
 		synctest.Test(t, func(t *testing.T) {
 
-//line scheduler_test.ego:68
+//line scheduler_test.ego:70
 			var mu sync.Mutex
 			runs := map[string]int{}
 			var locks lock.Store
@@ -103,20 +105,20 @@ func TestOneInstancePerTick(t *testing.T) {
 				s := scheduler.New(scheduler.Config{}, locks, nil, slog.New(slog.DiscardHandler))
 				s.Add("report", scheduler.Every(time.Minute), func(ctx context.Context) error {
 
-//line scheduler_test.ego:80
+//line scheduler_test.ego:82
 					mu.Lock()
 					defer mu.Unlock()
 					runs[instance]++
 					return nil
 
 				})
-//line scheduler_test.ego:85
+//line scheduler_test.ego:87
 				wg.Go(func() {
-//line scheduler_test.ego:85
+//line scheduler_test.ego:87
 					s.Run(ctx)
 				})
 			}
-//line scheduler_test.ego:87
+//line scheduler_test.ego:89
 			wg.Wait()
 			total := runs["a"] + runs["b"]
 			if shared && total != 10 || !shared && (runs["a"] != 10 || runs["b"] != 10) {
@@ -131,11 +133,11 @@ func TestOneInstancePerTick(t *testing.T) {
 // instance isn't overlapped by the next tick's in another: that tick is
 // skipped.
 //
-//line scheduler_test.ego:99
+//line scheduler_test.ego:101
 func TestNoOverlap(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 
-//line scheduler_test.ego:101
+//line scheduler_test.ego:103
 		var mu sync.Mutex
 		running, most, runs := 0, 0, 0
 		locks := &lock.MemoryStore{}
@@ -146,7 +148,7 @@ func TestNoOverlap(t *testing.T) {
 			s := scheduler.New(scheduler.Config{}, locks, nil, slog.New(slog.DiscardHandler))
 			s.Add("report", scheduler.Every(time.Minute), func(ctx context.Context) error {
 
-//line scheduler_test.ego:110
+//line scheduler_test.ego:112
 				mu.Lock()
 				running++
 				runs++
@@ -159,13 +161,13 @@ func TestNoOverlap(t *testing.T) {
 				return nil
 
 			})
-//line scheduler_test.ego:121
+//line scheduler_test.ego:123
 			wg.Go(func() {
-//line scheduler_test.ego:121
+//line scheduler_test.ego:123
 				s.Run(ctx)
 			})
 		}
-//line scheduler_test.ego:123
+//line scheduler_test.ego:125
 		wg.Wait()
 		if most != 1 || runs != 5 {
 			t.Errorf("%d runs, %d at once at most; want 5, one at a time", runs, most)
@@ -178,31 +180,31 @@ func TestNoOverlap(t *testing.T) {
 // runs again at its next tick, and that one whose lock can't be taken
 // doesn't run.
 //
-//line scheduler_test.ego:133
+//line scheduler_test.ego:135
 func TestFailures(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 
-//line scheduler_test.ego:135
+//line scheduler_test.ego:137
 		var logs strings.Builder
 		var mu sync.Mutex
 		runs := 0
 		s := scheduler.New(scheduler.Config{}, nil, nil, slog.New(slog.NewTextHandler(&logs, nil)))
 		s.Add("panics", scheduler.Every(time.Minute), func(ctx context.Context) error {
 
-//line scheduler_test.ego:140
+//line scheduler_test.ego:142
 			mu.Lock()
 			runs++
 			mu.Unlock()
 			panic("boom")
 
 		})
-//line scheduler_test.ego:145
+//line scheduler_test.ego:147
 		ctx, stop := context.WithTimeout(context.Background(), 2*time.Minute+time.Second)
 		defer stop()
 		if err := s.Run(ctx); err != nil {
 			panic(err)
 		}
-//line scheduler_test.ego:148
+//line scheduler_test.ego:150
 		if runs != 2 || !strings.Contains(logs.String(), "the task panicked: boom") || !strings.Contains(logs.String(), "scheduler_test") {
 			t.Errorf("%d runs, logs:\n%s", runs, logs.String())
 		}
@@ -212,18 +214,18 @@ func TestFailures(t *testing.T) {
 		s = scheduler.New(scheduler.Config{}, failingStore{}, nil, slog.New(slog.NewTextHandler(&logs, nil)))
 		s.Add("locked", scheduler.Every(time.Minute), func(ctx context.Context) error {
 
-//line scheduler_test.ego:156
+//line scheduler_test.ego:158
 			runs++
 			return nil
 
 		})
-//line scheduler_test.ego:159
+//line scheduler_test.ego:161
 		ctx, stop = context.WithTimeout(context.Background(), time.Minute+time.Second)
 		defer stop()
 		if err := s.Run(ctx); err != nil {
 			panic(err)
 		}
-//line scheduler_test.ego:162
+//line scheduler_test.ego:164
 		if runs != 0 || !strings.Contains(logs.String(), "taking the task's lock failed") {
 			t.Errorf("%d runs, logs:\n%s", runs, logs.String())
 		}
@@ -233,7 +235,7 @@ func TestFailures(t *testing.T) {
 
 // failingStore is a lock store that is down.
 //
-//line scheduler_test.ego:169
+//line scheduler_test.ego:171
 type failingStore struct{}
 
 func (failingStore) Acquire(ctx context.Context, key, owner string, ttl time.Duration) (bool, error) {
@@ -246,29 +248,74 @@ func TestDebugTable(t *testing.T) {
 	s := scheduler.New(scheduler.Config{}, nil, nil, nil)
 	s.Add("digest", scheduler.MustCron("0 8 * * 1-5"), func(ctx context.Context) error { return nil })
 	var out strings.Builder
-	cmds := scheduler.Commands(s)
-	if err := cmds[1].Run(context.Background(), &out, nil); err != nil {
+	if err := console.Run(context.Background(), &out, scheduler.Commands(s), "", []string{"debug:scheduler"}); err != nil {
 		panic(err)
 	}
-//line scheduler_test.ego:183
+//line scheduler_test.ego:184
 	if !strings.Contains(out.String(), "digest  0 8 * * 1-5") {
 		t.Errorf("table:\n%s", out.String())
 	}
 }
 
+// TestTrigger checks that scheduler:trigger runs the tasks it names now,
+// with now as their tick, and none while one runs in another instance.
+func TestTrigger(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+
+//line scheduler_test.ego:193
+		locks := &lock.MemoryStore{}
+		s := scheduler.New(scheduler.Config{}, locks, nil, slog.New(slog.DiscardHandler))
+		var ticks []time.Time
+		s.Add("report", scheduler.Every(time.Hour), func(ctx context.Context) error {
+
+//line scheduler_test.ego:197
+			tick, _ := scheduler.Tick(ctx)
+			ticks = append(ticks, tick)
+			return nil
+
+		})
+//line scheduler_test.ego:201
+		trigger := func(args ...string) error {
+			return console.Run(context.Background(), io.Discard, scheduler.Commands(s), "", append([]string{"scheduler:trigger"}, args...))
+		}
+		if err := trigger("report"); err != nil {
+			panic(err)
+		}
+//line scheduler_test.ego:203
+		if len(ticks) != 1 || !ticks[0].Equal(time.Now()) {
+			t.Errorf("ticks %v, want now", ticks)
+		}
+		for _, args := range [][]string{nil, {"report", "nope"}} {
+			if err := trigger(args...); !console.IsUsage(err) {
+				t.Errorf("%q: %v, want a usage error", args, err)
+			}
+		}
+		if _, err := locks.Acquire(context.Background(), "scheduler:report", "another instance", time.Minute); err != nil {
+			panic(err)
+		}
+//line scheduler_test.ego:212
+		if err := trigger("report"); err == nil || len(ticks) != 1 {
+			t.Errorf("%v, %d runs; want an error, and no run", err, len(ticks))
+		}
+
+	})
+}
+
 // TestCronDaylightSaving checks New York's clock changes: a time the
 // spring skips doesn't happen, and one the fall repeats happens once.
+//
+//line scheduler_test.ego:220
 func TestCronDaylightSaving(t *testing.T) {
 	ny, err := time.LoadLocation("America/New_York")
 	if err != nil {
 		panic(err)
 	}
-//line scheduler_test.ego:192
+//line scheduler_test.ego:222
 	three, err := scheduler.CronIn("0 3 * * *", ny)
 	if err != nil {
 		panic(err)
 	}
-//line scheduler_test.ego:193
+//line scheduler_test.ego:223
 	if got := three.Next(time.Date(2026, 3, 8, 0, 30, 0, 0, ny)); !got.Equal(time.Date(2026, 3, 8, 3, 0, 0, 0, ny)) {
 		t.Errorf("after the gap: %v", got)
 	}
@@ -276,7 +323,7 @@ func TestCronDaylightSaving(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line scheduler_test.ego:197
+//line scheduler_test.ego:227
 	if got := gap.Next(time.Date(2026, 3, 8, 0, 30, 0, 0, ny)); got.Day() != 9 {
 		t.Errorf("in the gap: %v", got)
 	}
@@ -284,7 +331,7 @@ func TestCronDaylightSaving(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line scheduler_test.ego:201
+//line scheduler_test.ego:231
 	first := repeated.Next(time.Date(2026, 10, 31, 1, 30, 0, 0, ny))
 	second := repeated.Next(first)
 	if first.Day() != 1 || second.Day() != 2 {
@@ -296,7 +343,7 @@ func TestCronDaylightSaving(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line scheduler_test.ego:209
+//line scheduler_test.ego:239
 	var runs []string
 	for at := time.Date(2026, 11, 1, 0, 45, 0, 0, ny); len(runs) < 10; {
 		runs = append(runs, at.Format("15:04 MST"))
@@ -314,7 +361,7 @@ func TestCronDaylightSaving(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line scheduler_test.ego:223
+//line scheduler_test.ego:253
 	if got := everyOther.Next(time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)); got.Day() != 12 {
 		t.Errorf("*/2 with a weekday: %v", got)
 	}

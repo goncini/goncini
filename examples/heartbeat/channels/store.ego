@@ -1,0 +1,84 @@
+package channels
+
+import (
+	"time"
+
+	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/uid"
+)
+
+// Store keeps the channels, and the alerts delivered to them.
+type Store struct {
+	sql *db.SQL
+}
+
+func NewStore(s *db.SQL) *Store {
+	return &Store{sql: s}
+}
+
+// columns are what scan reads.
+const columns = "SELECT id, project_id, kind, target, created_at FROM channels"
+
+// List returns at most limit of the project's channels from offset, the
+// newest first, and how many there are in all.
+effect (s *Store) List(project uid.UUID, limit, offset int) ([]Channel, int, error) {
+	conn := s.sql.Conn(ctx)
+	count := check db.Value[int](ctx, conn, "SELECT count(*) FROM channels WHERE project_id = ?", project)
+	list := check db.All(ctx, conn, scan, columns+" WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?", project, limit, offset)
+	return list, count, nil
+}
+
+// All returns the project's channels.
+effect (s *Store) All(project uid.UUID) ([]Channel, error) {
+	return db.All(ctx, s.sql.Conn(ctx), scan, columns+" WHERE project_id = ? ORDER BY created_at, id", project)
+}
+
+// Get returns the project's channel with the ID, and reports whether there
+// is one.
+effect (s *Store) Get(project, id uid.UUID) (Channel, bool, error) {
+	return db.One(ctx, s.sql.Conn(ctx), scan, columns+" WHERE id = ? AND project_id = ?", id, project)
+}
+
+// Add adds a channel.
+effect (s *Store) Add(ch Channel) error {
+	check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO channels (id, project_id, kind, target, created_at) VALUES (?, ?, ?, ?, ?)",
+		ch.ID, ch.ProjectID, ch.Kind, ch.Target, ch.CreatedAt.UnixMicro())
+	return nil
+}
+
+// Delete removes the project's channel with the ID, and reports whether
+// there was one.
+effect (s *Store) Delete(project, id uid.UUID) (bool, error) {
+	res := check s.sql.Conn(ctx).ExecContext(ctx, "DELETE FROM channels WHERE id = ? AND project_id = ?", id, project)
+	n := check res.RowsAffected()
+	return n == 1, nil
+}
+
+// Delivered reports whether the alert of the flip was delivered to the
+// channel.
+effect (s *Store) Delivered(flip, channel uid.UUID) (bool, error) {
+	n := check db.Value[int](ctx, s.sql.Conn(ctx), "SELECT count(*) FROM deliveries WHERE flip_id = ? AND channel_id = ?", flip, channel)
+	return n > 0, nil
+}
+
+// AddDelivery records that the alert of the flip was delivered to the
+// channel.
+effect (s *Store) AddDelivery(flip, channel uid.UUID, at time.Time) error {
+	check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO deliveries (flip_id, channel_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+		flip, channel, at.UnixMicro())
+	return nil
+}
+
+// PruneDeliveries forgets the deliveries older than before.
+effect (s *Store) PruneDeliveries(before time.Time) error {
+	check s.sql.Conn(ctx).ExecContext(ctx, "DELETE FROM deliveries WHERE created_at < ?", before.UnixMicro())
+	return nil
+}
+
+func scan(row db.Scanner) (Channel, error) {
+	var ch Channel
+	var created int64
+	check row.Scan(&ch.ID, &ch.ProjectID, &ch.Kind, &ch.Target, &created) ""
+	ch.CreatedAt = time.UnixMicro(created).UTC()
+	return ch, nil
+}

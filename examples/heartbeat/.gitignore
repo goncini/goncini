@@ -1,0 +1,10 @@
+# The profiler's profiles, and the dev database
+var/
+*.db
+
+# The binary that go build writes
+/heartbeat
+
+# Local secrets: .env and .env.<env> are committed
+.env.local
+.env.*.local

@@ -1,0 +1,93 @@
+// Package projects is the projects, which own the checks and the alert
+// channels: each authenticates its calls to the API with its key.
+package projects
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"time"
+
+	"github.com/goncini/goncini/db"
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/security"
+	"github.com/goncini/goncini/uid"
+)
+
+// Project is a project, as the API's calls are authenticated as.
+type Project struct {
+	ID        uid.UUID  `json:"id"` // and its badge's: /api/v1/badges/{id}
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// Current returns the project that the request ctx belongs to was
+// authenticated as. Its routes are behind security.Required, so there is
+// one.
+func Current(ctx context.Context) *Project {
+	p := must security.CurrentUser[*Project](ctx)
+	return p
+}
+
+// NewFirewall returns the API's firewall: a project's key, as a bearer
+// token, authenticates its calls.
+func NewFirewall(store *Store) *security.Firewall[*Project] {
+	return &security.Firewall[*Project]{Load: store.ByKey}
+}
+
+// Projects serves the authenticated project.
+type Projects struct{}
+
+func NewProjects() *Projects { return &Projects{} }
+
+// Routes registers the endpoint.
+func (p *Projects) Routes(r *routing.Router) {
+	r.With(security.Required).Get("/project", httpkernel.Endpoint(p.Show)).Name("project_show")
+}
+
+// Show returns the project that the key authenticates.
+effect (p *Projects) Show(in struct{}) (*Project, error) {
+	return Current(ctx), nil
+}
+
+// Store keeps the projects, and the hashes of their keys.
+type Store struct {
+	sql *db.SQL
+}
+
+func NewStore(s *db.SQL) *Store {
+	return &Store{sql: s}
+}
+
+// Add adds a project with a new key, which it returns: the store keeps its
+// hash only.
+effect (s *Store) Add(p Project) (string, error) {
+	key := "hb_" + rand.Text() // 128 random bits
+	check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO projects (id, name, key_hash, created_at) VALUES (?, ?, ?, ?)",
+		p.ID, p.Name, hash(key), p.CreatedAt.UnixMicro())
+	return key, nil
+}
+
+// ByKey returns the project whose key is key, and reports whether there
+// is one.
+effect (s *Store) ByKey(key string) (*Project, bool, error) {
+	p, ok := check db.One(ctx, s.sql.Conn(ctx), scan, "SELECT id, name, created_at FROM projects WHERE key_hash = ?", hash(key))
+	return &p, ok, nil
+}
+
+// hash is what the store keeps of a key: its SHA-256. A key is random, so
+// that it needs no salt nor a slow hash, and its hash can be looked up.
+func hash(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
+}
+
+func scan(row db.Scanner) (Project, error) {
+	var p Project
+	var created int64
+	check row.Scan(&p.ID, &p.Name, &created) ""
+	p.CreatedAt = time.UnixMicro(created).UTC()
+	return p, nil
+}

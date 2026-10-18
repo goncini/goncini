@@ -4,6 +4,7 @@ package security
 
 import (
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -14,7 +15,7 @@ import (
 
 // Config configures tokens and the firewall.
 //
-//line token.ego:14
+//line token.ego:15
 type Config struct {
 	// Secret signs the tokens: at least 32 bytes, read with
 	// env.Secret("APP_SECRET"). Changing it invalidates every token.
@@ -33,9 +34,10 @@ type Config struct {
 }
 
 // Verifier verifies tokens: it returns the subject that a token names, or
-// fails with InvalidToken. Tokens and APIKeys are verifiers.
+// fails with InvalidToken. Its other errors are the server's: 500s. Tokens
+// and APIKeys are verifiers.
 type Verifier interface {
-	Verify(token string) (subject string, err error)
+	Verify(ctx context.Context, token string) (subject string, err error)
 }
 
 // Tokens issues and verifies signed tokens, JWTs signed with HMAC-SHA256,
@@ -70,7 +72,7 @@ func (t *Tokens) Issue(subject string) (string, error) {
 
 // Verify returns the subject of token, if Tokens issued it and it hasn't
 // expired. Its errors are InvalidToken cases, without a scheme.
-func (t *Tokens) Verify(token string) (string, error) {
+func (t *Tokens) Verify(ctx context.Context, token string) (string, error) {
 	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired()}
 	if t.issuer != "" {
 		opts = append(opts, jwt.WithIssuer(t.issuer))
@@ -110,7 +112,7 @@ func NewAPIKeys(keys map[string]string) (*APIKeys, error) {
 }
 
 // Verify returns the subject of key, or fails with InvalidToken.
-func (k *APIKeys) Verify(key string) (string, error) {
+func (k *APIKeys) Verify(ctx context.Context, key string) (string, error) {
 	subject, ok := k.subjects[sha256.Sum256([]byte(key))]
 	if !ok {
 		return "", InvalidToken{Reason: "it isn't one of the API's keys"}

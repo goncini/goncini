@@ -272,7 +272,11 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 			validated, invalid = true, httpkernel.Violation{Parameter: p.Name, Detail: "is invalid"}
 		}
 	}
-	if d.Body != nil {
+	if d.Body != nil && httpkernel.RawBody(d.Body) {
+		// Any media type, as it is: OpenAPI 3.1 says so without a schema.
+		op.RequestBody = &RequestBody{Description: inDoc.Fields["Body"], Content: map[string]*MediaType{"*/*": {}}}
+		op.Errors = append(op.Errors, httpkernel.BodyTooLarge{Limit: httpkernel.DefaultBodyLimit})
+	} else if d.Body != nil {
 		t := d.Body
 		required := t.Kind() != reflect.Pointer
 		if !required {
@@ -310,25 +314,25 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 	if v2 {
 		op.Errors = append(op.Errors, httpkernel.Invalid(invalid))
 	}
-//line generate.ego:286
+//line generate.ego:290
 	op.Errors = append(op.Errors, doc.Errors...)
 	var status string
 	if d.Status == 0 {
 		status = "2XX"
 	} else {
-//line generate.ego:287
+//line generate.ego:291
 		status = strconv.Itoa(d.Status)
 	}
-//line generate.ego:288
+//line generate.ego:292
 	var v5 string
 	if d.Status == 0 {
 		v5 = "Success"
 	} else {
-//line generate.ego:288
+//line generate.ego:292
 		v5 = http.StatusText(d.Status)
 	}
 	res := &Response{Description: v5}
-//line generate.ego:289
+//line generate.ego:293
 	if d.Result != nil {
 		res.Content = map[string]*MediaType{"application/json": {Schema: g.schemas.of(d.Result, writing)}}
 	}
@@ -387,7 +391,7 @@ func (g *generator) paramSchema(p httpkernel.ParamDescription) (*Schema, bool) {
 		} else {
 			target = s
 		}
-//line generate.ego:342
+//line generate.ego:346
 		target.Enum = enumValues(t, p.Enum)
 	}
 	if p.Default != nil {
@@ -460,7 +464,7 @@ func (g *generator) errors(op *Op) (err error) {
 	} else {
 		render = httpkernel.RenderProblem
 	}
-//line generate.ego:409
+//line generate.ego:413
 	req := httptest.NewRequest(op.Method, "/", nil)
 	for _, e := range op.Errors {
 		rec := &recorder{header: http.Header{}}
@@ -476,7 +480,7 @@ func (g *generator) errors(op *Op) (err error) {
 		if err != nil {
 			return err
 		}
-//line generate.ego:422
+//line generate.ego:426
 		status := strconv.Itoa(rec.status)
 		res := op.Responses[status]
 		if res == nil {

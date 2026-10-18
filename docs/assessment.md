@@ -286,6 +286,17 @@ The goal, set by the user on 2026-10-07, is parity with Symfony's components tha
 
 **Order of work:** the profiler (`profiler`, in dev, with a file store) and OTLP export (`otel/otlp`, an adapter module); `goncini new`; `make:*`; bundles, with `goncini generate` giving any provider's missing config section a default; then the gates.
 
+### 4.5 After the milestones
+
+**Order of work** (proposed 2026-10-18, approved by the user the same day):
+dogfood a real API; OIDC authentication, verifying an identity provider's
+tokens against its JWKS; Redis transports for Messenger and locks, in an
+adapter module; webhooks, received with their signatures checked and sent
+through Messenger with retries; then a secrets vault, a Dockerfile from
+`goncini new`, plurals in translations, and mail API transports.
+
+> **Status (2026-10-18):** the dogfood is [examples/heartbeat](../examples/heartbeat), a cron-job monitoring API after Healthchecks.io, made with `goncini new` and the makers, then by hand. The friction it found, eleven items, is fixed in goncini but for two decisions to keep things as they are; see [dogfood.md](dogfood.md). Decisions taken on the user's behalf: `Verifier.Verify` takes a `ctx`, a breaking change for verifiers of an app's own; a firewall without `Tokens` hands the token to `Load`, for keys that the app keeps, rather than a `VerifierFunc`; a test that waits for a retry over a real socket runs in real time, as a synctest bubble's time doesn't move while the app waits on the network, until the webhooks step brings a receiver that needs none.
+
 ## 5. Risks
 
 - **Tooling, once `goncini generate` comes.** Generation runs twice around `ego generate`, and stale generated files are the classic failure. If it's clumsy, ask effect-go for a hook between lowering and layer wiring; its maintainer session has offered to fix what a framework genuinely needs.

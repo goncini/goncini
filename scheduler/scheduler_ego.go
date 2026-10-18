@@ -174,22 +174,33 @@ func (s *Scheduler) runOnce(ctx context.Context, log *slog.Logger, t task, tick 
 	// A lock per tick, never released, so that an instance that wakes up
 	// late doesn't run the tick again.
 	ttl := max(t.trigger.Next(tick).Sub(tick), time.Minute)
-	won, err := s.Locks.Acquire(ctx, fmt.Sprintf("scheduler:%s:%d", t.name, tick.UnixNano()), s.owner, ttl)
-	if err != nil {
-		return false, err
+	won, err2 := s.Locks.Acquire(ctx, fmt.Sprintf("scheduler:%s:%d", t.name, tick.UnixNano()), s.owner, ttl)
+	if err2 != nil {
+		return false, err2
 	}
 //line scheduler.ego:168
 	if !won {
 		return false, nil // another instance runs it
 	}
-	// And a lock while it runs, so that a run that outlasts its interval
-	// in one instance doesn't overlap the next tick's in another: that
-	// tick is skipped, as it is in an instance alone.
+	held, err := s.exclusive(ctx, t)
+	if !held && err == nil {
+		log.WarnContext(ctx, "the task still runs in another instance: it doesn't run this time")
+	}
+	return held, err
+}
+
+// exclusive runs t while it holds a lock, so that a run that outlasts its
+// interval in one instance doesn't overlap the next tick's in another, nor
+// a triggered run: it reports whether it held the lock, and t ran.
+func (s *Scheduler) exclusive(ctx context.Context, t task) (bool, error) {
+	if s.Locks == nil {
+		return true, s.run(ctx, t)
+	}
 	running := (&lock.Factory{Store: s.Locks}).New("scheduler:" + t.name)
 	var runErr error
 	held, err := running.Run(ctx, func(ctx context.Context) error {
 
-//line scheduler.ego:177
+//line scheduler.ego:188
 		runErr = s.run(ctx, t)
 		return nil
 
@@ -197,11 +208,24 @@ func (s *Scheduler) runOnce(ctx context.Context, log *slog.Logger, t task, tick 
 	if err != nil {
 		return false, err
 	}
-//line scheduler.ego:180
-	if !held {
-		log.WarnContext(ctx, "the task still runs in another instance: it doesn't run this time")
-	}
+//line scheduler.ego:191
 	return held, runErr
+}
+
+// Trigger runs the task named name now, once, as scheduler:trigger does:
+// by hand, or in a test. Its tick is now. It fails, without running, while
+// the task runs in another instance.
+func (s *Scheduler) Trigger(ctx context.Context, name string) error {
+	i := slices.IndexFunc(s.tasks, func(t task) bool { return t.name == name })
+	if i < 0 {
+		return fmt.Errorf("scheduler: no task %q", name)
+	}
+	ctx = context.WithValue(ctx, tickKey{}, time.Now())
+	held, err := s.exclusive(ctx, s.tasks[i])
+	if !held && err == nil {
+		return fmt.Errorf("scheduler: the task %q runs in another instance", name)
+	}
+	return err
 }
 
 // tickKey is the context key of the tick being run.
@@ -226,12 +250,34 @@ func (s *Scheduler) run(ctx context.Context, t task) (err error) {
 }
 
 // Commands returns s's console commands: scheduler:run, which runs the
-// tasks until it is told to stop, and debug:scheduler, which lists them.
+// tasks until it is told to stop, scheduler:trigger, which runs the tasks
+// it names now, and debug:scheduler, which lists them.
 func Commands(s *Scheduler) []console.Command {
 	return []console.Command{
 		console.New("scheduler:run", "Runs the scheduled tasks until stopped", func(ctx context.Context, out io.Writer, args []string) error { return s.Run(ctx) }),
+		console.New("scheduler:trigger", "Runs the scheduled tasks it names now, once", func(ctx context.Context, out io.Writer, args []string) error { return s.triggerAll(ctx, args) }),
 		console.New("debug:scheduler", "Lists the scheduled tasks, and when they run next", func(ctx context.Context, out io.Writer, args []string) error { return s.writeTable(out, time.Now()) }),
 	}
+}
+
+// triggerAll triggers the named tasks, one after the other, until one
+// fails; none, if a name is unknown.
+func (s *Scheduler) triggerAll(ctx context.Context, names []string) error {
+	if len(names) == 0 {
+		return console.Usage{Command: "scheduler:trigger", Reason: "name the tasks to run"}
+	}
+	for _, name := range names {
+		if !slices.ContainsFunc(s.tasks, func(t task) bool { return t.name == name }) {
+			return console.Usage{Command: "scheduler:trigger", Reason: fmt.Sprintf("no task %q: debug:scheduler lists them", name)}
+		}
+	}
+	for _, name := range names {
+		if err := s.Trigger(ctx, name); err != nil {
+			return err
+		}
+	}
+//line scheduler.ego:256
+	return nil
 }
 
 // writeTable lists the tasks and their next runs after now.
@@ -244,10 +290,10 @@ func (s *Scheduler) writeTable(out io.Writer, now time.Time) error {
 		if next.IsZero() {
 			when = "never"
 		} else {
-//line scheduler.ego:222
+//line scheduler.ego:265
 			when = next.Format(time.RFC3339)
 		}
-//line scheduler.ego:223
+//line scheduler.ego:266
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", t.name, t.trigger, when)
 	}
 	return tw.Flush()

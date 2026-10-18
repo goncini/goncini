@@ -1,0 +1,11 @@
+// Package migrations holds the database's migrations, for goose: run them
+// with db:migrate. A schema change is a new file, such as
+// 00002_create_notes.sql; never edit an applied one.
+package migrations
+
+import "embed"
+
+// FS is the migrations, embedded in the binary.
+//
+//go:embed *.sql
+var FS embed.FS

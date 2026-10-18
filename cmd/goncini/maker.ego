@@ -28,6 +28,8 @@ type featureData struct {
 	Type    string // what it serves: Note
 	Plural  string // its controller: Notes
 	Var     string // a variable of Type: note
+	Noun    string // what docs call a Type: price list, for PriceList
+	A       string // Noun after an article: a note, an article
 	Recv    string // the controller's receiver: n
 	Table   string // its table: notes
 	Path    string // its routes' path: /notes
@@ -43,6 +45,10 @@ var (
 	// featureNames are the names that make:feature's templates declare,
 	// which the type and the controller can't take.
 	featureNames = []string{"Store", "Problem", "Problems", "NotFound", "Unavailable", "ListInput", "IDInput", "CreateInput"}
+	// egoWords are the dialect's keywords, which Go's aren't, and error,
+	// which declares error sets: names that the type's variable can't take
+	// either, though it would compile, as in check, ok := check s.Get(id).
+	egoWords = []string{"check", "must", "fail", "match", "effect", "error"}
 	// templateNames are the names that the variable of the type can't
 	// take: the templates' packages, variables and receivers.
 	templateNames = []string{"time", "db", "uid", "http", "httpkernel", "listing", "routing", "list", "count", "ok", "deleted", "in", "s", "n", "res", "row", "created", "conn", "id", "store", "now", "r"}
@@ -65,12 +71,14 @@ func newFeature(module, name, typ string) (featureData, error) {
 		return featureData{}, fmt.Errorf("the feature declares %s already: name its type, as in make:feature %s Item", d.Type, name)
 	}
 	d.Route = snake(d.Type)
+	d.Noun = strings.ReplaceAll(d.Route, "_", " ")
+	d.A = if strings.ContainsRune("aeio", rune(d.Noun[0])) { "an " + d.Noun } else { "a " + d.Noun }
 	d.Recv = strings.ToLower(d.Plural[:1])
 	if d.Recv == "r" { // the router's
 		d.Recv = strings.ToLower(d.Plural[:2])
 	}
 	d.Var = strings.ToLower(d.Type[:1]) + d.Type[1:]
-	if token.IsKeyword(d.Var) || d.Var == d.Recv || slices.Contains(templateNames, d.Var) {
+	if token.IsKeyword(d.Var) || slices.Contains(egoWords, d.Var) || d.Var == d.Recv || slices.Contains(templateNames, d.Var) {
 		d.Var = "item"
 	}
 	return d, nil

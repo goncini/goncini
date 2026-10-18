@@ -150,12 +150,12 @@ func TestAPIKeys(t *testing.T) {
 		panic(err)
 	}
 //line access_test.ego:116
-	sub, err := keys.Verify(annKey)
+	sub, err := keys.Verify(context.Background(), annKey)
 	if err != nil {
 		panic(err)
 	}
 //line access_test.ego:117
-	if _, err := keys.Verify(bobKey); sub != "ann" || err == nil {
+	if _, err := keys.Verify(context.Background(), bobKey); sub != "ann" || err == nil {
 		t.Errorf("subject %q, another key: %v", sub, err)
 	}
 }

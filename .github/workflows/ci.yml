@@ -11,9 +11,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # goncini, then the modules of its adapters and of the example;
+        # goncini, then the modules of its adapters and of the examples;
         # pgxdb has a job of its own, with PostgreSQL.
-        module: [., db/goosedb, db/migratedb, db/gormdb, log/zaplog, log/zerologlog, otel/otlp, examples/maintenance, examples/articles, examples/realworld, examples/realworld-plain]
+        module: [., db/goosedb, db/migratedb, db/gormdb, log/zaplog, log/zerologlog, otel/otlp, examples/maintenance, examples/articles, examples/realworld, examples/realworld-plain, examples/heartbeat]
     defaults:
       run:
         working-directory: ${{ matrix.module }}
@@ -34,7 +34,7 @@ jobs:
         if: matrix.module != 'examples/realworld-plain' # plain Go
         run: go tool ego generate -check ./...
       - name: autoconfiguration is up to date
-        if: matrix.module == 'examples/articles' || matrix.module == 'examples/realworld'
+        if: matrix.module == 'examples/articles' || matrix.module == 'examples/realworld' || matrix.module == 'examples/heartbeat'
         run: go tool goncini generate -check
       - name: .ego and Go files are formatted
         if: matrix.module == '.'

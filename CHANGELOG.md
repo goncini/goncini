@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+What [dogfooding](docs/dogfood.md) a new app, `examples/heartbeat`, found.
+It is a cron-job monitoring API, after Healthchecks.io, made with `goncini
+new` and the makers.
+
+**Breaking:** `security.Verifier.Verify` takes a `ctx` first:
+`Verify(ctx, token)`. A verifier of the app's own adds it.
+
+- **security:** a `Firewall` without `Tokens` hands the token to `Load` as
+  is: an API key that the app keeps in its database, by its hash, and
+  looks up there. An unknown key is a 401, "it isn't one of the API's
+  keys".
+- **httpkernel:** a `Body []byte` or `Body string` field of an input is
+  the raw body, of any type, up to the kernel's `BodyLimit`: OpenAPI
+  describes it as `*/*`.
+- **openapi:** the contract check matches a response's media type against
+  the document's ranges, `text/*` and `*/*`.
+- **validator:** the `validate` tags of an `httpkernel.Optional` field
+  check its value when it is present, and `omitempty` skips it when it is
+  absent or null. They panicked, a 500.
+- **scheduler:** `scheduler:trigger <task>…`, and `Scheduler.Trigger`, run
+  a task now, once, as by hand or in a test, while no other instance runs
+  it. `scheduler.Tick` is then the time it was triggered.
+- **The goncini tool:**
+  - `goncini new -replace` with a relative checkout keeps it relative, from
+    the app, so that `go.mod` can be committed.
+  - The new app's `.gitignore` ignores the binary that `go build` writes.
+  - The makers keep ego's keywords, such as `check`, out of their
+    variables' names, and their docs name the type: "a check", "an
+    article".
+  - A maker's import joins the group of imports that shares the most of
+    its path.
+  - When an import of a `.ego` file isn't in `go.mod`, as when an app
+    first imports a goncini package with dependencies of its own, the
+    error says that `go tool goncini tidy` adds it.
+- **examples/heartbeat**, the new example, has projects whose API keys
+  authenticate them, checks in a workflow, public pings with raw bodies
+  and a rate limit, a scheduled sweep, alerts by email and webhook through
+  Messenger, and a cached badge.
+
 ## v0.2.0 (2026-10-16)
 
 Every module is tagged v0.2.0, as for v0.1.0. To upgrade an app, require
