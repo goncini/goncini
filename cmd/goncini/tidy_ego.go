@@ -26,14 +26,15 @@ const tidyDir = "zz_goncini_tidy"
 // go mod tidy reads only Go files, so it misses an import that a .ego file
 // adds, which goncini generate then can't compile, and drops a module that
 // only .ego files import. A package of blank imports stands in for the .ego
-// files while go mod tidy runs; then the app is generated, and tidied again
-// without the stand-in, its generated Go importing what its .ego does.
+// files while go mod tidy runs; then the app, or a module without one, is
+// generated, and tidied again without the stand-in, its generated Go
+// importing what its .ego does.
 func tidy(root string) (err error) {
 	module, imports, err2 := egoImports(root)
 	if err2 != nil {
 		return err2
 	}
-//line tidy.ego:29
+//line tidy.ego:30
 	dir := filepath.Join(root, tidyDir)
 	defer func() {
 		if rerr := os.RemoveAll(dir); err == nil {
@@ -50,24 +51,32 @@ func tidy(root string) (err error) {
 		if err3 := os.MkdirAll(dir, 0o755); err3 != nil {
 			return err3
 		}
-//line tidy.ego:43
+//line tidy.ego:44
 		if err4 := os.WriteFile(filepath.Join(dir, "deps.go"), []byte(b.String()), 0o644); err4 != nil {
 			return err4
 		}
 	}
-//line tidy.ego:45
+//line tidy.ego:46
 	if err5 := run(root, "go", "mod", "tidy"); err5 != nil {
 		return err5
 	}
-//line tidy.ego:46
-	if err6 := generate(root, false); err6 != nil {
-		return err6
-	}
 //line tidy.ego:47
+	if _, err := os.Stat(filepath.Join(root, appDir)); err == nil {
+		if err6 := generate(root, false); err6 != nil {
+			return err6
+		}
+	} else {
+		// A module without an app, as a bundle's, is only lowered.
+		out, err := egoGenerate(root, "./...")
+		if err != nil {
+			return egoError(err, out)
+		}
+	}
+//line tidy.ego:56
 	if err7 := os.RemoveAll(dir); err7 != nil {
 		return err7
 	}
-//line tidy.ego:48
+//line tidy.ego:57
 	return run(root, "go", "mod", "tidy")
 }
 
@@ -79,7 +88,7 @@ func egoImports(root string) (string, []string, error) {
 	if err2 != nil {
 		return "", nil, err2
 	}
-//line tidy.ego:56
+//line tidy.ego:65
 	module := modfile.ModulePath(gomod)
 	seen := map[string]bool{}
 	fset := token.NewFileSet()
@@ -93,13 +102,13 @@ func egoImports(root string) (string, []string, error) {
 		if err != nil {
 			return err
 		}
-//line tidy.ego:66
+//line tidy.ego:75
 		for _, spec := range f.Imports {
 			p, err := strconv.Unquote(spec.Path.Value)
 			if err != nil {
 				return err
 			}
-//line tidy.ego:68
+//line tidy.ego:77
 			first, _, _ := strings.Cut(p, "/")
 			if strings.Contains(first, ".") && p != module && !strings.HasPrefix(p, module+"/") {
 				seen[p] = true
@@ -110,7 +119,7 @@ func egoImports(root string) (string, []string, error) {
 	if err != nil {
 		return "", nil, err
 	}
-//line tidy.ego:76
+//line tidy.ego:85
 	imports := slices.Sorted(maps.Keys(seen))
 	return module, imports, nil
 }

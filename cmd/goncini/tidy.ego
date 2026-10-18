@@ -22,8 +22,9 @@ const tidyDir = "zz_goncini_tidy"
 // go mod tidy reads only Go files, so it misses an import that a .ego file
 // adds, which goncini generate then can't compile, and drops a module that
 // only .ego files import. A package of blank imports stands in for the .ego
-// files while go mod tidy runs; then the app is generated, and tidied again
-// without the stand-in, its generated Go importing what its .ego does.
+// files while go mod tidy runs; then the app, or a module without one, is
+// generated, and tidied again without the stand-in, its generated Go
+// importing what its .ego does.
 func tidy(root string) (err error) {
 	module, imports := check egoImports(root) ""
 	dir := filepath.Join(root, tidyDir)
@@ -43,7 +44,15 @@ func tidy(root string) (err error) {
 		check os.WriteFile(filepath.Join(dir, "deps.go"), []byte(b.String()), 0o644) ""
 	}
 	check run(root, "go", "mod", "tidy") ""
-	check generate(root, false) ""
+	if _, err := os.Stat(filepath.Join(root, appDir)); err == nil {
+		check generate(root, false) ""
+	} else {
+		// A module without an app, as a bundle's, is only lowered.
+		out, err := egoGenerate(root, "./...")
+		if err != nil {
+			return egoError(err, out)
+		}
+	}
 	check os.RemoveAll(dir) ""
 	return run(root, "go", "mod", "tidy")
 }

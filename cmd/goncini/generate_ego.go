@@ -138,18 +138,15 @@ func generate(root string, checkOnly bool) (err error) {
 	return os.Chtimes(path, start, start)
 }
 
-// egoError is the error of ego generate, with its output, and what to do
-// when it is a module that go.mod lacks: go mod tidy doesn't read .ego
-// files, nor fix it, but goncini tidy does.
+// egoError is the error of ego generate, with its output.
 func egoError(err error, out []byte) error {
-	text := string(out)
-	if strings.Contains(text, "go.sum entry") || strings.Contains(text, "no required module provides") {
-		text += "\nA .ego file imports a module that go.mod lacks: run go tool goncini tidy, which go mod tidy is for .ego files."
-	}
-	return fmt.Errorf("ego generate: %v\n%s", err, text)
+	return fmt.Errorf("ego generate: %v\n%s", err, out)
 }
 
-// egoGenerate runs ego generate on packages of the module at root.
+// egoGenerate runs ego generate on packages of the module at root. When an
+// import of a .ego file is of a module that go.mod lacks, its output says
+// what to do: go mod tidy doesn't read .ego files, nor fix it, but goncini
+// tidy does.
 func egoGenerate(root, packages string) ([]byte, error) {
 	cmd := exec.Command("go", "tool", "ego", "generate", packages)
 	cmd.Dir = root
@@ -217,7 +214,7 @@ func autoconfigure(root string, services []service) ([]byte, error) {
 	if err2 != nil {
 		return nil, err2
 	}
-//line generate.ego:177
+//line generate.ego:174
 	var b strings.Builder
 	var names []string
 	for _, k := range kinds {
@@ -307,33 +304,33 @@ func load(root string) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:263
+//line generate.ego:260
 	var errs []error
 	packages.Visit(pkgs, nil, func(p *egopackages.Package) {
 
-//line generate.ego:265
+//line generate.ego:262
 		for _, e := range p.Errors {
 			errs = append(errs, errors.New(e.Error()))
 		}
 
 	})
-//line generate.ego:269
+//line generate.ego:266
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-//line generate.ego:270
+//line generate.ego:267
 	dir, err := filepath.Abs(filepath.Join(root, appDir))
 	if err != nil {
 		return nil, err
 	}
 	// As go list reports it, through symlinks: macOS's /var is /private/var.
-//line generate.ego:272
+//line generate.ego:269
 	v, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return nil, err
 	}
 	dir = v
-//line generate.ego:273
+//line generate.ego:270
 	a := &app{all: pkgs, imports: map[string]string{}}
 	for _, p := range pkgs {
 		if len(p.GoFiles) > 0 && sameDir(filepath.Dir(p.GoFiles[0]), dir) {
@@ -346,7 +343,7 @@ func load(root string) (*app, error) {
 	if err := a.findProviders(); err != nil {
 		return nil, err
 	}
-//line generate.ego:283
+//line generate.ego:280
 	return a, nil
 }
 
@@ -409,10 +406,10 @@ func isFunc(info *types.Info, x ast.Expr, path, name string) bool {
 	}
 	var v bool
 	if path == "" {
-//line generate.ego:343
+//line generate.ego:340
 		v = obj.Parent() == types.Universe
 	} else {
-//line generate.ego:343
+//line generate.ego:340
 		v = obj.Pkg() != nil && obj.Pkg().Path() == path
 	}
 	return v
@@ -420,7 +417,7 @@ func isFunc(info *types.Info, x ast.Expr, path, name string) bool {
 
 // ident is the name in x, an identifier or a selector, or nil.
 //
-//line generate.ego:347
+//line generate.ego:344
 func ident(x ast.Expr) *ast.Ident {
 	switch x := x.(type) {
 	case *ast.Ident:
@@ -460,6 +457,12 @@ func (a *app) addProvidersIn(info *types.Info, args []ast.Expr, seen map[types.O
 			}
 			continue
 		}
+		if fn, ok := obj.(*types.Func); ok {
+			if seen[fn] {
+				continue // the same function in several sets is one provider, as layer has it
+			}
+			seen[fn] = true
+		}
 		if sig, ok := info.TypeOf(x).(*types.Signature); ok && sig.Results().Len() > 0 {
 			a.provided = append(a.provided, sig.Results().At(0).Type())
 			for i := 0; i < sig.Params().Len(); i++ {
@@ -475,13 +478,13 @@ func (a *app) varInit(v *types.Var) (ast.Expr, *types.Info) {
 	var pkg *packages.Package
 	packages.Visit(a.all, nil, func(p *egopackages.Package) {
 
-//line generate.ego:400
+//line generate.ego:403
 		if p.Types == v.Pkg() {
 			pkg = p
 		}
 
 	})
-//line generate.ego:404
+//line generate.ego:407
 	if pkg == nil {
 		return nil, nil
 	}
@@ -553,11 +556,11 @@ func (a *app) lookup(name string) types.Type {
 	} else {
 		path = gonciniPath + "/" + pkgName
 	}
-//line generate.ego:470
+//line generate.ego:473
 	var found types.Type
 	packages.Visit(a.all, nil, func(p *egopackages.Package) {
 
-//line generate.ego:472
+//line generate.ego:475
 		if found == nil && p.PkgPath == path {
 			if obj := p.Types.Scope().Lookup(typeName); obj != nil {
 				found = obj.Type()
@@ -565,7 +568,7 @@ func (a *app) lookup(name string) types.Type {
 		}
 
 	})
-//line generate.ego:478
+//line generate.ego:481
 	return found
 }
 
@@ -574,24 +577,24 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 	var items []string
 	add := func(t types.Type, value string) {
 
-//line generate.ego:485
+//line generate.ego:488
 		p := "p" + strconv.Itoa(len(params)+1)
 		params = append(params, p+" "+a.typeString(t))
 		items = append(items, strings.ReplaceAll(value, "$", p))
 
 	}
-//line generate.ego:489
+//line generate.ego:492
 	switch k.name {
 	case "autoProblems":
 
-//line generate.ego:491
+//line generate.ego:494
 		for _, v := range a.mappers(elem) {
 			items = append(items, a.qualify(v.Pkg())+"."+v.Name())
 		}
 
 	case "autoChecks":
 
-//line generate.ego:496
+//line generate.ego:499
 		for _, t := range a.provided {
 			if m := pinger(t); m != "" {
 				add(t, "$."+m)
@@ -600,7 +603,7 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 
 	default:
 
-//line generate.ego:503
+//line generate.ego:506
 		iface, _ := elem.Underlying().(*types.Interface)
 		var added []types.Type
 		for _, t := range a.provided {
@@ -757,7 +760,7 @@ func describe(root string) ([]service, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:656
+//line generate.ego:659
 	if len(pkgs) != 1 || len(pkgs[0].Errors) > 0 {
 		return nil, nil
 	}
@@ -781,12 +784,12 @@ func describe(root string) ([]service, error) {
 		if pkg == p.Types {
 			v = ""
 		} else {
-//line generate.ego:674
+//line generate.ego:677
 			v = pkg.Name()
 		}
 		return v
 	}
-//line generate.ego:675
+//line generate.ego:678
 	var services []service
 	for _, stmt := range build.Body.List {
 		assign, ok := stmt.(*ast.AssignStmt)

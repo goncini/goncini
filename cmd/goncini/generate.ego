@@ -98,18 +98,15 @@ func generate(root string, checkOnly bool) (err error) {
 	return os.Chtimes(path, start, start)
 }
 
-// egoError is the error of ego generate, with its output, and what to do
-// when it is a module that go.mod lacks: go mod tidy doesn't read .ego
-// files, nor fix it, but goncini tidy does.
+// egoError is the error of ego generate, with its output.
 func egoError(err error, out []byte) error {
-	text := string(out)
-	if strings.Contains(text, "go.sum entry") || strings.Contains(text, "no required module provides") {
-		text += "\nA .ego file imports a module that go.mod lacks: run go tool goncini tidy, which go mod tidy is for .ego files."
-	}
-	return fmt.Errorf("ego generate: %v\n%s", err, text)
+	return fmt.Errorf("ego generate: %v\n%s", err, out)
 }
 
-// egoGenerate runs ego generate on packages of the module at root.
+// egoGenerate runs ego generate on packages of the module at root. When an
+// import of a .ego file is of a module that go.mod lacks, its output says
+// what to do: go mod tidy doesn't read .ego files, nor fix it, but goncini
+// tidy does.
 func egoGenerate(root, packages string) ([]byte, error) {
 	cmd := exec.Command("go", "tool", "ego", "generate", packages)
 	cmd.Dir = root
@@ -382,6 +379,12 @@ func (a *app) addProvidersIn(info *types.Info, args []ast.Expr, seen map[types.O
 				a.addProvidersIn(initInfo, []ast.Expr{init}, seen)
 			}
 			continue
+		}
+		if fn, ok := obj.(*types.Func); ok {
+			if seen[fn] {
+				continue // the same function in several sets is one provider, as layer has it
+			}
+			seen[fn] = true
 		}
 		if sig, ok := info.TypeOf(x).(*types.Signature); ok && sig.Results().Len() > 0 {
 			a.provided = append(a.provided, sig.Results().At(0).Type())
