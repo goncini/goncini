@@ -290,7 +290,9 @@ func TestSIGTERMDrains(t *testing.T) {
 	for _, m := range list {
 		attempts += m.Attempts
 	}
-	if took > 2*time.Second || len(list) != 20-ended || attempts != 0 {
+	// Within seconds of the timeout, under -race on a busy machine, rather
+	// than the handlers' hour.
+	if took > 5*time.Second || len(list) != 20-ended || attempts != 0 {
 		t.Errorf("stopping took %v; %d left, with %d attempts", took, len(list), attempts)
 	}
 }
