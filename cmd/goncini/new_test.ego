@@ -31,6 +31,11 @@ func TestNew(t *testing.T) {
 	}
 	dir := filepath.Join(t.TempDir(), "acme")
 	must newApp("example.com/acme", dir, "../..")
+	for _, dotfile := range []string{".env", ".env.test", ".gitignore", ".gitattributes", ".dockerignore", ".vscode/settings.json"} {
+		if _, err := os.Stat(filepath.Join(dir, dotfile)); err != nil {
+			t.Errorf("the new app's %s: %v", dotfile, err)
+		}
+	}
 	goTest(t, dir)
 	devServes(t, dir)
 

@@ -40,6 +40,10 @@
 - **webtest:** `Response.Events()` reads a stream's events.
 - **webtest:** the client sends a `webtest.Form` as `multipart/form-data`,
   with `webtest.File`s, and `url.Values` as a URL-encoded form.
+- **The goncini tool:** `goncini new` writes a `.gitattributes` that marks
+  the generated Go as generated, which GitHub collapses in diffs, and
+  `.vscode/` settings that nest each `x_ego.go` under its `x.ego`, with the
+  effect-go extension. goncini's repository has them too.
 - **redis:** `redis.RateLimit` provides a `ratelimit.Store` in Redis, so
   that the app's instances share their limits. An update watches the key,
   and tries again when another changed it first: a `Store`'s `Update` may

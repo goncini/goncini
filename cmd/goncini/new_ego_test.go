@@ -38,31 +38,36 @@ func TestNew(t *testing.T) {
 		panic(err)
 	}
 //line new_test.ego:34
+	for _, dotfile := range []string{".env", ".env.test", ".gitignore", ".gitattributes", ".dockerignore", ".vscode/settings.json"} {
+		if _, err := os.Stat(filepath.Join(dir, dotfile)); err != nil {
+			t.Errorf("the new app's %s: %v", dotfile, err)
+		}
+	}
 	goTest(t, dir)
 	devServes(t, dir)
 
 	if _, err := makeFeature(dir, "notes", ""); err != nil {
 		panic(err)
 	}
-//line new_test.ego:38
+//line new_test.ego:43
 	if _, err := makeEndpoint(dir, "notes", "Archive", "POST", "/notes/{id}/archive"); err != nil {
 		panic(err)
 	}
-//line new_test.ego:39
+//line new_test.ego:44
 	if _, err := makeMessage(dir, "notes", "NoteAdded"); err != nil {
 		panic(err)
 	}
-//line new_test.ego:40
+//line new_test.ego:45
 	if _, err := makeCommand(dir, "notes:prune", `Prunes the "old" notes`); err != nil {
 		panic(err)
 	}
-//line new_test.ego:41
+//line new_test.ego:46
 	if _, err := makeMigration(dir, "add_note_tags"); err != nil {
 		panic(err)
 	}
 	// A maker whose code doesn't compile puts the app back as it was: a
 	// path parameter named body clashes with the input's body.
-//line new_test.ego:44
+//line new_test.ego:49
 	before := snapshot(t, dir)
 	if _, err := makeEndpoint(dir, "notes", "Clash", "POST", "/notes/{body}/clash"); err == nil {
 		t.Error("an endpoint that doesn't compile is made")
@@ -75,12 +80,12 @@ func TestNew(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "notes", "price.ego"), []byte("package notes\n\nimport \"github.com/shopspring/decimal\"\n\nvar free = decimal.Zero\n"), 0o644); err != nil {
 		panic(err)
 	}
-//line new_test.ego:54
+//line new_test.ego:59
 	wiring, err := os.ReadFile(filepath.Join(dir, "app", FileName))
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:55
+//line new_test.ego:60
 	if err := generate(dir, false); err == nil || !strings.Contains(err.Error(), "goncini tidy") {
 		t.Errorf("generate with a module missing: %v", err)
 	}
@@ -88,19 +93,19 @@ func TestNew(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:59
+//line new_test.ego:64
 	if string(after) != string(wiring) || !stale(dir) {
 		t.Error("a failed generate changed the wiring, or left the app as if generated")
 	}
 	if err := tidy(dir); err != nil {
 		panic(err)
 	}
-//line new_test.ego:63
+//line new_test.ego:68
 	gomod, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:64
+//line new_test.ego:69
 	if !regexp.MustCompile(`(?m)^\s+github.com/shopspring/decimal v\S+$`).Match(gomod) {
 		t.Errorf("tidy didn't require github.com/shopspring/decimal directly:\n%s", gomod)
 	}
@@ -112,7 +117,7 @@ func TestNew(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "notes", "price.ego")); err != nil {
 		panic(err)
 	}
-//line new_test.ego:73
+//line new_test.ego:78
 	if !stale(dir) {
 		t.Error("the app isn't stale when a .ego file is removed")
 	}
@@ -138,7 +143,7 @@ func snapshot(t *testing.T, dir string) string {
 		if err != nil {
 			return err
 		}
-//line new_test.ego:96
+//line new_test.ego:101
 		if d.IsDir() {
 			return nil
 		}
@@ -146,18 +151,18 @@ func snapshot(t *testing.T, dir string) string {
 		if err2 != nil {
 			return err2
 		}
-//line new_test.ego:100
+//line new_test.ego:105
 		rel, err3 := filepath.Rel(dir, path)
 		if err3 != nil {
 			return err3
 		}
-//line new_test.ego:101
+//line new_test.ego:106
 		fmt.Fprintf(&b, "%s %x\n", rel, sha256.Sum256(content))
 		return nil
 	}); err != nil {
 		panic(err)
 	}
-//line new_test.ego:104
+//line new_test.ego:109
 	return b.String()
 }
 
@@ -180,7 +185,7 @@ func devServes(t *testing.T, dir string) {
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:123
+//line new_test.ego:128
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- devServe(ctx, t.Output(), dir, addr) }()
@@ -192,7 +197,7 @@ func devServes(t *testing.T, dir string) {
 	}()
 	answers := func(status int, want string) {
 
-//line new_test.ego:133
+//line new_test.ego:138
 		t.Helper()
 		var last string
 		for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
@@ -205,7 +210,7 @@ func devServes(t *testing.T, dir string) {
 			if err2 != nil {
 				panic(err2)
 			}
-//line new_test.ego:142
+//line new_test.ego:147
 			res.Body.Close()
 			last = fmt.Sprintf("%d %s", res.StatusCode, body)
 			if res.StatusCode == status && strings.Contains(string(body), want) {
@@ -215,28 +220,28 @@ func devServes(t *testing.T, dir string) {
 		t.Fatalf("GET / doesn't answer %d with %s: %s", status, want, last)
 
 	}
-//line new_test.ego:150
+//line new_test.ego:155
 	answers(200, `"status":"ok"`)
 	home := filepath.Join(dir, "home", "home.ego")
 	src, err := os.ReadFile(home)
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:153
+//line new_test.ego:158
 	if err := os.WriteFile(home, append(slices.Clip(src), "\nfunc broken() int { return \"x\" }\n"...), 0o644); err != nil {
 		panic(err)
 	}
-//line new_test.ego:154
+//line new_test.ego:159
 	answers(500, "cannot use")
 	if err := os.WriteFile(home, bytes.ReplaceAll(src, []byte(`Status: "ok"`), []byte(`Status: "fine"`)), 0o644); err != nil {
 		panic(err)
 	}
-//line new_test.ego:156
+//line new_test.ego:161
 	answers(200, `"status":"fine"`)
 	if err := os.WriteFile(home, src, 0o644); err != nil {
 		panic(err)
 	}
-//line new_test.ego:158
+//line new_test.ego:163
 	answers(200, `"status":"ok"`)
 }
 
@@ -256,12 +261,12 @@ func TestAgents(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:174
+//line new_test.ego:179
 	got, err := skeleton.ReadFile("skeleton/AGENTS.md")
 	if err != nil {
 		panic(err)
 	}
-//line new_test.ego:175
+//line new_test.ego:180
 	if string(got) != string(want) {
 		t.Error("skeleton/AGENTS.md isn't AGENTS.md: cp AGENTS.md cmd/goncini/skeleton/")
 	}

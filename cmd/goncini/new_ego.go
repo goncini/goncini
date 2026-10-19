@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -19,12 +20,15 @@ import (
 )
 
 // skeleton is the files of a new app, as templates: file.tmpl becomes
-// file, and env.tmpl, env.test.tmpl, gitignore.tmpl and dockerignore.tmpl
-// the dotfiles.
+// file, and those that dotted names, .file.
 //
 //go:embed skeleton
 //line new.ego:24
 var skeleton embed.FS
+
+// dotted are the skeleton's files and folders whose names start with a
+// dot, which embed leaves out: env.tmpl is .env, vscode/ is .vscode/.
+var dotted = []string{"env", "env.test", "gitignore", "gitattributes", "dockerignore", "vscode"}
 
 // skeletonData is what the skeleton's templates are given.
 type skeletonData struct {
@@ -57,7 +61,7 @@ func newApp(module, dir, replace string) (err error) {
 	if err2 := modpath.CheckPath(module); err2 != nil {
 		return err2
 	}
-//line new.ego:55
+//line new.ego:59
 	entries, err := os.ReadDir(dir)
 	if err == nil && len(entries) > 0 {
 		return fmt.Errorf("%s isn't empty", dir)
@@ -79,7 +83,7 @@ func newApp(module, dir, replace string) (err error) {
 		}
 		replace = v
 	}
-//line new.ego:72
+//line new.ego:76
 	prefix, _, _ := modpath.SplitPathVersion(module) // example.com/acme of example.com/acme/v2
 	data := skeletonData{Module: module, Name: path.Base(prefix), Replace: replace}
 	return writeApp(dir, data)
@@ -93,7 +97,7 @@ func replacement(dir, replace string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-//line new.ego:82
+//line new.ego:86
 	if _, err := os.Stat(filepath.Join(abs, "go.mod")); err != nil {
 		return "", fmt.Errorf("%s isn't a goncini checkout", replace)
 	}
@@ -105,29 +109,29 @@ func replacement(dir, replace string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-//line new.ego:91
+//line new.ego:95
 	app, err := filepath.Abs(dir)
 	if err != nil {
 		return "", err
 	}
-//line new.ego:92
+//line new.ego:96
 	v, err := filepath.EvalSymlinks(app)
 	if err != nil {
 		return "", err
 	}
 	app = v
-//line new.ego:93
+//line new.ego:97
 	v2, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		return "", err
 	}
 	abs = v2
-//line new.ego:94
+//line new.ego:98
 	rel, err := filepath.Rel(app, abs)
 	if err != nil {
 		return "", err
 	}
-//line new.ego:95
+//line new.ego:99
 	if !strings.HasPrefix(rel, ".") {
 		rel = "./" + rel // go.mod's relative paths start with ./ or ../
 	}
@@ -152,7 +156,7 @@ func writeApp(dir string, data skeletonData) error {
 	}
 	// Blank imports keep the dependencies while the module is tidied:
 	// tidy doesn't read .ego files, and their Go isn't generated yet.
-//line new.ego:117
+//line new.ego:121
 	var imports strings.Builder
 	for _, d := range deps {
 		imports.WriteString(fmt.Sprintf("\t_ %q\n", d))
@@ -161,39 +165,39 @@ func writeApp(dir string, data skeletonData) error {
 	if err := os.WriteFile(depsFile, []byte("//go:build tools\n\npackage main\n\nimport (\n"+imports.String()+")\n"), 0o644); err != nil {
 		return err
 	}
-//line new.ego:123
+//line new.ego:127
 	if data.Replace != "" {
 		if err := run(dir, "go", "mod", "edit", "-require=github.com/goncini/goncini@v0.0.0", "-require=github.com/goncini/goncini/db/goosedb@v0.0.0"); err != nil {
 			return err
 		}
 	} else {
-//line new.ego:126
+//line new.ego:130
 		v := version()
 		if err := run(dir, "go", "get", "github.com/goncini/goncini@"+v, "github.com/goncini/goncini/db/goosedb@"+v); err != nil {
 			return err
 		}
-	}
-//line new.ego:129
-	if err := run(dir, "go", "mod", "tidy"); err != nil {
-		return err
-	}
-//line new.ego:130
-	if err := write(dir, data, func(rel string) bool { return !injector(rel) }); err != nil {
-		return err
-	}
-//line new.ego:131
-	if err := run(dir, "go", "tool", "goncini", "generate"); err != nil {
-		return err
-	}
-//line new.ego:132
-	if err := os.Remove(depsFile); err != nil {
-		return err
 	}
 //line new.ego:133
 	if err := run(dir, "go", "mod", "tidy"); err != nil {
 		return err
 	}
 //line new.ego:134
+	if err := write(dir, data, func(rel string) bool { return !injector(rel) }); err != nil {
+		return err
+	}
+//line new.ego:135
+	if err := run(dir, "go", "tool", "goncini", "generate"); err != nil {
+		return err
+	}
+//line new.ego:136
+	if err := os.Remove(depsFile); err != nil {
+		return err
+	}
+//line new.ego:137
+	if err := run(dir, "go", "mod", "tidy"); err != nil {
+		return err
+	}
+//line new.ego:138
 	return nil
 }
 
@@ -203,7 +207,7 @@ func write(dir string, data skeletonData, skip func(rel string) bool) error {
 		if err != nil {
 			return err
 		}
-//line new.ego:141
+//line new.ego:145
 		if d.IsDir() {
 			return nil
 		}
@@ -211,29 +215,29 @@ func write(dir string, data skeletonData, skip func(rel string) bool) error {
 		if skip(rel) {
 			return nil
 		}
-		if rel == "env" || rel == "env.test" || rel == "gitignore" || rel == "dockerignore" {
+		if first, _, _ := strings.Cut(rel, "/"); slices.Contains(dotted, first) {
 			rel = "." + rel
 		}
 		src, err2 := skeleton.ReadFile(name)
 		if err2 != nil {
 			return err2
 		}
-//line new.ego:152
+//line new.ego:156
 		t, err3 := template.New(rel).Delims("<%", "%>").Parse(string(src))
 		if err3 != nil {
 			return err3
 		}
-//line new.ego:153
+//line new.ego:157
 		var out bytes.Buffer
 		if err4 := t.Execute(&out, data); err4 != nil {
 			return err4
 		}
-//line new.ego:155
+//line new.ego:159
 		target := filepath.Join(dir, filepath.FromSlash(rel))
 		if err5 := os.MkdirAll(filepath.Dir(target), 0o755); err5 != nil {
 			return err5
 		}
-//line new.ego:157
+//line new.ego:161
 		return os.WriteFile(target, out.Bytes(), 0o644)
 	})
 }

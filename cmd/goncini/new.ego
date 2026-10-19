@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -17,11 +18,14 @@ import (
 )
 
 // skeleton is the files of a new app, as templates: file.tmpl becomes
-// file, and env.tmpl, env.test.tmpl, gitignore.tmpl and dockerignore.tmpl
-// the dotfiles.
+// file, and those that dotted names, .file.
 //
 //go:embed skeleton
 var skeleton embed.FS
+
+// dotted are the skeleton's files and folders whose names start with a
+// dot, which embed leaves out: env.tmpl is .env, vscode/ is .vscode/.
+var dotted = []string{"env", "env.test", "gitignore", "gitattributes", "dockerignore", "vscode"}
 
 // skeletonData is what the skeleton's templates are given.
 type skeletonData struct {
@@ -145,7 +149,7 @@ func write(dir string, data skeletonData, skip func(rel string) bool) error {
 		if skip(rel) {
 			return nil
 		}
-		if rel == "env" || rel == "env.test" || rel == "gitignore" || rel == "dockerignore" {
+		if first, _, _ := strings.Cut(rel, "/"); slices.Contains(dotted, first) {
 			rel = "." + rel
 		}
 		src := check skeleton.ReadFile(name) ""
