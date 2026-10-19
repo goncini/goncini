@@ -9,7 +9,7 @@ tool (
 
 require (
 	github.com/effect-go/effect-go v0.5.0
-	github.com/goncini/goncini v0.2.0
+	github.com/goncini/goncini v0.3.0
 	github.com/goncini/goncini/db/goosedb v0.0.0
 	github.com/goncini/goncini/examples/maintenance v0.0.0-00010101000000-000000000000
 	github.com/goncini/goncini/log/zaplog v0.0.0
