@@ -81,6 +81,10 @@ type AttachInput struct {
 	} `limit:"8MiB"`
 }
 
+type EventsInput struct {
+	LastEventID string `header:"Last-Event-ID"`
+}
+
 type Notes struct{}
 
 effect (n *Notes) Show(in ShowInput) (NoteBody, NoteError) {
@@ -108,6 +112,11 @@ effect (n *Notes) Attach(in AttachInput) (httpkernel.NoContent, NoteError) {
 	return httpkernel.NoContent{}, nil
 }
 
+// Events streams the notes as they change.
+effect (n *Notes) Events(in EventsInput) (httpkernel.Stream[Note], NoteError) {
+	return httpkernel.Stream[Note]{}, nil
+}
+
 // locked answers 423 to every request, and says so.
 func locked(next http.Handler) http.Handler { return lockedHandler{} }
 
@@ -131,6 +140,7 @@ func notesAPI() (*routing.Router, *httpkernel.Kernel, openapi.Annotations) {
 	r.Delete("/notes/{id}", httpkernel.Endpoint(n.Delete)).Name("note_delete")
 	r.Put("/notes/{id}/archive", httpkernel.Endpoint(n.Archive)).Name("note_archive")
 	r.Put("/notes/{id}/attachment", httpkernel.Endpoint(n.Attach)).Name("note_attach")
+	r.Get("/notes/events", httpkernel.Endpoint(n.Events)).Name("note_events")
 	r.Handle("/health", http.NotFoundHandler())
 	k := &httpkernel.Kernel{Handler: r, ErrorMappers: []httpkernel.ErrorMapper{httpkernel.Map[NoteError](noteProblem)}, Validator: validator.New()}
 	d, _ := httpkernel.Describe(show)

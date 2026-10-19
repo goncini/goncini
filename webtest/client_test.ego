@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -108,6 +109,25 @@ func TestForms(t *testing.T) {
 		"photo": []webtest.File{{Name: "1.png", Data: []byte("one")}, {Name: "2", Data: []byte("two")}},
 	}).Status(200).Contains(`["Me","a,b","1.png image/png one","2 application/octet-stream two"]`)
 	c.Post("/photos", url.Values{"alt": {"Me"}}).Status(200).Contains(`["Me",""]`)
+}
+
+func TestEvents(t *testing.T) {
+	type tick struct {
+		N int `json:"n"`
+	}
+	mux := http.NewServeMux()
+	mux.Handle("GET /ticks", httpkernel.Endpoint(func(ctx context.Context, in struct{}) (httpkernel.Stream[tick], error) {
+		events := make(chan httpkernel.Event[tick], 2)
+		events <- httpkernel.Event[tick]{ID: "1", Name: "tick", Data: tick{1}}
+		events <- httpkernel.Event[tick]{Data: tick{2}}
+		close(events)
+		return httpkernel.Stream[tick]{Events: events}, nil
+	}))
+	got := webtest.NewClient(t, mux).Get("/ticks").Status(200).Events()
+	want := []webtest.Event{{ID: "1", Name: "tick", Data: `{"n":1}`}, {Data: `{"n":2}`}}
+	if !slices.Equal(got, want) {
+		t.Errorf("events %+v", got)
+	}
 }
 
 // recorder is a testing.TB that records the failures it is told of.

@@ -72,7 +72,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 }
 
 // Serve serves on ln until ctx is done, then shuts down. Requests keep the
-// values of ctx but aren't cancelled with it, so those in flight can finish.
+// values of ctx but aren't cancelled with it, so those in flight can finish;
+// a response that lasts, such as a Stream, ends at once with Stopping.
 //
 // Serve returns nil after a clean shutdown. It returns an error if the
 // server fails, or if requests are still running at ShutdownTimeout: their
@@ -80,10 +81,10 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	logger := s.Logger
 	if logger == nil {
-//line server.ego:67
+//line server.ego:68
 		logger = slog.Default()
 	}
-//line server.ego:68
+//line server.ego:69
 	srv := &http.Server{
 		Handler:           s.Handler,
 		ReadHeaderTimeout: orDefault(s.ReadHeaderTimeout, 10*time.Second),
@@ -91,23 +92,25 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		WriteTimeout:      s.WriteTimeout,
 		IdleTimeout:       orDefault(s.IdleTimeout, 2*time.Minute),
 		MaxHeaderBytes:    s.MaxHeaderBytes,
-		BaseContext:       func(net.Listener) context.Context { return context.WithoutCancel(ctx) },
-		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
+		BaseContext: func(net.Listener) context.Context {
+			return context.WithValue(context.WithoutCancel(ctx), stoppingKey{}, ctx.Done())
+		},
+		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
 	logger.InfoContext(ctx, "serving HTTP", slog.String("addr", ln.Addr().String()))
 	_, err := scope.Run[struct{}](ctx, func(sc *scope.Scope) (struct{}, error) {
 
-//line server.ego:80
+//line server.ego:83
 		serving := scope.Fork[struct{}](sc, func(_ context.Context) (struct{}, error) {
 
-//line server.ego:81
+//line server.ego:84
 			if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 				return struct{}{}, err
 			}
 			return struct{}{}, nil
 
 		})
-//line server.ego:86
+//line server.ego:89
 		select {
 		case <-serving.Done():
 			return serving.Join() // the server failed before ctx was done
@@ -125,7 +128,7 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		return struct{}{}, errors.Join(stuck, err)
 
 	})
-//line server.ego:102
+//line server.ego:105
 	return err
 }
 

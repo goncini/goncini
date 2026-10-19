@@ -35,12 +35,13 @@ import (
 // programming error, found when the routes are registered.
 //
 // The result is written with status 200, unless it writes its own response
-// by implementing Responder, as Created, NoContent, Response and Cached do.
+// by implementing Responder, as Created, NoContent, Response, Cached and
+// Stream do.
 //
 // The handler has a String method naming h, which route listings show:
 // articles.(*Controller).Show.
 //
-//line endpoint.ego:40
+//line endpoint.ego:41
 func Endpoint[In, Out any](h func(context.Context, In) (Out, error)) http.Handler {
 	return &endpoint[In, Out]{h: h, b: newBinder(reflect.TypeFor[In]())}
 }
@@ -64,7 +65,7 @@ func (e *endpoint[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if st != nil {
 		k = st.kernel
 	}
-//line endpoint.ego:60
+//line endpoint.ego:61
 	var in In
 	cleanup, err := e.b.bind(w, r, reflect.ValueOf(&in).Elem(), cmp.Or(e.b.limit, k.bodyLimit()))
 	if err != nil {

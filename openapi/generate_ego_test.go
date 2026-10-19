@@ -131,6 +131,10 @@ type AttachInput struct {
 	} `limit:"8MiB"`
 }
 
+type EventsInput struct {
+	LastEventID string `header:"Last-Event-ID"`
+}
+
 type Notes struct{}
 
 func (n *Notes) Show(ctx context.Context, in ShowInput) (_ NoteBody, err error) {
@@ -139,21 +143,21 @@ func (n *Notes) Show(ctx context.Context, in ShowInput) (_ NoteBody, err error) 
 	return NoteBody{}, nil
 }
 
-//line generate_test.ego:90
+//line generate_test.ego:94
 func (n *Notes) List(ctx context.Context, in ListInput) (_ []Note, err error) {
 	ctx, span := trace.Start(ctx, "openapi_test.Notes.List")
 	defer trace.End(span, &err)
 	return nil, nil
 }
 
-//line generate_test.ego:94
+//line generate_test.ego:98
 func (n *Notes) Create(ctx context.Context, in CreateInput) (_ httpkernel.Created[NoteBody], err error) {
 	ctx, span := trace.Start(ctx, "openapi_test.Notes.Create")
 	defer trace.End(span, &err)
 	return httpkernel.Created[NoteBody]{}, nil
 }
 
-//line generate_test.ego:98
+//line generate_test.ego:102
 func (n *Notes) Delete(ctx context.Context, in ShowInput) (_ httpkernel.NoContent, err error) {
 	ctx, span := trace.Start(ctx, "openapi_test.Notes.Delete")
 	defer trace.End(span, &err)
@@ -162,23 +166,32 @@ func (n *Notes) Delete(ctx context.Context, in ShowInput) (_ httpkernel.NoConten
 
 // Archive answers 202 while it archives a note, or 200 once it did.
 //
-//line generate_test.ego:103
+//line generate_test.ego:107
 func (n *Notes) Archive(ctx context.Context, in ShowInput) (_ httpkernel.Response[NoteBody], err error) {
 	ctx, span := trace.Start(ctx, "openapi_test.Notes.Archive")
 	defer trace.End(span, &err)
 	return httpkernel.Response[NoteBody]{Status: http.StatusAccepted}, nil
 }
 
-//line generate_test.ego:107
+//line generate_test.ego:111
 func (n *Notes) Attach(ctx context.Context, in AttachInput) (_ httpkernel.NoContent, err error) {
 	ctx, span := trace.Start(ctx, "openapi_test.Notes.Attach")
 	defer trace.End(span, &err)
 	return httpkernel.NoContent{}, nil
 }
 
+// Events streams the notes as they change.
+//
+//line generate_test.ego:116
+func (n *Notes) Events(ctx context.Context, in EventsInput) (_ httpkernel.Stream[Note], err error) {
+	ctx, span := trace.Start(ctx, "openapi_test.Notes.Events")
+	defer trace.End(span, &err)
+	return httpkernel.Stream[Note]{}, nil
+}
+
 // locked answers 423 to every request, and says so.
 //
-//line generate_test.ego:112
+//line generate_test.ego:121
 func locked(next http.Handler) http.Handler { return lockedHandler{} }
 
 type lockedHandler struct{}
@@ -201,6 +214,7 @@ func notesAPI() (*routing.Router, *httpkernel.Kernel, openapi.Annotations) {
 	r.Delete("/notes/{id}", httpkernel.Endpoint(n.Delete)).Name("note_delete")
 	r.Put("/notes/{id}/archive", httpkernel.Endpoint(n.Archive)).Name("note_archive")
 	r.Put("/notes/{id}/attachment", httpkernel.Endpoint(n.Attach)).Name("note_attach")
+	r.Get("/notes/events", httpkernel.Endpoint(n.Events)).Name("note_events")
 	r.Handle("/health", http.NotFoundHandler())
 	k := &httpkernel.Kernel{Handler: r, ErrorMappers: []httpkernel.ErrorMapper{httpkernel.Map[NoteError](noteProblem)}, Validator: validator.New()}
 	d, _ := httpkernel.Describe(show)

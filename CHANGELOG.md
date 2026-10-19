@@ -20,12 +20,24 @@
   kernel's `BodyLimit` for one endpoint, for any body.
   - `BodyMediaType` has a `Want` field, the media types to send. A new
     case, `BodyMalformedForm`, is a 400.
+- **httpkernel:** server-sent events. An endpoint returns an
+  `httpkernel.Stream[T]`, whose `Events` channel gives `Event[T]`s, written
+  as `text/event-stream` with their data as JSON, and flushed as they come.
+  A stream lifts the server's `WriteTimeout`, sends a comment every 15
+  seconds while no event comes, and ends when the client leaves, or when
+  the server shuts down rather than holding the shutdown up.
+  `httpkernel.Stopping(ctx)` tells other responses that last.
+  `MediaTypeDescriber` lets a `Responder` give its media type to the
+  OpenAPI document.
 - **openapi:** a form is described as `multipart/form-data`, with its
   files as binary strings, and as `application/x-www-form-urlencoded` too
   when it has no files. The 413's example gives the endpoint's limit, or
   the kernel's.
 - **validator:** a form's violations point at its members by their `form`
   names.
+- **openapi:** a `Stream`'s response is `text/event-stream`, with the
+  schema of its events' data.
+- **webtest:** `Response.Events()` reads a stream's events.
 - **webtest:** the client sends a `webtest.Form` as `multipart/form-data`,
   with `webtest.File`s, and `url.Values` as a URL-encoded form.
 - **redis:** `redis.RateLimit` provides a `ratelimit.Store` in Redis, so

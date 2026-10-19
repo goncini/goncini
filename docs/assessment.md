@@ -322,7 +322,8 @@ same day, as the order of work.
 2. **File uploads**, `multipart/form-data` bodies in endpoints, described
    in the OpenAPI document.
 3. **Server-sent events**, streamed responses, for what Symfony does with
-   Mercure.
+   Mercure, then a hub that fans their events out across the app's
+   instances, on Redis's pub/sub.
 4. **Content negotiation and serialization groups:** a response is its
    output type, as JSON only.
 5. **Messenger transports** beyond SQL, Redis and memory: AMQP, SQS, Kafka.
@@ -339,6 +340,8 @@ Form login, sessions, remember-me and CSRF stay out, as browser concerns.
 > **Status (2026-10-19), step 1:** login throttling is `ratelimit.Logins`, which RealWorld uses, with a store in Redis, `redis.RateLimit`. Decisions taken on the user's behalf: Symfony's defaults and its two limits, 5 attempts a minute at a user from an address, which a success gives back, and five times as many from an address, which it doesn't; a sliding window for both; users named without case; `ratelimit.Config` for the limits, in the package's `Config` rather than a section of their own, as `goncini generate` defaults only types named `Config`; the Redis store watches the key and tries again, up to 50 times, rather than a Lua script per policy, since the policies are Go: a store's `Update` may call its function more than once.
 
 > **Status (2026-10-19), step 2:** file uploads are form bodies in `httpkernel`, described in the OpenAPI document and sent by `webtest`'s client. Decisions taken on the user's behalf: a form is a `Body` struct whose fields have `form` tags, rather than inputs of their own, so that the input still says where every value comes from; its values bind as query parameters do, with the same options, and its files as a `File`, which a required option or a pointer must make explicit; a form's invalid values are a 422 pointing at them, as a JSON body's are, not a 400 as parameters are; URL-encoded forms too, for the webhooks of Slack and Twilio, which send them; the files are removed once the endpoint returns, as PHP does, and a file kept for later is the app's to copy; a megabyte of files in memory, the rest in temporary files; the body's limit as a tag on the `Body` field, which serves raw and JSON bodies too, rather than an option of `Endpoint`, so that an input type says it all; no checks of a file's type or size of goncini's, which the input's `Validate` makes, since the client's `ContentType` can't be trusted anyway.
+
+> **Status (2026-10-19), step 3:** server-sent events are `httpkernel.Stream`, documented in the OpenAPI document and read by `webtest`. The first three steps of the backlog are done. Decisions taken on the user's behalf: events come from a channel, which the stream selects on with its keep-alive and the request's end, in the request's goroutine, rather than from a callback, which would need a lock around the writer; each event's data is JSON, so that the stream has a schema; the stream ends when the server begins to shut down, through `Stopping`, so that a shutdown doesn't wait 30 seconds for streams, whose clients reconnect elsewhere; a keep-alive comment every 15 seconds without events, for proxies; no fan-out of events across instances, which Symfony gets from Mercure: a hub on Redis's pub/sub would be the next step, when an app needs one, and is now in the backlog; OpenAPI 3.1 has no schema for the events of a stream, so the response's schema is their data's, as 3.2's `itemSchema` would say.
 
 ## 5. Risks
 

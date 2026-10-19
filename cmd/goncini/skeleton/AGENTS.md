@@ -185,6 +185,12 @@ type UpdateInput struct {
   typed parameters.
 - The result is written as JSON with 200. `httpkernel.Created[T]{Body: b}`
   answers 201, and `httpkernel.NoContent{}` answers 204.
+- `httpkernel.Stream[T]{Events: ch}` streams server-sent events, each an
+  `httpkernel.Event[T]{ID, Name, Data}` from the channel, until it is
+  closed, the client leaves, or the server stops. Whatever feeds the
+  channel stops once `ctx` is done. A client that reconnects sends
+  `Last-Event-ID`, which the input takes as a header. In tests, the
+  response comes once the stream ends, and `.Events()` reads it.
 - An input with no values is `struct{}`.
 
 A request is checked in this order, each step answering for itself: the

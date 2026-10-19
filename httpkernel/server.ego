@@ -58,7 +58,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 }
 
 // Serve serves on ln until ctx is done, then shuts down. Requests keep the
-// values of ctx but aren't cancelled with it, so those in flight can finish.
+// values of ctx but aren't cancelled with it, so those in flight can finish;
+// a response that lasts, such as a Stream, ends at once with Stopping.
 //
 // Serve returns nil after a clean shutdown. It returns an error if the
 // server fails, or if requests are still running at ShutdownTimeout: their
@@ -72,8 +73,10 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		WriteTimeout:      s.WriteTimeout,
 		IdleTimeout:       orDefault(s.IdleTimeout, 2*time.Minute),
 		MaxHeaderBytes:    s.MaxHeaderBytes,
-		BaseContext:       func(net.Listener) context.Context { return context.WithoutCancel(ctx) },
-		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
+		BaseContext: func(net.Listener) context.Context {
+			return context.WithValue(context.WithoutCancel(ctx), stoppingKey{}, ctx.Done())
+		},
+		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
 	logger.InfoContext(ctx, "serving HTTP", slog.String("addr", ln.Addr().String()))
 	_, err := scope.Run[struct{}](ctx, sc => {

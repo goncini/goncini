@@ -33,7 +33,8 @@ import (
 // programming error, found when the routes are registered.
 //
 // The result is written with status 200, unless it writes its own response
-// by implementing Responder, as Created, NoContent, Response and Cached do.
+// by implementing Responder, as Created, NoContent, Response, Cached and
+// Stream do.
 //
 // The handler has a String method naming h, which route listings show:
 // articles.(*Controller).Show.

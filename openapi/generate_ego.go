@@ -355,7 +355,12 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 	res := &Response{Description: v6}
 //line generate.ego:309
 	if d.Result != nil {
-		res.Content = map[string]*MediaType{"application/json": {Schema: g.schemas.of(d.Result, writing)}}
+		mediaType := cmp.Or(d.MediaType, "application/json")
+		res.Content = map[string]*MediaType{mediaType: {Schema: g.schemas.of(d.Result, writing)}}
+		if mediaType == "text/event-stream" {
+			// OpenAPI 3.1 has no schema of the events: 3.2's itemSchema.
+			res.Description = "Server-sent events, whose data are JSON values of the schema"
+		}
 	}
 	op.Responses[status] = res
 }
@@ -437,7 +442,7 @@ func (g *generator) paramSchema(p httpkernel.ParamDescription) (*Schema, bool) {
 		} else {
 			target = s
 		}
-//line generate.ego:387
+//line generate.ego:392
 		target.Enum = enumValues(t, p.Enum)
 	}
 	if p.Default != nil {
@@ -510,7 +515,7 @@ func (g *generator) errors(op *Op) (err error) {
 	} else {
 		render = httpkernel.RenderProblem
 	}
-//line generate.ego:454
+//line generate.ego:459
 	req := httptest.NewRequest(op.Method, "/", nil)
 	for _, e := range op.Errors {
 		rec := &recorder{header: http.Header{}}
@@ -526,7 +531,7 @@ func (g *generator) errors(op *Op) (err error) {
 		if err != nil {
 			return err
 		}
-//line generate.ego:467
+//line generate.ego:472
 		status := strconv.Itoa(rec.status)
 		res := op.Responses[status]
 		if res == nil {

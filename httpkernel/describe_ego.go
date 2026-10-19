@@ -39,9 +39,12 @@ type Description struct {
 	// Status is the status of a successful response: 200, or the one that
 	// a ResponseDescriber result gives, 0 for any 2xx.
 	Status int
-	// Result is the type of the successful response's JSON body: Out, or
-	// the one that a ResponseDescriber result gives; nil for none.
+	// Result is the type of the successful response's body: Out, or the
+	// one that a ResponseDescriber result gives; nil for none.
 	Result reflect.Type
+	// MediaType is the successful response's: application/json, or the
+	// one that a MediaTypeDescriber result gives, such as a Stream's.
+	MediaType string
 }
 
 // ParamDescription is a value of an Endpoint's input bound from the path,
@@ -68,11 +71,19 @@ type ParamDescription struct {
 
 // ResponseDescriber is a Responder that says what it writes, for
 // documentation: the status, 0 for any 2xx, and the type of the JSON
-// body, nil for none. It is called on the zero value. Created, NoContent, Response and Cached
-// implement it.
+// body, nil for none. It is called on the zero value. Created, NoContent,
+// Response, Cached and Stream implement it.
 type ResponseDescriber interface {
 	Responder
 	DescribeResponse() (status int, body reflect.Type)
+}
+
+// MediaTypeDescriber is a ResponseDescriber whose body isn't JSON, such as
+// a Stream: it gives its media type, and the ResponseDescriber the type of
+// what the body holds. It is called on the zero value.
+type MediaTypeDescriber interface {
+	ResponseDescriber
+	DescribeMediaType() string
 }
 
 // Describe returns the description of h, a handler that Endpoint returned,
@@ -113,6 +124,10 @@ func (e *endpoint[In, Out]) describe() Description {
 	var out Out
 	if r, ok := any(out).(ResponseDescriber); ok {
 		d.Status, d.Result = r.DescribeResponse()
+	}
+	d.MediaType = "application/json"
+	if m, ok := any(out).(MediaTypeDescriber); ok {
+		d.MediaType = m.DescribeMediaType()
 	}
 	return d
 }

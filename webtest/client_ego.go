@@ -229,6 +229,51 @@ type Response struct {
 	what string // the request, for messages
 }
 
+// Event is a server-sent event of a response, as Events reads it.
+type Event struct {
+	ID string
+	// Name is the event's type; empty for message.
+	Name string
+	// Data is its data: JSON, an httpkernel.Stream's.
+	Data string
+}
+
+// Events reads the body as server-sent events, without the comments, and
+// checks that it is text/event-stream. The client has the response once the
+// stream ends: once its events do, or the request's context is done, as
+// WithContext gives it, which a synctest bubble's fake time ends at once.
+func (r *Response) Events() []Event {
+	r.t.Helper()
+	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "text/event-stream" {
+		r.t.Errorf("%s: Content-Type %q, want text/event-stream; body: %s", r.what, r.Header.Get("Content-Type"), r.Body)
+		return nil
+	}
+	var events []Event
+	var e Event
+	var data []string
+	for _, line := range strings.Split(strings.ReplaceAll(string(r.Body), "\r\n", "\n"), "\n") {
+		field, value, _ := strings.Cut(line, ":")
+		value = strings.TrimPrefix(value, " ")
+		switch field {
+		case "": // a comment, or the end of an event
+			if line == "" && data != nil {
+				e.Data = strings.Join(data, "\n")
+				events = append(events, e)
+			}
+			if line == "" {
+				e, data = Event{}, nil
+			}
+		case "id":
+			e.ID = value
+		case "event":
+			e.Name = value
+		case "data":
+			data = append(data, value)
+		}
+	}
+	return events
+}
+
 // String returns the status and the body.
 func (r *Response) String() string {
 	return fmt.Sprintf("%d %s", r.Code, strings.TrimSpace(string(r.Body)))
@@ -349,7 +394,7 @@ func describe(vs []httpkernel.Violation) string {
 		} else {
 			where = v.Header
 		}
-//line client.ego:328
+//line client.ego:373
 		parts = append(parts, fmt.Sprintf("%s: %q", where, v.Detail))
 	}
 	return strings.Join(parts, ", ")

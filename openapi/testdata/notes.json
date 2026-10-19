@@ -306,6 +306,35 @@
         }
       }
     },
+    "/notes/events": {
+      "get": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "note_events",
+        "parameters": [
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-sent events, whose data are JSON values of the schema",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/notes/{id}": {
       "get": {
         "tags": [

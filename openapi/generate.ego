@@ -307,7 +307,12 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 	status := if d.Status == 0 { "2XX" } else { strconv.Itoa(d.Status) }
 	res := &Response{Description: if d.Status == 0 { "Success" } else { http.StatusText(d.Status) }}
 	if d.Result != nil {
-		res.Content = map[string]*MediaType{"application/json": {Schema: g.schemas.of(d.Result, writing)}}
+		mediaType := cmp.Or(d.MediaType, "application/json")
+		res.Content = map[string]*MediaType{mediaType: {Schema: g.schemas.of(d.Result, writing)}}
+		if mediaType == "text/event-stream" {
+			// OpenAPI 3.1 has no schema of the events: 3.2's itemSchema.
+			res.Description = "Server-sent events, whose data are JSON values of the schema"
+		}
 	}
 	op.Responses[status] = res
 }
