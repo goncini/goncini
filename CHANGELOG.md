@@ -60,6 +60,9 @@
   that the app's instances share their limits. An update watches the key,
   and tries again when another changed it first: a `Store`'s `Update` may
   call its function more than once.
+- **Dependencies:** mimetype v1.4.16, which go-playground's validator
+  requires, as v1.4.15 is retracted: it spends quadratic time on crafted
+  files.
 - **messenger/amqp:** a new module whose `amqp.Messenger` provides a bus
   whose queues are RabbitMQ's, or another AMQP 0.9.1 broker's, and whose
   failure transport is in the app's database, where `messenger:failed:show`
