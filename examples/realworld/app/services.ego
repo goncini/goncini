@@ -32,7 +32,7 @@ import (
 var Services = layer.Set(
 	db.Open, db.NewSQL, migrator,
 	security.NewTokens, hasher, firewall, security.NewAccess,
-	users.NewStore, users.NewUsers, logins,
+	users.NewStore, users.NewUsers, ratelimit.NewLogins, ratelimit.NewMemoryStore,
 	articles.NewStore, articles.NewArticles, articles.NewAuthorship, articles.NewInvalidator,
 	cache.Memory, mailer.Async,
 	moderation.NewFirewall, moderation.NewModeration, moderation.NewNotices, notifier.Async,
@@ -62,15 +62,6 @@ func hasher() security.Hasher { return security.Hasher{} }
 // firewall authenticates requests by their token, which names a user ID.
 func firewall(c security.Config, tokens *security.Tokens, store *users.Store) *security.Firewall[*users.User] {
 	return &security.Firewall[*users.User]{Config: c, Tokens: tokens, Load: store.ByID}
-}
-
-// logins limits the logins of each email from each address, 5 a minute,
-// and from each address, 25 a minute, as Symfony's defaults do.
-func logins(now func() time.Time) users.Logins {
-	return users.Logins{
-		ByEmail:   &ratelimit.Limiter{Policy: ratelimit.SlidingWindow{Limit: 5, Interval: time.Minute}, Now: now},
-		ByAddress: &ratelimit.Limiter{Policy: ratelimit.SlidingWindow{Limit: 25, Interval: time.Minute}, Now: now},
-	}
 }
 
 // clock is the app's clock: the system's.

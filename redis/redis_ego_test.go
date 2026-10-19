@@ -5,6 +5,8 @@ package redis_test
 import (
 	"context"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/goncini/goncini/lock/locktest"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/messenger/transporttest"
+	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/redis"
 	"github.com/goncini/goncini/uid"
 )
@@ -20,7 +23,7 @@ import (
 // the test's own, whose keys go when it ends; or skips the test without
 // one.
 //
-//line redis_test.ego:20
+//line redis_test.ego:23
 func client(t *testing.T) (*redis.Client, string) {
 	url := os.Getenv("REDIS_TEST_URL")
 	if url == "" {
@@ -30,31 +33,31 @@ func client(t *testing.T) (*redis.Client, string) {
 	if err != nil {
 		panic(err)
 	}
-//line redis_test.ego:26
+//line redis_test.ego:29
 	if err := c.PingContext(context.Background()); err != nil {
 		panic(err)
 	}
-//line redis_test.ego:27
+//line redis_test.ego:30
 	prefix := "test:" + uid.NewV4().String() + ":"
 	t.Cleanup(func() {
 
-//line redis_test.ego:29
+//line redis_test.ego:32
 		ctx := context.Background()
 		keys, err := c.Keys(ctx, prefix+"*").Result()
 		if err != nil {
 			panic(err)
 		}
-//line redis_test.ego:31
+//line redis_test.ego:34
 		if len(keys) > 0 {
 			if err := c.Del(ctx, keys...).Err(); err != nil {
 				panic(err)
 			}
 		}
-//line redis_test.ego:34
+//line redis_test.ego:37
 		closeClient()
 
 	})
-//line redis_test.ego:36
+//line redis_test.ego:39
 	return c, prefix
 }
 
@@ -74,23 +77,75 @@ func TestLockStore(t *testing.T) {
 	})
 }
 
-// TestMemory checks that memory:// keeps the messages and locks in memory.
+// TestRateLimitStore checks that concurrent takes don't exceed the limit,
+// that Reset gives it back, and that Redis expires the states.
+func TestRateLimitStore(t *testing.T) {
+	c, prefix := client(t)
+	ctx := context.Background()
+	l := &ratelimit.Limiter{Policy: ratelimit.FixedWindow{Limit: 10, Interval: time.Minute}, Store: redis.NewRateLimitStore(c, redis.Config{Prefix: prefix})}
+	var allowed atomic.Int32
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Go(func() {
+
+//line redis_test.ego:68
+			res, err := l.Take(ctx, "k", 1)
+			if err != nil {
+				t.Error(err)
+			} else if res.Allowed {
+				allowed.Add(1)
+			}
+
+		})
+	}
+//line redis_test.ego:76
+	wg.Wait()
+	if n := allowed.Load(); n != 10 {
+		t.Errorf("%d takes allowed, not 10", n)
+	}
+	if err := l.Reset(ctx, "k"); err != nil {
+		panic(err)
+	}
+//line redis_test.ego:81
+	res, err := l.Take(ctx, "k", 1)
+	if err != nil {
+		panic(err)
+	}
+//line redis_test.ego:82
+	if !res.Allowed || res.Remaining != 9 {
+		t.Errorf("after Reset: %+v", res)
+	}
+	ttl, err := c.PTTL(ctx, prefix+"ratelimit:k").Result()
+	if err != nil {
+		panic(err)
+	}
+//line redis_test.ego:86
+	if ttl <= 0 || ttl > time.Minute {
+		t.Errorf("the state expires in %v", ttl)
+	}
+}
+
+// TestMemory checks that memory:// keeps the messages, locks and limits in
+// memory.
 func TestMemory(t *testing.T) {
 	c, closeClient, err := redis.NewClient(redis.Config{URL: "memory://"})
 	if err != nil {
 		panic(err)
 	}
-//line redis_test.ego:58
+//line redis_test.ego:95
 	defer closeClient()
 	if err := c.PingContext(context.Background()); err != nil {
 		panic(err)
 	}
-//line redis_test.ego:60
+//line redis_test.ego:97
 	ts := redis.NewTransports(c, redis.Config{}, messenger.Config{})
 	if _, ok := ts["async"].(*messenger.MemoryTransport); !ok || len(ts) != 2 {
 		t.Errorf("transports %v", ts)
 	}
 	if _, ok := redis.NewLockStore(c, redis.Config{}).(*lock.MemoryStore); !ok {
 		t.Error("the lock store isn't in memory")
+	}
+	if _, ok := redis.NewRateLimitStore(c, redis.Config{}).(*ratelimit.MemoryStore); !ok {
+		t.Error("the rate limits aren't in memory")
 	}
 }

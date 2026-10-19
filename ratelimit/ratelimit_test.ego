@@ -208,3 +208,32 @@ func TestInvalidTakes(t *testing.T) {
 		t.Error("negative tokens taken")
 	}
 }
+
+// TestLogins checks that a user's attempts count without case, that a
+// success gives them back but not the address's, and the config's limits.
+func TestLogins(t *testing.T) {
+	ctx := context.Background()
+	c := newClock()
+	l := ratelimit.NewLogins(ratelimit.Config{LoginAttempts: 2, LoginInterval: time.Hour}, ratelimit.NewMemoryStore(), c.Now)
+	attempt := func(user string) bool {
+		res := must l.Attempt(ctx, user)
+		return res.Allowed
+	}
+	if !attempt("Ann@example.com") || !attempt("ann@EXAMPLE.com") || attempt("ann@example.com") {
+		t.Error("an email had more than 2 attempts")
+	}
+	must l.Succeeded(ctx, "ann@example.com")
+	for i := range 7 { // the address's 10: the 3 at ann, 2 more since the success, and 5 at others
+		user := if i < 2 { "ann@example.com" } else { f"user{i}@example.com" }
+		if !attempt(user) {
+			t.Fatalf("attempt %d refused", i+4)
+		}
+	}
+	if attempt("dan@example.com") {
+		t.Error("the address had more than 10 attempts")
+	}
+	c.advance(2 * time.Hour)
+	if !attempt("ann@example.com") {
+		t.Error("the attempts still count two hours later")
+	}
+}

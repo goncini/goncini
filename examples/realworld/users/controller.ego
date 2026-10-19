@@ -5,7 +5,6 @@ import (
 	"html"
 	"net/mail"
 	"strconv"
-	"strings"
 
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/event"
@@ -22,7 +21,7 @@ type Users struct {
 	store  *Store
 	hasher security.Hasher
 	tokens *security.Tokens
-	logins Logins
+	logins *ratelimit.Logins
 	events *event.Dispatcher
 	mailer *mailer.Mailer
 	tx     db.Transactor // a user's save and its messages are one
@@ -32,15 +31,7 @@ type Users struct {
 	dummy string
 }
 
-// Logins limits the logins, as Symfony's login throttling does: the
-// attempts at an email from an address, which a success gives back, and
-// all the attempts from an address, which it doesn't.
-type Logins struct {
-	ByEmail   *ratelimit.Limiter
-	ByAddress *ratelimit.Limiter
-}
-
-func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins Logins, events *event.Dispatcher, m *mailer.Mailer, tx db.Transactor) (*Users, error) {
+func NewUsers(store *Store, hasher security.Hasher, tokens *security.Tokens, logins *ratelimit.Logins, events *event.Dispatcher, m *mailer.Mailer, tx db.Transactor) (*Users, error) {
 	dummy := check hasher.Hash("no user has this password") ""
 	return &Users{store: store, hasher: hasher, tokens: tokens, logins: logins, events: events, mailer: m, tx: tx, dummy: dummy}, nil
 }
@@ -121,13 +112,7 @@ type LoginInput struct {
 // Each email has a few attempts a minute from each address, which a
 // successful one gives back, and each address a few more for all emails.
 effect (u *Users) Login(in LoginInput) (UserBody, UserError) {
-	address := ratelimit.IPKey(httpkernel.ClientIPOf(ctx))
-	key := strings.ToLower(in.Body.User.Email) + " " + address
-	byAddress := check u.logins.ByAddress.Take(ctx, address, 1) as Unavailable
-	if !byAddress.Allowed {
-		fail TooManyLogins{RetryAfter: byAddress.RetryAfter}
-	}
-	attempt := check u.logins.ByEmail.Take(ctx, key, 1) as Unavailable
+	attempt := check u.logins.Attempt(ctx, in.Body.User.Email) as Unavailable
 	if !attempt.Allowed {
 		fail TooManyLogins{RetryAfter: attempt.RetryAfter}
 	}
@@ -137,7 +122,7 @@ effect (u *Users) Login(in LoginInput) (UserBody, UserError) {
 	if !ok || !valid {
 		fail BadCredentials{}
 	}
-	check u.logins.ByEmail.Reset(ctx, key) as Unavailable
+	check u.logins.Succeeded(ctx, in.Body.User.Email) as Unavailable
 	body := check u.body(user) as Unavailable
 	return body, nil
 }

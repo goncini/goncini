@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **ratelimit:** `Logins` throttles the attempts to sign in, as Symfony's
+  login throttling does: 5 a minute per user and address, which a success
+  gives back, and 25 a minute per address, for all users. `ratelimit.Config`
+  changes the limits. An app lists `ratelimit.NewLogins` in `Services`, with
+  a store: `ratelimit.NewMemoryStore` for one instance, or the redis
+  module's. RealWorld throttles with it, rather than with limiters of its
+  own.
+- **redis:** `redis.RateLimit` provides a `ratelimit.Store` in Redis, so
+  that the app's instances share their limits. An update watches the key,
+  and tries again when another changed it first: a `Store`'s `Update` may
+  call its function more than once.
+
 ## v0.3.0 (2026-10-19)
 
 Every module is tagged v0.3.0, the new `redis` module included. To

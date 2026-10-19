@@ -3,6 +3,8 @@ package redis_test
 import (
 	"context"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/goncini/goncini/lock/locktest"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/messenger/transporttest"
+	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/redis"
 	"github.com/goncini/goncini/uid"
 )
@@ -52,7 +55,41 @@ func TestLockStore(t *testing.T) {
 	})
 }
 
-// TestMemory checks that memory:// keeps the messages and locks in memory.
+// TestRateLimitStore checks that concurrent takes don't exceed the limit,
+// that Reset gives it back, and that Redis expires the states.
+func TestRateLimitStore(t *testing.T) {
+	c, prefix := client(t)
+	ctx := context.Background()
+	l := &ratelimit.Limiter{Policy: ratelimit.FixedWindow{Limit: 10, Interval: time.Minute}, Store: redis.NewRateLimitStore(c, redis.Config{Prefix: prefix})}
+	var allowed atomic.Int32
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Go(() => {
+			res, err := l.Take(ctx, "k", 1)
+			if err != nil {
+				t.Error(err)
+			} else if res.Allowed {
+				allowed.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+	if n := allowed.Load(); n != 10 {
+		t.Errorf("%d takes allowed, not 10", n)
+	}
+	must l.Reset(ctx, "k")
+	res := must l.Take(ctx, "k", 1)
+	if !res.Allowed || res.Remaining != 9 {
+		t.Errorf("after Reset: %+v", res)
+	}
+	ttl := must c.PTTL(ctx, prefix+"ratelimit:k").Result()
+	if ttl <= 0 || ttl > time.Minute {
+		t.Errorf("the state expires in %v", ttl)
+	}
+}
+
+// TestMemory checks that memory:// keeps the messages, locks and limits in
+// memory.
 func TestMemory(t *testing.T) {
 	c, closeClient := must redis.NewClient(redis.Config{URL: "memory://"})
 	defer closeClient()
@@ -63,5 +100,8 @@ func TestMemory(t *testing.T) {
 	}
 	if _, ok := redis.NewLockStore(c, redis.Config{}).(*lock.MemoryStore); !ok {
 		t.Error("the lock store isn't in memory")
+	}
+	if _, ok := redis.NewRateLimitStore(c, redis.Config{}).(*ratelimit.MemoryStore); !ok {
+		t.Error("the rate limits aren't in memory")
 	}
 }

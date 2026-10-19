@@ -98,7 +98,8 @@ type Policy interface {
 type Store interface {
 	// Update calls f with the state of key, which it changes, with no other
 	// update of key in between, and keeps the result for ttl from now, the
-	// limiter's time.
+	// limiter's time. A store that tries again, when another update came
+	// first, calls f again: the last call's change is kept.
 	Update(ctx context.Context, key string, now time.Time, ttl time.Duration, f func(*State)) error
 }
 

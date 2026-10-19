@@ -232,6 +232,20 @@ or a 401 error; `security.User[*users.User](ctx)` reports whether there is
 one. In the RealWorld app, `users.Current(ctx)` and `users.Viewer(ctx)`
 (an ID, 0 for anonymous) wrap them.
 
+`ratelimit.Logins` throttles the attempts to sign in, by user and by
+address, with `ratelimit.NewLogins` and a store in `Services`:
+`ratelimit.NewMemoryStore`, or `redis.RateLimit`, which the instances
+share:
+
+```go
+res := check u.logins.Attempt(ctx, email) as Unavailable
+if !res.Allowed {
+	fail TooManyLogins{RetryAfter: res.RetryAfter}
+}
+… // the password is right:
+check u.logins.Succeeded(ctx, email) as Unavailable
+```
+
 Who may do what to a subject is a voter's decision, a service with a
 `Vote(ctx, attribute, subject)` method, such as `articles.Authorship`;
 `goncini generate` hands the voters to `security.Access`:

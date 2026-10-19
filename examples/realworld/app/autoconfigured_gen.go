@@ -23,13 +23,14 @@ import (
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/notifier"
 	"github.com/goncini/goncini/openapi"
+	"github.com/goncini/goncini/ratelimit"
 	"github.com/goncini/goncini/scheduler"
 	"github.com/goncini/goncini/security"
 )
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger, autoConfigMailer, autoConfigNotifier, autoDefaultCacheConfig, autoDefaultSchedulerConfig)
+var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigSecurity, autoConfigOpenAPI, autoConfigModeration, autoConfigMessenger, autoConfigMailer, autoConfigNotifier, autoDefaultRatelimitConfig, autoDefaultCacheConfig, autoDefaultSchedulerConfig)
 
 // autoProblems are the error mappers that the app's packages declare.
 func autoProblems() []httpkernel.ErrorMapper {
@@ -90,8 +91,10 @@ func autoServices() []goncini.Service {
 		{Type: "moderation.Config", Provider: "autoConfigModeration", Needs: []string{"config.Config"}},
 		{Type: "*security.Firewall[*moderation.Moderator]", Provider: "moderation.NewFirewall", Needs: []string{"moderation.Config"}},
 		{Type: "security.Hasher", Provider: "hasher", Needs: []string{}},
+		{Type: "ratelimit.Config", Provider: "autoDefaultRatelimitConfig", Needs: []string{}},
+		{Type: "ratelimit.Store", Provider: "ratelimit.NewMemoryStore", Needs: []string{}},
 		{Type: "func() time.Time", Provider: "clock", Needs: []string{}},
-		{Type: "users.Logins", Provider: "logins", Needs: []string{"func() time.Time"}},
+		{Type: "*ratelimit.Logins", Provider: "ratelimit.NewLogins", Needs: []string{"ratelimit.Config", "ratelimit.Store", "func() time.Time"}},
 		{Type: "cache.Config", Provider: "autoDefaultCacheConfig", Needs: []string{}},
 		{Type: "*cache.MemoryStore", Provider: "cache.NewMemoryStore", Needs: []string{}},
 		{Type: "*cache.Cache", Provider: "cache.New", Needs: []string{"cache.Config", "*cache.MemoryStore"}},
@@ -116,7 +119,7 @@ func autoServices() []goncini.Service {
 		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{"*articles.Invalidator", "*moderation.Notices", "*notifications.Subscriber"}},
 		{Type: "*event.Dispatcher", Provider: "goncini.NewDispatcher", Needs: []string{"[]event.Subscriber"}},
 		{Type: "*mailer.Mailer", Provider: "mailer.NewAsync", Needs: []string{"mailer.Config", "*messenger.Bus"}},
-		{Type: "*users.Users", Provider: "users.NewUsers", Needs: []string{"*users.Store", "security.Hasher", "*security.Tokens", "users.Logins", "*event.Dispatcher", "*mailer.Mailer", "*db.SQL"}},
+		{Type: "*users.Users", Provider: "users.NewUsers", Needs: []string{"*users.Store", "security.Hasher", "*security.Tokens", "*ratelimit.Logins", "*event.Dispatcher", "*mailer.Mailer", "*db.SQL"}},
 		{Type: "*articles.Store", Provider: "articles.NewStore", Needs: []string{"*db.SQL", "func() time.Time"}},
 		{Type: "articles.Authorship", Provider: "articles.NewAuthorship", Needs: []string{}},
 		{Type: "[]security.Voter", Provider: "autoVoters", Needs: []string{"articles.Authorship"}},
@@ -221,6 +224,9 @@ func autoConfigMailer(c config.Config) mailer.Config { return c.Mailer }
 
 // autoConfigNotifier is the Notifier section of the config.
 func autoConfigNotifier(c config.Config) notifier.Config { return c.Notifier }
+
+// autoDefaultRatelimitConfig is the default of ratelimit.Config, which the config doesn't have.
+func autoDefaultRatelimitConfig() ratelimit.Config { return ratelimit.Config{} }
 
 // autoDefaultCacheConfig is the default of cache.Config, which the config doesn't have.
 func autoDefaultCacheConfig() cache.Config { return cache.Config{} }

@@ -122,7 +122,8 @@ type Policy interface {
 type Store interface {
 	// Update calls f with the state of key, which it changes, with no other
 	// update of key in between, and keeps the result for ttl from now, the
-	// limiter's time.
+	// limiter's time. A store that tries again, when another update came
+	// first, calls f again: the last call's change is kept.
 	Update(ctx context.Context, key string, now time.Time, ttl time.Duration, f func(*State)) error
 }
 
@@ -150,19 +151,19 @@ func (l *Limiter) Take(ctx context.Context, key string, n int) (Result, error) {
 			return Result{}, err
 		}
 	}
-//line ratelimit.ego:127
+//line ratelimit.ego:128
 	v2 := l.Now
 	if v2 == nil {
 		v2 = time.Now
 	}
 	now := (v2)()
-//line ratelimit.ego:128
+//line ratelimit.ego:129
 	var res Result
 	err := l.store().Update(ctx, key, now, l.Policy.TTL(), func(st *State) {
-//line ratelimit.ego:129
+//line ratelimit.ego:130
 		res = l.Policy.Take(st, n, now)
 	})
-//line ratelimit.ego:130
+//line ratelimit.ego:131
 	return res, err
 }
 
@@ -175,23 +176,23 @@ func (l *Limiter) Reset(ctx context.Context, key string) error {
 		v2 = time.Now
 	}
 	return v(ctx, key, (v2)(), l.Policy.TTL(), func(st *State) {
-//line ratelimit.ego:136
+//line ratelimit.ego:137
 		*st = State{}
 	})
 }
 
 // store is the limiter's store.
 //
-//line ratelimit.ego:140
+//line ratelimit.ego:141
 func (l *Limiter) store() Store {
 	if l.Store != nil {
 		return l.Store
 	}
 	l.once.Do(func() {
-//line ratelimit.ego:144
+//line ratelimit.ego:145
 		l.mem = &MemoryStore{}
 	})
-//line ratelimit.ego:145
+//line ratelimit.ego:146
 	return l.mem
 }
 
@@ -219,7 +220,7 @@ func (p FixedWindow) Take(st *State, n int, now time.Time) Result {
 			res.RetryAfter = reset
 		}
 	}
-//line ratelimit.ego:168
+//line ratelimit.ego:169
 	res.Remaining = p.Limit - int(st.Count)
 	return res
 }
@@ -247,7 +248,7 @@ func (p SlidingWindow) Take(st *State, n int, now time.Time) Result {
 		} else {
 			st.Previous = 0
 		}
-//line ratelimit.ego:191
+//line ratelimit.ego:192
 		st.Count = 0
 		st.Start = st.Start.Add(windows * p.Interval)
 	}
@@ -346,7 +347,7 @@ func (p TokenBucket) valid() error {
 	if err := positive("TokenBucket", p.Burst, p.Interval); err != nil {
 		return err
 	}
-//line ratelimit.ego:287
+//line ratelimit.ego:288
 	if fill := p.fill(); fill < 1 || fill >= maxTTL {
 		return fmt.Errorf("ratelimit: TokenBucket fills in %v nanoseconds, out of a Duration's range", fill)
 	}

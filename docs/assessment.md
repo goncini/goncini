@@ -311,6 +311,33 @@ through Messenger with retries; then a secrets vault, a Dockerfile from
 
 > **Status (2026-10-19), step 5:** the mailer has API transports for Postmark, SendGrid, Mailgun and Resend. Step 5 is done, and with it the order of work of 2026-10-18. Decisions taken on the user's behalf: the transports parse the message that `Bytes` wrote back into an `Email`, with `mime.Parse`, rather than taking the `Email`, so that `Transport` and the queued `SendEmail` messages stay as they are, and a worker sends what was dispatched; a Bcc is what the envelope has that To and Cc don't; Symfony's DSNs, with `default` for the provider's endpoint; four providers, among the most used, while SES and the others work over `smtp://`; no retries by the transport, as a send isn't idempotent: Messenger retries the async ones.
 
+### 4.6 Gaps with Symfony
+
+**Backlog** (proposed 2026-10-19), the backend parts of Symfony that
+goncini lacks, most needed first. The user approved the first three the
+same day, as the order of work.
+
+1. **Login throttling**, as a service of the framework's: RealWorld's was
+   the app's own.
+2. **File uploads**, `multipart/form-data` bodies in endpoints, described
+   in the OpenAPI document.
+3. **Server-sent events**, streamed responses, for what Symfony does with
+   Mercure.
+4. **Content negotiation and serialization groups:** a response is its
+   output type, as JSON only.
+5. **Messenger transports** beyond SQL, Redis and memory: AMQP, SQS, Kafka.
+6. **Notifier bridges** beyond email and chat webhooks: SMS, push.
+7. **Profiler UI:** a JSON page and `debug:requests`, no toolbar.
+8. **Wiring:** service decoration, lazy services.
+9. **Validator depth:** go-playground's tags, not Symfony's constraints.
+10. **Mailer bridges** beyond SMTP and four APIs.
+11. **Components without an equivalent:** Intl, HtmlSanitizer, Semaphore,
+    ObjectMapper.
+
+Form login, sessions, remember-me and CSRF stay out, as browser concerns.
+
+> **Status (2026-10-19), step 1:** login throttling is `ratelimit.Logins`, which RealWorld uses, with a store in Redis, `redis.RateLimit`. Decisions taken on the user's behalf: Symfony's defaults and its two limits, 5 attempts a minute at a user from an address, which a success gives back, and five times as many from an address, which it doesn't; a sliding window for both; users named without case; `ratelimit.Config` for the limits, in the package's `Config` rather than a section of their own, as `goncini generate` defaults only types named `Config`; the Redis store watches the key and tries again, up to 50 times, rather than a Lua script per policy, since the policies are Go: a store's `Update` may call its function more than once.
+
 ## 5. Risks
 
 - **Tooling, once `goncini generate` comes.** Generation runs twice around `ego generate`, and stale generated files are the classic failure. If it's clumsy, ask effect-go for a hook between lowering and layer wiring; its maintainer session has offered to fix what a framework genuinely needs.
