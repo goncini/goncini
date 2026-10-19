@@ -38,9 +38,7 @@ func Parse(raw []byte) (*Email, error) {
 		if structural[name] || len(values) == 0 {
 			continue
 		}
-		if e.Header == nil {
-			e.Header = map[string]string{}
-		}
+		e.Header = e.Header ?? map[string]string{}
 		e.Header[name] = dec.DecodeHeader(values[0]) else values[0]
 	}
 	check e.walk(textproto.MIMEHeader(msg.Header), msg.Body) ""

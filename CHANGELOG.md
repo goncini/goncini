@@ -9,6 +9,12 @@ new` and the makers.
 **Breaking:** `security.Verifier.Verify` takes a `ctx` first:
 `Verify(ctx, token)`. A verifier of the app's own adds it.
 
+goncini requires effect-go v0.5.0, and its generated code is generated
+again with it. Its fixes let an app write `x = if c { a } else { x }` and
+`m = m ?? map[K]V{}`, which v0.4.0 lowered to self-assignments that go
+vet reports. An app runs `go tool goncini tidy`, then `go tool goncini
+generate`.
+
 - **security:** a `Firewall` without `Tokens` hands the token to `Load` as
   is: an API key that the app keeps in its database, by its hash, and
   looks up there. An unknown key is a 401, "it isn't one of the API's

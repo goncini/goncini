@@ -6,7 +6,7 @@ require github.com/goncini/goncini v0.0.0
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/effect-go/effect-go v0.4.0 // indirect
+	github.com/effect-go/effect-go v0.5.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

@@ -73,17 +73,18 @@ func Parse(raw []byte) (*Email, error) {
 		if e.Header == nil {
 			e.Header = map[string]string{}
 		}
+//line parse.ego:42
 		if v5, err := dec.DecodeHeader(values[0]); err != nil {
 			e.Header[name] = values[0]
 		} else {
 			e.Header[name] = v5
 		}
 	}
-//line parse.ego:46
+//line parse.ego:44
 	if err := e.walk(textproto.MIMEHeader(msg.Header), msg.Body); err != nil {
 		return nil, err
 	}
-//line parse.ego:47
+//line parse.ego:45
 	return e, nil
 }
 
@@ -127,18 +128,18 @@ func (e *Email) walk(h textproto.MIMEHeader, body io.Reader) error {
 			if err != nil {
 				return err
 			}
-//line parse.ego:88
+//line parse.ego:86
 			if err2 := e.walk(p.Header, p); err2 != nil {
 				return err2
 			}
 		}
 	}
-//line parse.ego:91
+//line parse.ego:89
 	data, err3 := io.ReadAll(decoded(h.Get("Content-Transfer-Encoding"), body))
 	if err3 != nil {
 		return err3
 	}
-//line parse.ego:92
+//line parse.ego:90
 	disposition, dparams, _ := stdmime.ParseMediaType(h.Get("Content-Disposition"))
 	id := strings.Trim(h.Get("Content-ID"), "<>")
 	text := (mediaType == "text/plain" || mediaType == "text/html") && disposition != "attachment" && id == ""
@@ -153,7 +154,7 @@ func (e *Email) walk(h textproto.MIMEHeader, body io.Reader) error {
 		if !ok {
 			name = params["name"]
 		}
-//line parse.ego:103
+//line parse.ego:101
 		e.Parts = append(e.Parts, Part{Name: name, ContentType: stdmime.FormatMediaType(mediaType, params), Data: data, ContentID: id})
 	}
 	return nil

@@ -132,15 +132,9 @@ func (in *UpdateInput) Validate() error {
 effect (c *Checks) Update(in UpdateInput) (Check, CheckError) {
 	chk := check c.get(in.ID)
 	b := in.Body
-	if b.Name.Set {
-		chk.Name = b.Name.Value
-	}
-	if b.Period.Set {
-		chk.Period = b.Period.Value
-	}
-	if b.Grace.Set {
-		chk.Grace = b.Grace.Value
-	}
+	chk.Name = if b.Name.Set { b.Name.Value } else { chk.Name }
+	chk.Period = if b.Period.Set { b.Period.Value } else { chk.Period }
+	chk.Grace = if b.Grace.Set { b.Grace.Value } else { chk.Grace }
 	chk.DueAt = chk.due(chk.Status)
 	check c.store.Update(chk) as Unavailable
 	return chk, nil
