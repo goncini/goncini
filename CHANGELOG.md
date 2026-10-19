@@ -9,6 +9,25 @@
   a store: `ratelimit.NewMemoryStore` for one instance, or the redis
   module's. RealWorld throttles with it, rather than with limiters of its
   own.
+- **httpkernel:** file uploads. A `Body` struct whose fields have `form`
+  tags is a form, `multipart/form-data` or
+  `application/x-www-form-urlencoded`. Its fields take values as query
+  parameters do, with `required`, `default` and `enum`, or files, as a
+  `File`, `*File` or `[]File`. A file's content is in memory or a
+  temporary file until the endpoint returns, then removed. A form's
+  invalid values are a 422 that points at them, such as `#/avatar`. The
+  `Body` field's `limit` tag, such as `limit:"8MiB"`, replaces the
+  kernel's `BodyLimit` for one endpoint, for any body.
+  - `BodyMediaType` has a `Want` field, the media types to send. A new
+    case, `BodyMalformedForm`, is a 400.
+- **openapi:** a form is described as `multipart/form-data`, with its
+  files as binary strings, and as `application/x-www-form-urlencoded` too
+  when it has no files. The 413's example gives the endpoint's limit, or
+  the kernel's.
+- **validator:** a form's violations point at its members by their `form`
+  names.
+- **webtest:** the client sends a `webtest.Form` as `multipart/form-data`,
+  with `webtest.File`s, and `url.Values` as a URL-encoded form.
 - **redis:** `redis.RateLimit` provides a `ratelimit.Store` in Redis, so
   that the app's instances share their limits. An update watches the key,
   and tries again when another changed it first: a `Store`'s `Update` may

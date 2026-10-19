@@ -150,13 +150,17 @@ func presentValue(f reflect.Value) any {
 const marker = "\x00"
 
 // fieldName is the name of a field in violations: its JSON member name, or
-// else its source and its name there.
+// a form's, or else its source and its name there.
 func fieldName(f reflect.StructField) string {
 	for _, source := range []string{"path", "query", "header"} {
 		if tag, ok := f.Tag.Lookup(source); ok {
 			name, _, _ := strings.Cut(tag, ",")
 			return marker + source + ":" + name
 		}
+	}
+	if tag, ok := f.Tag.Lookup("form"); ok {
+		name, _, _ := strings.Cut(tag, ",")
+		return name
 	}
 	name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 	return match name {

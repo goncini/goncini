@@ -508,6 +508,155 @@
           }
         }
       }
+    },
+    "/notes/{id}/attachment": {
+      "put": {
+        "tags": [
+          "Notes"
+        ],
+        "operationId": "note_attach",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "caption": {
+                    "type": "string",
+                    "description": "Caption is the file's.",
+                    "maxLength": 80
+                  },
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "contentMediaType": "application/octet-stream"
+                  }
+                },
+                "required": [
+                  "file"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "BodyMalformedForm": {
+                    "summary": "malformed form body",
+                    "value": {
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "malformed form body: multipart: NextPart: EOF"
+                    }
+                  },
+                  "Problem": {
+                    "summary": "400 Bad Request: invalid request parameters",
+                    "value": {
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "invalid request parameters",
+                      "errors": [
+                        {
+                          "detail": "is invalid",
+                          "parameter": "id"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request Entity Too Large",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "BodyTooLarge": {
+                    "summary": "the request body is larger than 8388608 bytes",
+                    "value": {
+                      "title": "Request Entity Too Large",
+                      "status": 413,
+                      "detail": "the request body is larger than 8388608 bytes"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported Media Type",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "BodyMediaType": {
+                    "summary": "unsupported Content-Type \"application/json\": send multipart/form-data or application/x-www-form-urlencoded",
+                    "value": {
+                      "title": "Unsupported Media Type",
+                      "status": 415,
+                      "detail": "unsupported Content-Type \"application/json\": send multipart/form-data or application/x-www-form-urlencoded"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "Problem": {
+                    "summary": "422 Unprocessable Entity: the request has invalid values",
+                    "value": {
+                      "title": "Unprocessable Entity",
+                      "status": 422,
+                      "detail": "the request has invalid values",
+                      "errors": [
+                        {
+                          "detail": "is invalid",
+                          "pointer": "#/file"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

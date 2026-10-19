@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -78,6 +79,35 @@ func TestProblem(t *testing.T) {
 		HasDetail("the request has invalid values").
 		Violation("#/title", "is required").
 		Violation("limit", "must be at least 1")
+}
+
+// TestForms sends a multipart form and a URL-encoded one to endpoints that
+// bind them.
+func TestForms(t *testing.T) {
+	type upload struct {
+		Body struct {
+			Photos []httpkernel.File `form:"photo"`
+			Alt    string            `form:"alt"`
+			Tags   []string          `form:"tag"`
+		}
+	}
+	mux := http.NewServeMux()
+	mux.Handle("POST /photos", httpkernel.Endpoint(func(ctx context.Context, in upload) ([]string, error) {
+		out := []string{in.Body.Alt, strings.Join(in.Body.Tags, ",")}
+		for _, p := range in.Body.Photos {
+			f := must p.Open()
+			data := must io.ReadAll(f)
+			out = append(out, f"{p.Name} {p.ContentType} {data:s}")
+		}
+		return out, nil
+	}))
+	c := webtest.NewClient(t, mux)
+	c.Post("/photos", webtest.Form{
+		"alt":   "Me",
+		"tag":   []string{"a", "b"},
+		"photo": []webtest.File{{Name: "1.png", Data: []byte("one")}, {Name: "2", Data: []byte("two")}},
+	}).Status(200).Contains(`["Me","a,b","1.png image/png one","2 application/octet-stream two"]`)
+	c.Post("/photos", url.Values{"alt": {"Me"}}).Status(200).Contains(`["Me",""]`)
 }
 
 // recorder is a testing.TB that records the failures it is told of.

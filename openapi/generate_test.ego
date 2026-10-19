@@ -73,6 +73,14 @@ type CreateInput struct {
 	}
 }
 
+type AttachInput struct {
+	ID   int64 `path:"id"`
+	Body struct {
+		File    httpkernel.File `form:"file,required"`
+		Caption string          `form:"caption" validate:"max=80"`
+	} `limit:"8MiB"`
+}
+
 type Notes struct{}
 
 effect (n *Notes) Show(in ShowInput) (NoteBody, NoteError) {
@@ -94,6 +102,10 @@ effect (n *Notes) Delete(in ShowInput) (httpkernel.NoContent, NoteError) {
 // Archive answers 202 while it archives a note, or 200 once it did.
 effect (n *Notes) Archive(in ShowInput) (httpkernel.Response[NoteBody], NoteError) {
 	return httpkernel.Response[NoteBody]{Status: http.StatusAccepted}, nil
+}
+
+effect (n *Notes) Attach(in AttachInput) (httpkernel.NoContent, NoteError) {
+	return httpkernel.NoContent{}, nil
 }
 
 // locked answers 423 to every request, and says so.
@@ -118,6 +130,7 @@ func notesAPI() (*routing.Router, *httpkernel.Kernel, openapi.Annotations) {
 	r.With(locked).Post("/notes", httpkernel.Endpoint(n.Create)).Name("note_create")
 	r.Delete("/notes/{id}", httpkernel.Endpoint(n.Delete)).Name("note_delete")
 	r.Put("/notes/{id}/archive", httpkernel.Endpoint(n.Archive)).Name("note_archive")
+	r.Put("/notes/{id}/attachment", httpkernel.Endpoint(n.Attach)).Name("note_attach")
 	r.Handle("/health", http.NotFoundHandler())
 	k := &httpkernel.Kernel{Handler: r, ErrorMappers: []httpkernel.ErrorMapper{httpkernel.Map[NoteError](noteProblem)}, Validator: validator.New()}
 	d, _ := httpkernel.Describe(show)
@@ -128,6 +141,7 @@ func notesAPI() (*routing.Router, *httpkernel.Kernel, openapi.Annotations) {
 		Types: map[reflect.Type]openapi.TypeDoc{
 			reflect.TypeFor[Note]():        {Description: "Note is a note.", Fields: map[string]string{"Bio": "Bio is the author's."}},
 			reflect.TypeFor[CreateInput](): {Fields: map[string]string{"Body.Note.Title": "Title is the note's."}},
+			reflect.TypeFor[AttachInput](): {Fields: map[string]string{"Body.Caption": "Caption is the file's."}},
 		},
 	}
 	return r, k, a

@@ -138,3 +138,21 @@ func TestMessage(t *testing.T) {
 		t.Errorf("violations %v", p.Errors)
 	}
 }
+
+// TestForm checks that a form's violations point at its members.
+func TestForm(t *testing.T) {
+	type input struct {
+		Body struct {
+			Photos []httpkernel.File `form:"photo" validate:"max=1"`
+			Thumb  *httpkernel.File  `form:"thumb" validate:"required"`
+		}
+	}
+	in := input{}
+	in.Body.Photos = make([]httpkernel.File, 2)
+	err := validator.New().Validate(context.Background(), in)
+	p, _ := errors.AsType[httpkernel.Problem](err)
+	want := []httpkernel.Violation{{Pointer: "#/photo", Detail: "must have at most 1 item"}, {Pointer: "#/thumb", Detail: "is required"}}
+	if !reflect.DeepEqual(p.Errors, want) {
+		t.Errorf("violations %v", p.Errors)
+	}
+}

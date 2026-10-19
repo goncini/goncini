@@ -1,0 +1,194 @@
+package httpkernel_test
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"net/textproto"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/goncini/goncini/httpkernel"
+)
+
+type upload struct {
+	Body struct {
+		Avatar httpkernel.File   `form:"avatar,required"`
+		Thumb  *httpkernel.File  `form:"thumb"`
+		Photos []httpkernel.File `form:"photo"`
+		Alt    string            `form:"alt"`
+		Size   int               `form:"size" default:"64"`
+		Tags   []string          `form:"tag"`
+	} `limit:"4MiB"`
+}
+
+type note struct {
+	Body struct {
+		Text  string `form:"text,required"`
+		Count int    `form:"count"`
+	}
+}
+
+// part is a part of a multipart form: a value, or a file when it has a
+// filename.
+type part struct{ name, filename, content string }
+
+// postForm serves a POST of a multipart form of the parts with h.
+func postForm(h http.Handler, target string, parts ...part) *httptest.ResponseRecorder {
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	for _, p := range parts {
+		if p.filename == "" {
+			must w.WriteField(p.name, p.content)
+			continue
+		}
+		h := textproto.MIMEHeader{}
+		h.Set("Content-Disposition", f`form-data; name="{p.name}"; filename="{p.filename}"`)
+		h.Set("Content-Type", "image/png")
+		fw := must w.CreatePart(h)
+		must io.WriteString(fw, p.content)
+	}
+	must w.Close()
+	return send(h, target, w.FormDataContentType(), b.String())
+}
+
+// send serves a POST of the body, of the media type, with h.
+func send(h http.Handler, target, contentType, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, target, strings.NewReader(body))
+	r.Header.Set("Content-Type", contentType)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	return rec
+}
+
+// TestEndpointBindsForms checks a multipart form's values and files, which
+// are on the disk while the endpoint runs, under its limit tag rather than
+// the kernel's, then removed.
+func TestEndpointBindsForms(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	avatar := strings.Repeat("a", 2<<20) // over what's kept in memory
+	var got upload
+	var content []byte
+	var onDisk int
+	mux := http.NewServeMux()
+	mux.Handle("POST /avatar", httpkernel.Endpoint(func(ctx context.Context, in upload) (httpkernel.NoContent, error) {
+		got = in
+		f := must in.Body.Avatar.Open()
+		defer f.Close()
+		content = must io.ReadAll(f)
+		entries := must os.ReadDir(tmp)
+		onDisk = len(entries)
+		return httpkernel.NoContent{}, nil
+	}))
+	k := &httpkernel.Kernel{Handler: mux, BodyLimit: 1024}
+	k.Logger, _ = logged()
+	rec := postForm(k, "/avatar",
+		part{"avatar", "photos/me.png", avatar},
+		part{"photo", "1.png", "one"}, part{"photo", "2.png", "two"},
+		part{"alt", "", "Me"}, part{"tag", "", "a"}, part{"tag", "", "b"})
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	a := got.Body.Avatar
+	if a.Name != "me.png" || a.ContentType != "image/png" || a.Size != int64(len(avatar)) || string(content) != avatar {
+		t.Errorf("the avatar: %+v, %d bytes read", a, len(content))
+	}
+	if len(got.Body.Photos) != 2 || got.Body.Photos[1].Name != "2.png" || got.Body.Thumb != nil {
+		t.Errorf("the photos %+v, the thumb %+v", got.Body.Photos, got.Body.Thumb)
+	}
+	if got.Body.Alt != "Me" || got.Body.Size != 64 || strings.Join(got.Body.Tags, ",") != "a,b" {
+		t.Errorf("the values %+v", got.Body)
+	}
+	if onDisk != 1 {
+		t.Errorf("%d temporary files while the endpoint ran, want 1", onDisk)
+	}
+	left := must os.ReadDir(tmp)
+	if len(left) != 0 {
+		t.Errorf("%d temporary files left", len(left))
+	}
+}
+
+func TestEndpointBindsURLEncodedForms(t *testing.T) {
+	var got note
+	h := capture("POST /notes", &got)
+	rec := send(h, "/notes", "application/x-www-form-urlencoded", "text=hi&count=2")
+	if rec.Code != http.StatusNoContent || got.Body.Text != "hi" || got.Body.Count != 2 {
+		t.Errorf("%d %+v", rec.Code, got.Body)
+	}
+}
+
+func TestEndpointFormViolations(t *testing.T) {
+	h := echo[note]("POST /notes")
+	rec := send(h, "/notes", "application/x-www-form-urlencoded", "count=two")
+	p := problem(t, rec)
+	if rec.Code != http.StatusUnprocessableEntity || len(p.Errors) != 2 ||
+		p.Errors[0] != (httpkernel.Violation{Pointer: "#/text", Detail: "is required"}) ||
+		p.Errors[1] != (httpkernel.Violation{Pointer: "#/count", Detail: "must be an integer"}) {
+		t.Errorf("%d %+v", rec.Code, p)
+	}
+	rec = postForm(echo[upload]("POST /avatar"), "/avatar", part{"avatar", "", "not a file"})
+	if p := problem(t, rec); rec.Code != http.StatusUnprocessableEntity || p.Errors[0] != (httpkernel.Violation{Pointer: "#/avatar", Detail: "must be a file"}) {
+		t.Errorf("a value for a file: %d %+v", rec.Code, p)
+	}
+	rec = send(h, "/notes", "application/json", `{"text":"hi"}`)
+	if rec.Code != http.StatusUnsupportedMediaType || !strings.Contains(problem(t, rec).Detail, "send multipart/form-data or application/x-www-form-urlencoded") {
+		t.Errorf("JSON: %d %s", rec.Code, rec.Body)
+	}
+	if rec = send(h, "/notes", "multipart/form-data", "text=hi"); rec.Code != http.StatusBadRequest {
+		t.Errorf("no boundary: %d %s", rec.Code, rec.Body)
+	}
+	type small struct {
+		Body struct {
+			File httpkernel.File `form:"file,required"`
+		} `limit:"1KiB"`
+	}
+	if rec = postForm(echo[small]("POST /files"), "/files", part{"file", "f.png", strings.Repeat("x", 2048)}); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("over the limit tag: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestEndpointRejectsBadForms(t *testing.T) {
+	type handler[In any] func(context.Context, In) (struct{}, error)
+	mustPanic(t, "isn't required: make it a *File", func() {
+		httpkernel.Endpoint(handler[struct {
+			Body struct {
+				File httpkernel.File `form:"file"`
+			}
+		}](nil))
+	})
+	mustPanic(t, "only the fields of a Body struct can", func() {
+		httpkernel.Endpoint(handler[struct {
+			Alt string `form:"alt"`
+		}](nil))
+	})
+	mustPanic(t, "has no form tag, which the body's other fields have", func() {
+		httpkernel.Endpoint(handler[struct {
+			Body struct {
+				Alt  string `form:"alt"`
+				Name string
+			}
+		}](nil))
+	})
+	mustPanic(t, "has a query tag: only the input's own fields can", func() {
+		httpkernel.Endpoint(handler[struct {
+			Body struct {
+				Alt string `query:"alt"`
+			}
+		}](nil))
+	})
+	mustPanic(t, "is a File, which only a form field can be", func() {
+		httpkernel.Endpoint(handler[struct {
+			File *httpkernel.File `query:"file"`
+		}](nil))
+	})
+	mustPanic(t, `has an invalid limit "8 megs"`, func() {
+		httpkernel.Endpoint(handler[struct {
+			Body string `limit:"8 megs"`
+		}](nil))
+	})
+}

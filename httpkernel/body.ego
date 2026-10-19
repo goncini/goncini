@@ -16,11 +16,15 @@ import (
 // 1 MiB.
 const DefaultBodyLimit = 1 << 20
 
-// BodyError is everything DecodeJSON can fail with. ProblemFor gives each
-// case its response: 415, 413, 400 or 422 for the client's mistakes, and 500
-// for BodyUnsupportedType, the API's.
+// BodyError is everything reading a request body can fail with, as
+// DecodeJSON and Endpoint do. ProblemFor gives each case its response: 415,
+// 413, 400 or 422 for the client's mistakes, and 500 for
+// BodyUnsupportedType, the API's.
 error BodyError {
-	BodyMediaType{ ContentType string } "unsupported Content-Type {ContentType:q}: send application/json"
+	BodyMediaType {
+		ContentType string
+		Want        string // the media types to send
+	} "unsupported Content-Type {ContentType:q}: send {Want}"
 	BodyTooLarge{ Limit int64 } "the request body is larger than {Limit} bytes"
 	BodyEmpty{} "the request body is empty"
 	BodyMalformed {
@@ -33,6 +37,7 @@ error BodyError {
 	} "invalid JSON value at {Pointer:q}"
 	BodyUnreadable{ Cause error } "could not read the request body"
 	BodyUnsupportedType{ Cause error } "the request body's Go type has no JSON form"
+	BodyMalformedForm{ Cause error } "malformed form body"
 }
 
 // DecodeJSON reads the JSON body of r into v, which must be a non-nil
@@ -66,7 +71,7 @@ type BodyDecoder struct {
 func (d BodyDecoder) Decode(w http.ResponseWriter, r *http.Request, v any) BodyError {
 	ct := r.Header.Get("Content-Type")
 	if !isJSON(ct) {
-		fail BodyMediaType{ContentType: ct}
+		fail BodyMediaType{ContentType: ct, Want: "application/json"}
 	}
 	b := check readBody(w, r, d.Limit)
 	if len(bytes.Trim(b, " \t\r\n")) == 0 {
@@ -97,16 +102,23 @@ func readBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, Body
 		body = http.NoBody
 	}
 	b, err := io.ReadAll(http.MaxBytesReader(w, body, limit))
-	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-		if w != nil {
-			w.Header().Set("Connection", "close")
-		}
+	if tooLarge(w, err) {
 		fail BodyTooLarge{Limit: limit}
 	}
 	if err != nil {
 		fail BodyUnreadable{Cause: err}
 	}
 	return b, nil
+}
+
+// tooLarge reports whether err is a body's that was larger than its limit,
+// and then makes w close the connection, since the rest is left unread.
+func tooLarge(w http.ResponseWriter, err error) bool {
+	_, ok := errors.AsType[*http.MaxBytesError](err)
+	if ok && w != nil {
+		w.Header().Set("Connection", "close")
+	}
+	return ok
 }
 
 // RawBody reports whether an endpoint's Body field of type t is the raw
@@ -173,6 +185,7 @@ func bodyProblem(err BodyError) Problem {
 		BodyInvalid(e)         => invalidBody(e)
 		BodyUnreadable(e)      => Problem{Status: http.StatusBadRequest, Detail: e.Error()}
 		BodyUnsupportedType(_) => Problem{Status: http.StatusInternalServerError}
+		BodyMalformedForm(e)   => Problem{Status: http.StatusBadRequest, Detail: f"{e.Error()}: {e.Cause.Error()}"}
 	}
 }
 

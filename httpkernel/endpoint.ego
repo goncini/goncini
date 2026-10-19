@@ -1,6 +1,7 @@
 package httpkernel
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"net/http"
@@ -57,11 +58,15 @@ func (e *endpoint[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	k := st?.kernel
 	var in In
-	if err := e.b.bind(w, r, reflect.ValueOf(&in).Elem(), k.bodyLimit()); err != nil {
+	cleanup, err := e.b.bind(w, r, reflect.ValueOf(&in).Elem(), cmp.Or(e.b.limit, k.bodyLimit()))
+	if err != nil {
 		WriteError(w, r, err)
 		return
 	}
-	if err := validate(r.Context(), k, &in); err != nil {
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err = validate(r.Context(), k, &in); err != nil {
 		WriteError(w, r, err)
 		return
 	}

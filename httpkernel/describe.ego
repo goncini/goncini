@@ -21,6 +21,12 @@ type Description struct {
 	// Body is the type of In's Body field, nil when it has none; a pointer
 	// type means that the body is optional.
 	Body reflect.Type
+	// Form are the members of a form body, in the order of Body's fields;
+	// nil for a JSON or raw body.
+	Form []ParamDescription
+	// BodyLimit is the most bytes of the body, by the Body field's limit
+	// tag; zero for the kernel's BodyLimit.
+	BodyLimit int64
 	// Validated reports whether In has a Validate method, which runs after
 	// the kernel's Validator.
 	Validated bool
@@ -35,9 +41,10 @@ type Description struct {
 }
 
 // ParamDescription is a value of an Endpoint's input bound from the path,
-// query or headers.
+// query or headers, or a member of its form body.
 type ParamDescription struct {
-	// In is where the value comes from: "path", "query" or "header".
+	// In is where the value comes from: "path", "query", "header" or
+	// "form".
 	In string
 	// Name is the wildcard's, parameter's or header's name.
 	Name     string
@@ -49,9 +56,9 @@ type ParamDescription struct {
 	// Multiple reports whether the field takes every value of a repeated
 	// parameter: it is a slice.
 	Multiple bool
-	// Field is the input's field, whose type is the value's, or a pointer
-	// to it, or a slice of it, and whose tags may say more, such as
-	// validate's.
+	// Field is the input's field, or the form body's, whose type is the
+	// value's, or a pointer to it, or a slice of it, and whose tags may say
+	// more, such as validate's. A File is a form's file.
 	Field reflect.StructField
 }
 
@@ -91,23 +98,32 @@ func (e *endpoint[In, Out]) describe() Description {
 	}
 	if e.b.body >= 0 {
 		d.Body = in.Field(e.b.body).Type
+		d.BodyLimit = e.b.limit
 	}
 	for _, p := range e.b.params {
-		d.Params = append(d.Params, ParamDescription{
-			In:       p.in.tag(),
-			Name:     p.key,
-			Required: p.required,
-			Default:  p.def,
-			Enum:     p.enum,
-			Multiple: p.slice,
-			Field:    in.FieldByIndex(p.field),
-		})
+		d.Params = append(d.Params, p.describe(in))
+	}
+	for _, p := range e.b.form {
+		d.Form = append(d.Form, p.describe(d.Body))
 	}
 	var out Out
 	if r, ok := any(out).(ResponseDescriber); ok {
 		d.Status, d.Result = r.DescribeResponse()
 	}
 	return d
+}
+
+// describe describes p, a field of the struct type t.
+func (p *param) describe(t reflect.Type) ParamDescription {
+	return ParamDescription{
+		In:       p.in.tag(),
+		Name:     p.key,
+		Required: p.required,
+		Default:  p.def,
+		Enum:     p.enum,
+		Multiple: p.slice,
+		Field:    t.FieldByIndex(p.field),
+	}
 }
 
 // fullFuncName is the name of a function with its package's import path,

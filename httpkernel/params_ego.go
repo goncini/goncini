@@ -40,6 +40,7 @@ const (
 	inQuery paramSource = iota
 	inPath
 	inHeader
+	inForm
 )
 
 func (v paramSource) String() string {
@@ -50,6 +51,8 @@ func (v paramSource) String() string {
 		return "inPath"
 	case inHeader:
 		return "inHeader"
+	case inForm:
+		return "inForm"
 	}
 	return "paramSource(" + strconv.Itoa(int(v)) + ")"
 }
@@ -57,7 +60,7 @@ func (v paramSource) String() string {
 // Query reads the query string of r. A malformed query string is a
 // violation of its own.
 //
-//line params.ego:39
+//line params.ego:40
 func Query(r *http.Request) *Params {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	p := &Params{in: inQuery, values: func(name string) []string { return q[name] }}
@@ -72,7 +75,7 @@ func Query(r *http.Request) *Params {
 func Path(r *http.Request) *Params {
 	return &Params{in: inPath, values: func(name string) []string {
 
-//line params.ego:52
+//line params.ego:53
 		if v := r.PathValue(name); v != "" {
 			return []string{v}
 		}
@@ -83,7 +86,7 @@ func Path(r *http.Request) *Params {
 
 // Header reads the headers of r.
 //
-//line params.ego:60
+//line params.ego:61
 func Header(r *http.Request) *Params {
 	return &Params{in: inHeader, values: r.Header.Values}
 }
@@ -161,7 +164,7 @@ func parseFinite(s string, bits int) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
-//line params.ego:134
+//line params.ego:135
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return 0, errors.New("not a finite number")
 	}
@@ -200,10 +203,12 @@ func (p *Params) Err() error {
 		detail = "invalid path parameters"
 	case inHeader:
 		detail = "invalid headers"
+	case inForm:
+		detail = "invalid form values"
 	default:
 		panic(p.in)
 	}
-//line params.ego:169
+//line params.ego:171
 	return Problem{Status: http.StatusBadRequest, Detail: detail, Errors: slices.Clone(p.violations)}
 }
 
@@ -229,6 +234,9 @@ func violationOf(in paramSource, name, detail string) Violation {
 		v = Violation{Parameter: name, Detail: detail}
 	case inHeader:
 		v = Violation{Header: name, Detail: detail}
+	case inForm:
+//line params.ego:193
+		v = Violation{Pointer: "#/" + strings.NewReplacer("~", "~0", "/", "~1").Replace(name), Detail: detail}
 	default:
 		panic(in)
 	}

@@ -161,13 +161,17 @@ func presentValue(f reflect.Value) any {
 const marker = "\x00"
 
 // fieldName is the name of a field in violations: its JSON member name, or
-// else its source and its name there.
+// a form's, or else its source and its name there.
 func fieldName(f reflect.StructField) string {
 	for _, source := range []string{"path", "query", "header"} {
 		if tag, ok := f.Tag.Lookup(source); ok {
 			name, _, _ := strings.Cut(tag, ",")
 			return marker + source + ":" + name
 		}
+	}
+	if tag, ok := f.Tag.Lookup("form"); ok {
+		name, _, _ := strings.Cut(tag, ",")
+		return name
 	}
 	name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 	var v string
@@ -184,7 +188,7 @@ func fieldName(f reflect.StructField) string {
 
 // violation is where f failed, with the detail.
 //
-//line validator.ego:170
+//line validator.ego:174
 func violation(f playground.FieldError, detail string) httpkernel.Violation {
 	segments := strings.Split(f.Namespace(), ".")[1:] // without the input's type
 	for _, s := range segments {
@@ -204,7 +208,7 @@ func violation(f playground.FieldError, detail string) httpkernel.Violation {
 		}
 		return v
 	}
-//line validator.ego:184
+//line validator.ego:188
 	if len(segments) > 0 && segments[0] == "Body" {
 		segments = segments[1:]
 	}
@@ -244,7 +248,7 @@ func detailOf(f playground.FieldError) string {
 	default:
 		size = ""
 	}
-//line validator.ego:219
+//line validator.ego:223
 	if p == "1" {
 		size = strings.TrimSuffix(size, "s") // 1 character
 	}
@@ -287,7 +291,7 @@ func detailOf(f playground.FieldError) string {
 	case "ne":
 		v = fmt.Sprintf("must not be %s", p)
 	case "oneof":
-//line validator.ego:231
+//line validator.ego:235
 		v = fmt.Sprintf("must be one of %s", strings.ReplaceAll(p, " ", ", "))
 	case "email":
 		v = "must be an email address"
@@ -314,12 +318,12 @@ func detailOf(f playground.FieldError) string {
 	case "unique":
 		v = "must have no duplicates"
 	default:
-//line validator.ego:244
+//line validator.ego:248
 		if p != "" {
-//line validator.ego:244
+//line validator.ego:248
 			v = fmt.Sprintf("must satisfy %s=%s", f.Tag(), p)
 		} else {
-//line validator.ego:244
+//line validator.ego:248
 			v = fmt.Sprintf("must satisfy %s", f.Tag())
 		}
 	}

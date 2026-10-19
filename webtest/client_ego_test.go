@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -25,10 +26,10 @@ import (
 
 // echo answers JSON describing the request.
 //
-//line client_test.ego:23
+//line client_test.ego:24
 var echo = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-//line client_test.ego:24
+//line client_test.ego:25
 	body, _ := io.ReadAll(r.Body)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Seen", r.Header.Get("Authorization"))
@@ -36,7 +37,7 @@ var echo = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 })
 
-//line client_test.ego:30
+//line client_test.ego:31
 type echoed struct {
 	Method string `json:"method"`
 	URI    string `json:"uri"`
@@ -70,7 +71,7 @@ func TestClient(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:60
+//line client_test.ego:61
 	req.Header.Set("Authorization", "Token bob")
 	alice.Do(req).HasHeader("X-Seen", "Token bob") // the request's own header wins
 }
@@ -94,6 +95,43 @@ func TestProblem(t *testing.T) {
 		Violation("limit", "must be at least 1")
 }
 
+// TestForms sends a multipart form and a URL-encoded one to endpoints that
+// bind them.
+func TestForms(t *testing.T) {
+	type upload struct {
+		Body struct {
+			Photos []httpkernel.File `form:"photo"`
+			Alt    string            `form:"alt"`
+			Tags   []string          `form:"tag"`
+		}
+	}
+	mux := http.NewServeMux()
+	mux.Handle("POST /photos", httpkernel.Endpoint(func(ctx context.Context, in upload) ([]string, error) {
+		out := []string{in.Body.Alt, strings.Join(in.Body.Tags, ",")}
+		for _, p := range in.Body.Photos {
+			f, err := p.Open()
+			if err != nil {
+				panic(err)
+			}
+//line client_test.ego:99
+			data, err := io.ReadAll(f)
+			if err != nil {
+				panic(err)
+			}
+//line client_test.ego:100
+			out = append(out, fmt.Sprintf("%s %s %s", p.Name, p.ContentType, data))
+		}
+		return out, nil
+	}))
+	c := webtest.NewClient(t, mux)
+	c.Post("/photos", webtest.Form{
+		"alt":   "Me",
+		"tag":   []string{"a", "b"},
+		"photo": []webtest.File{{Name: "1.png", Data: []byte("one")}, {Name: "2", Data: []byte("two")}},
+	}).Status(200).Contains(`["Me","a,b","1.png image/png one","2 application/octet-stream two"]`)
+	c.Post("/photos", url.Values{"alt": {"Me"}}).Status(200).Contains(`["Me",""]`)
+}
+
 // recorder is a testing.TB that records the failures it is told of.
 type recorder struct {
 	testing.TB
@@ -112,36 +150,36 @@ func TestFailedChecks(t *testing.T) {
 	problem := webtest.NewClient(rec, &httpkernel.Kernel{}) // answers 404 problems
 	for i, check := range []func(){
 		func() {
-//line client_test.ego:100
+//line client_test.ego:130
 			c.Get("/x").Status(201)
 		},
 		func() {
-//line client_test.ego:101
+//line client_test.ego:131
 			c.Get("/x").HasHeader("X-Seen", "Token")
 		},
 		func() {
-//line client_test.ego:102
+//line client_test.ego:132
 			c.Get("/x").Contains("nope")
 		},
 		func() {
-//line client_test.ego:103
+//line client_test.ego:133
 			var v []int
 			c.Get("/x").JSON(&v)
 		},
 		func() {
-//line client_test.ego:104
+//line client_test.ego:134
 			c.Get("/x").Problem(200)
 		},
 		func() {
-//line client_test.ego:105
+//line client_test.ego:135
 			problem.Get("/x").Problem(404).HasDetail("nope")
 		},
 		func() {
-//line client_test.ego:106
+//line client_test.ego:136
 			problem.Get("/x").Problem(404).Violation("#/title", "is required")
 		},
 		func() {
-//line client_test.ego:107
+//line client_test.ego:137
 			var v map[string]any
 			webtest.NewClient(rec, http.NotFoundHandler()).Get("/x").JSON(&v)
 		},
@@ -152,7 +190,7 @@ func TestFailedChecks(t *testing.T) {
 			t.Errorf("check %d: failures %q", i, rec.failures)
 		}
 	}
-//line client_test.ego:115
+//line client_test.ego:145
 	rec.failures = nil
 	problem.Get("/x").Problem(404).HasDetail("no route matches GET /x")
 	if rec.failures != nil {
@@ -169,27 +207,27 @@ func (i *isolator) InTx(ctx context.Context, fn func(context.Context) error) err
 
 func (i *isolator) Isolate(ctx context.Context) (context.Context, func() error, error) {
 	return context.WithValue(ctx, marker{}, true), func() error {
-//line client_test.ego:130
+//line client_test.ego:160
 		i.rolledBack = true
 		return nil
 	}, nil
 }
 
-//line client_test.ego:133
+//line client_test.ego:163
 func TestIsolate(t *testing.T) {
 	iso := &isolator{}
 	t.Run("test", func(t *testing.T) {
 
-//line client_test.ego:136
+//line client_test.ego:166
 		ctx := webtest.Isolate(t, iso)
 		seen := false
 		h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-//line client_test.ego:139
+//line client_test.ego:169
 			seen = r.Context().Value(marker{}) == true
 
 		})
-//line client_test.ego:141
+//line client_test.ego:171
 		webtest.NewClient(t, h).WithContext(ctx).Get("/")
 		if !seen {
 			t.Error("the request's context isn't the isolated one")
@@ -199,7 +237,7 @@ func TestIsolate(t *testing.T) {
 		}
 
 	})
-//line client_test.ego:149
+//line client_test.ego:179
 	if !iso.rolledBack {
 		t.Error("not rolled back when the test ended")
 	}
@@ -210,14 +248,14 @@ func TestIsolate(t *testing.T) {
 func TestInABubble(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 
-//line client_test.ego:158
+//line client_test.ego:188
 		build := func(ctx context.Context, s *scope.Scope, cfg string) (*goncini.App, error) {
 			r := routing.New()
 			r.Get("/slow", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-//line client_test.ego:160
+//line client_test.ego:190
 				time.Sleep(time.Hour)
 			}))
-//line client_test.ego:161
+//line client_test.ego:191
 			return &goncini.App{Kernel: &httpkernel.Kernel{Handler: r}}, nil
 		}
 		a := webtest.Boot(t, func(env *goncini.Env) string { return env.Name }, build)
@@ -230,7 +268,7 @@ func TestInABubble(t *testing.T) {
 	})
 }
 
-//line client_test.ego:172
+//line client_test.ego:202
 type greeting struct {
 	Hello string `json:"hello"`
 }
@@ -245,7 +283,7 @@ func TestContract(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line client_test.ego:183
+//line client_test.ego:213
 	app := &goncini.App{Kernel: k, OpenAPI: doc}
 	rec := &recorder{TB: t}
 	webtest.NewClient(rec, app).Get("/hello").Status(200)
@@ -270,13 +308,13 @@ func TestContractPassesReadErrors(t *testing.T) {
 	var got error
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-//line client_test.ego:206
+//line client_test.ego:236
 		_, got = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusEarlyHints)
 		w.WriteHeader(http.StatusNoContent)
 
 	})
-//line client_test.ego:210
+//line client_test.ego:240
 	r := routing.New()
 	r.Post("/", h)
 	doc := &openapi.Document{Paths: map[string]*openapi.PathItem{"/": {Post: &openapi.Operation{Responses: map[string]*openapi.Response{"204": {}}}}}}

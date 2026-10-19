@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/goncini/goncini/httpkernel"
 )
 
 // SchemaProvider is a type that gives its own JSON Schema, such as a type
@@ -49,6 +51,7 @@ func newSchemas(docs map[reflect.Type]TypeDoc) *schemas {
 }
 
 var (
+	fileType          = reflect.TypeFor[httpkernel.File]()
 	timeType          = reflect.TypeFor[time.Time]()
 	durationType      = reflect.TypeFor[time.Duration]()
 	jsontextValue     = reflect.TypeFor[jsontext.Value]()
@@ -77,6 +80,10 @@ func (s *schemas) of(t reflect.Type, m mode) *Schema {
 		return nullable(s.of(value.Type, m))
 	}
 	switch {
+	case t == fileType:
+		// A form's file: binary, as OpenAPI 3.1 says, and as 3.0 did, which
+		// tools still read.
+		return &Schema{Type: Types{"string"}, Format: "binary", ContentMediaType: "application/octet-stream"}
 	case t == timeType:
 		return &Schema{Type: Types{"string"}, Format: "date-time"}
 	case t == durationType:

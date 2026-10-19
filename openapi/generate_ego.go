@@ -272,10 +272,31 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 			validated, invalid = true, httpkernel.Violation{Parameter: p.Name, Detail: "is invalid"}
 		}
 	}
+	var v2 int64
+	if g.k != nil {
+		v2 = g.k.BodyLimit
+	}
+	limit := cmp.Or(d.BodyLimit, v2, httpkernel.DefaultBodyLimit)
+//line generate.ego:261
 	if d.Body != nil && httpkernel.RawBody(d.Body) {
 		// Any media type, as it is: OpenAPI 3.1 says so without a schema.
 		op.RequestBody = &RequestBody{Description: inDoc.Fields["Body"], Content: map[string]*MediaType{"*/*": {}}}
-		op.Errors = append(op.Errors, httpkernel.BodyTooLarge{Limit: httpkernel.DefaultBodyLimit})
+		op.Errors = append(op.Errors, httpkernel.BodyTooLarge{Limit: limit})
+	} else if d.Form != nil {
+		op.RequestBody = g.form(d, inDoc)
+		op.Errors = append(op.Errors,
+			httpkernel.BodyMalformedForm{Cause: fmt.Errorf("multipart: NextPart: EOF")},
+			httpkernel.BodyMediaType{ContentType: "application/json", Want: "multipart/form-data or application/x-www-form-urlencoded"},
+			httpkernel.BodyTooLarge{Limit: limit},
+		)
+		v := httpkernel.Violation{Pointer: "#/" + d.Form[0].Name, Detail: "is invalid"}
+		if slices.ContainsFunc(d.Form, canFail) {
+			// Binding's 422, which comes with or without a validator.
+			op.Errors = append(op.Errors, httpkernel.Invalid(v))
+			validated = false // its 422 is there
+		} else if slices.ContainsFunc(d.Form, func(p httpkernel.ParamDescription) bool { return p.Field.Tag.Get("validate") != "" }) {
+			validated, invalid = true, v
+		}
 	} else if d.Body != nil {
 		t := d.Body
 		required := t.Kind() != reflect.Pointer
@@ -291,52 +312,77 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 		op.RequestBody = &RequestBody{Required: required, Description: inDoc.Fields["Body"], Content: map[string]*MediaType{"application/json": {Schema: schema}}}
 		op.Errors = append(op.Errors,
 			httpkernel.BodyMalformed{Offset: 1, Cause: fmt.Errorf("invalid character")},
-			httpkernel.BodyMediaType{ContentType: "text/plain"},
-			httpkernel.BodyTooLarge{Limit: httpkernel.DefaultBodyLimit},
+			httpkernel.BodyMediaType{ContentType: "text/plain", Want: "application/json"},
+			httpkernel.BodyTooLarge{Limit: limit},
 			httpkernel.BodyInvalid{Pointer: firstPointer(t), Cause: fmt.Errorf("invalid value")},
 		)
 		if hasValidateTags(t, map[reflect.Type]bool{}) {
 			validated, invalid = true, httpkernel.Violation{Pointer: "#" + firstPointer(t), Detail: "is invalid"}
 		}
 	}
-	v2 := validated
-	if v2 {
-		v3 := d.Validated
-		if !v3 {
-			var v4 httpkernel.Validator
+	v3 := validated
+	if v3 {
+		v4 := d.Validated
+		if !v4 {
+			var v5 httpkernel.Validator
 			if g.k != nil {
-				v4 = g.k.Validator
+				v5 = g.k.Validator
 			}
-			v3 = v4 != nil
+			v4 = v5 != nil
 		}
-		v2 = (v3)
+		v3 = (v4)
 	}
-	if v2 {
+	if v3 {
 		op.Errors = append(op.Errors, httpkernel.Invalid(invalid))
 	}
-//line generate.ego:290
+//line generate.ego:306
 	op.Errors = append(op.Errors, doc.Errors...)
 	var status string
 	if d.Status == 0 {
 		status = "2XX"
 	} else {
-//line generate.ego:291
+//line generate.ego:307
 		status = strconv.Itoa(d.Status)
 	}
-//line generate.ego:292
-	var v5 string
+//line generate.ego:308
+	var v6 string
 	if d.Status == 0 {
-		v5 = "Success"
+		v6 = "Success"
 	} else {
-//line generate.ego:292
-		v5 = http.StatusText(d.Status)
+//line generate.ego:308
+		v6 = http.StatusText(d.Status)
 	}
-	res := &Response{Description: v5}
-//line generate.ego:293
+	res := &Response{Description: v6}
+//line generate.ego:309
 	if d.Result != nil {
 		res.Content = map[string]*MediaType{"application/json": {Schema: g.schemas.of(d.Result, writing)}}
 	}
 	op.Responses[status] = res
+}
+
+// form is the request body of a form: multipart/form-data, and
+// application/x-www-form-urlencoded too when it has no files.
+func (g *generator) form(d httpkernel.Description, inDoc TypeDoc) *RequestBody {
+	schema := &Schema{Type: Types{"object"}, Properties: map[string]*Schema{}}
+	files := false
+	for _, p := range d.Form {
+		s, required := g.paramSchema(p)
+		s.Description = inDoc.Fields["Body."+p.Field.Name]
+		schema.Properties[p.Name] = s
+		if p.Required || required {
+			schema.Required = append(schema.Required, p.Name)
+		}
+		t := p.Field.Type
+		for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice {
+			t = t.Elem()
+		}
+		files = files || t == fileType
+	}
+	content := map[string]*MediaType{"multipart/form-data": {Schema: schema}}
+	if !files {
+		content["application/x-www-form-urlencoded"] = &MediaType{Schema: schema}
+	}
+	return &RequestBody{Required: true, Description: inDoc.Fields["Body"], Content: content}
 }
 
 // fieldDoc returns the doc comment of t's field with the name, or of an
@@ -391,7 +437,7 @@ func (g *generator) paramSchema(p httpkernel.ParamDescription) (*Schema, bool) {
 		} else {
 			target = s
 		}
-//line generate.ego:346
+//line generate.ego:387
 		target.Enum = enumValues(t, p.Enum)
 	}
 	if p.Default != nil {
@@ -464,7 +510,7 @@ func (g *generator) errors(op *Op) (err error) {
 	} else {
 		render = httpkernel.RenderProblem
 	}
-//line generate.ego:413
+//line generate.ego:454
 	req := httptest.NewRequest(op.Method, "/", nil)
 	for _, e := range op.Errors {
 		rec := &recorder{header: http.Header{}}
@@ -480,7 +526,7 @@ func (g *generator) errors(op *Op) (err error) {
 		if err != nil {
 			return err
 		}
-//line generate.ego:426
+//line generate.ego:467
 		status := strconv.Itoa(rec.status)
 		res := op.Responses[status]
 		if res == nil {

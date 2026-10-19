@@ -168,6 +168,13 @@ type UpdateInput struct {
   `validate:"omitempty,max=120"`.
 - A `Body string` or `Body []byte` is the raw body, of any type, up to the
   kernel's `BodyLimit`, such as a job's output.
+- A `Body` struct whose fields have `form` tags is a form, multipart or
+  URL-encoded: its fields take values as `query` ones do, or files, as an
+  `httpkernel.File` (`form:"avatar,required"`), `*httpkernel.File` or
+  `[]httpkernel.File`, whose `Open()` reads the content until the endpoint
+  returns. The `Body` field's `limit:"8MiB"` tag replaces the kernel's
+  `BodyLimit`, for uploads. The client sends `Name` and `ContentType`: check
+  the content.
 - IDs are `uid.UUID`, made with `uid.NewV7()`, or `uid.ULID`: they bind,
   scan, and route with `.Require("id", routing.UUID)`.
 - A list embeds `listing.Window` (`?limit=20&offset=40`) and returns a
@@ -463,6 +470,7 @@ c := webtest.NewClient(t, a)                 // a *webtest.Client, which checks 
 c.Post("/api/articles", `{"article":{…}}`).Status(201)
 c.Put(path, body).Status(200).JSON(&out)     // decodes the JSON body into out
 c.Get("/api/articles/nope").Status(404).Contains(`"article":["not found"]`) // a substring of the body
+c.Post("/api/user/avatar", webtest.Form{"avatar": webtest.File{Name: "me.png", Data: png}}) // url.Values for a URL-encoded form
 var ann *webtest.Client = c.WithHeader("Authorization", "Token "+token)
 ```
 

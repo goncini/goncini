@@ -22,7 +22,9 @@ import (
 //line bind.ego:18
 type binder struct {
 	params []param
-	body   int // index of the Body field, or -1
+	body   int     // index of the Body field, or -1
+	form   []param // the Body's fields, when it is a form; else nil
+	limit  int64   // the most bytes of the body, by its limit tag; zero for the kernel's
 }
 
 // param is an input field bound to a path, query or header value.
@@ -35,6 +37,7 @@ type param struct {
 	enum     []string                            // allowed values, or nil for any
 	slice    bool                                // the field takes every value
 	pointer  bool                                // the field is a pointer, nil when absent
+	file     bool                                // the field takes a form's files
 	parse    func(string) (reflect.Value, error) // its errors are violation details
 }
 
@@ -54,56 +57,87 @@ func newBinder(t reflect.Type) *binder {
 	for _, f := range reflect.VisibleFields(t) {
 		if f.Name == "Body" && len(f.Index) == 1 {
 			b.body = f.Index[0]
+			b.form = formParams(t, f.Type)
+			if tag, ok := f.Tag.Lookup("limit"); ok {
+				if b.limit, ok = parseLimit(tag); !ok {
+					panic(fmt.Sprintf("httpkernel.Endpoint: field %v.Body has an invalid limit %q: write bytes, or a number of KB, MB, GB, KiB, MiB or GiB", t, tag))
+				}
+			}
 			continue
 		}
 		in, key, opts, ok := source(t, f)
 		if !ok {
 			continue
 		}
-		where := fmt.Sprintf("httpkernel.Endpoint: field %v.%s", t, f.Name)
-		if !f.IsExported() {
-			panic(fmt.Sprintf("%s is unexported", where))
+		if in == inForm {
+			panic(fmt.Sprintf("httpkernel.Endpoint: field %v.%s has a form tag: only the fields of a Body struct can", t, f.Name))
 		}
-		if throughPointer(t, f.Index) {
-			panic(fmt.Sprintf("%s is in an embedded pointer", where))
-		}
-		p := param{field: f.Index, in: in, key: key, required: in == inPath}
-		for _, o := range opts {
-			if o != "required" {
-				panic(fmt.Sprintf("%s has an unknown option %q", where, o))
-			}
-			p.required = true
-		}
-		ft := f.Type
-		if ft.Kind() == reflect.Pointer {
-			p.pointer, ft = true, ft.Elem()
-		} else if ft.Kind() == reflect.Slice && !ft.Implements(textUnmarshaler) && !reflect.PointerTo(ft).Implements(textUnmarshaler) {
-			p.slice, ft = true, ft.Elem()
-		}
-		if p.parse, ok = parser(ft); !ok {
-			panic(fmt.Sprintf("%s has type %v, which can't hold a %s value", where, f.Type, in.tag()))
-		}
-		if enum, ok := f.Tag.Lookup("enum"); ok {
-			p.enum = strings.Split(enum, ",")
-		}
-		if def, ok := f.Tag.Lookup("default"); ok {
-			if p.required {
-				panic(fmt.Sprintf("%s is required and has a default", where))
-			}
-			if p.slice {
-//line bind.ego:88
-				p.def = strings.Split(def, ",")
-			} else {
-				p.def = []string{def}
-			}
-//line bind.ego:89
-			if detail := p.set(reflect.New(f.Type).Elem(), p.def); detail != "" {
-				panic(fmt.Sprintf("%s has an invalid default %q: it %s", where, def, detail))
-			}
-		}
-		b.params = append(b.params, p)
+		b.params = append(b.params, newParam(t, f, in, key, opts))
 	}
 	return b
+}
+
+// newParam plans how to bind the field f of the struct type t from the
+// source in, under key. It panics if f can't be bound.
+func newParam(t reflect.Type, f reflect.StructField, in paramSource, key string, opts []string) param {
+	where := fmt.Sprintf("httpkernel.Endpoint: field %v.%s", t, f.Name)
+	if !f.IsExported() {
+		panic(fmt.Sprintf("%s is unexported", where))
+	}
+	if throughPointer(t, f.Index) {
+		panic(fmt.Sprintf("%s is in an embedded pointer", where))
+	}
+	p := param{field: f.Index, in: in, key: key, required: in == inPath}
+	for _, o := range opts {
+		if o != "required" {
+			panic(fmt.Sprintf("%s has an unknown option %q", where, o))
+		}
+		p.required = true
+	}
+	ft := f.Type
+	if ft.Kind() == reflect.Pointer {
+		p.pointer, ft = true, ft.Elem()
+	} else if ft.Kind() == reflect.Slice && !ft.Implements(textUnmarshaler) && !reflect.PointerTo(ft).Implements(textUnmarshaler) {
+		p.slice, ft = true, ft.Elem()
+	}
+	_, hasEnum := f.Tag.Lookup("enum")
+	_, hasDefault := f.Tag.Lookup("default")
+	if ft == fileType {
+		switch {
+		case in != inForm:
+			panic(fmt.Sprintf("%s is a File, which only a form field can be", where))
+		case hasEnum || hasDefault:
+			panic(fmt.Sprintf("%s is a File, which can't have an enum or a default", where))
+		case !p.required && !p.pointer && !p.slice:
+			panic(fmt.Sprintf("%s is a File, but isn't required: make it a *File, nil when it is absent, or add the required option", where))
+		}
+		p.file = true
+		return p
+	}
+	var ok bool
+	if p.parse, ok = parser(ft); !ok {
+		panic(fmt.Sprintf("%s has type %v, which can't hold a %s value", where, f.Type, in.tag()))
+	}
+	if hasEnum {
+		p.enum = strings.Split(f.Tag.Get("enum"), ",")
+	}
+	if hasDefault {
+		def := f.Tag.Get("default")
+		if p.required {
+			panic(fmt.Sprintf("%s is required and has a default", where))
+		}
+		if p.slice {
+//line bind.ego:124
+			p.def = strings.Split(def, ",")
+		} else {
+			p.def = []string{def}
+		}
+//line bind.ego:125
+		if detail := p.set(reflect.New(f.Type).Elem(), p.def); detail != "" {
+			panic(fmt.Sprintf("%s has an invalid default %q: it %s", where, def, detail))
+		}
+	}
+	return p
 }
 
 // mustNotHide panics if a field of t, the input type in, or of the structs
@@ -117,14 +151,14 @@ func mustNotHide(in, t reflect.Type, index []int) {
 		if ft := f.Type; f.Anonymous && (ft.Kind() == reflect.Struct || ft.Kind() == reflect.Pointer && ft.Elem().Kind() == reflect.Struct) {
 			var v reflect.Type
 			if ft.Kind() == reflect.Pointer {
-//line bind.ego:107
+//line bind.ego:141
 				v = ft.Elem()
 			} else {
 				v = ft
 			}
 			mustNotHide(in, v, at)
 		}
-//line bind.ego:109
+//line bind.ego:143
 		if len(at) == 1 || !hasSourceTag(f) {
 			continue
 		}
@@ -134,14 +168,14 @@ func mustNotHide(in, t reflect.Type, index []int) {
 	}
 }
 
-// hasSourceTag reports whether f has a path, query or header tag.
+// hasSourceTag reports whether f has a path, query, header or form tag.
 func hasSourceTag(f reflect.StructField) bool {
 	return sourceTag(f) != ""
 }
 
-// sourceTag is the name of f's path, query or header tag, or "".
+// sourceTag is the name of f's path, query, header or form tag, or "".
 func sourceTag(f reflect.StructField) string {
-	for _, s := range []paramSource{inPath, inQuery, inHeader} {
+	for _, s := range sources {
 		if _, ok := f.Tag.Lookup(s.tag()); ok {
 			return s.tag()
 		}
@@ -149,16 +183,19 @@ func sourceTag(f reflect.StructField) string {
 	return ""
 }
 
-// source returns where a field gets its value from its tags: path, query or
-// header, with the name and the options after it.
+// sources are where values come from, by their tags.
+var sources = []paramSource{inPath, inQuery, inHeader, inForm}
+
+// source returns where a field gets its value from its tags: path, query,
+// header or form, with the name and the options after it.
 func source(t reflect.Type, f reflect.StructField) (in paramSource, key string, opts []string, ok bool) {
-	for _, s := range []paramSource{inPath, inQuery, inHeader} {
+	for _, s := range sources {
 		tag, found := f.Tag.Lookup(s.tag())
 		if !found {
 			continue
 		}
 		if ok {
-			panic(fmt.Sprintf("httpkernel.Endpoint: field %v.%s has two of the path, query and header tags", t, f.Name))
+			panic(fmt.Sprintf("httpkernel.Endpoint: field %v.%s has two of the path, query, header and form tags", t, f.Name))
 		}
 		parts := strings.Split(tag, ",")
 		in, key, opts, ok = s, parts[0], parts[1:], true
@@ -179,6 +216,8 @@ func (s paramSource) tag() string {
 		v = "query"
 	case inHeader:
 		v = "header"
+	case inForm:
+		v = "form"
 	default:
 		panic(s)
 	}
@@ -188,7 +227,7 @@ func (s paramSource) tag() string {
 // throughPointer reports whether the field at index is reached through an
 // embedded pointer, which may be nil.
 //
-//line bind.ego:164
+//line bind.ego:202
 func throughPointer(t reflect.Type, index []int) bool {
 	for _, i := range index[:len(index)-1] {
 		f := t.Field(i)
@@ -211,17 +250,17 @@ func parser(t reflect.Type) (func(string) (reflect.Value, error), bool) {
 	case reflect.PointerTo(t).Implements(textUnmarshaler):
 		return func(s string) (reflect.Value, error) {
 
-//line bind.ego:185
+//line bind.ego:223
 			v := reflect.New(t)
 			if err := v.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(s)); err != nil {
 				return reflect.Value{}, fmt.Errorf("is invalid: %w", err)
 			}
-//line bind.ego:187
+//line bind.ego:225
 			return v.Elem(), nil
 
 		}, true
 	}
-//line bind.ego:190
+//line bind.ego:228
 	switch t.Kind() {
 	case reflect.String:
 		return parsing(t, "", asString), true
@@ -235,7 +274,7 @@ func parser(t reflect.Type) (func(string) (reflect.Value, error), bool) {
 		} else {
 			detail = fmt.Sprintf("must be an integer from %d to %d", lo, hi)
 		}
-//line bind.ego:198
+//line bind.ego:236
 		return parsing(t, detail, func(s string) (int64, error) { return strconv.ParseInt(s, 10, t.Bits()) }), true
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		hi := uint64(math.MaxUint64) >> (64 - t.Bits())
@@ -245,7 +284,7 @@ func parser(t reflect.Type) (func(string) (reflect.Value, error), bool) {
 		} else {
 			detail = fmt.Sprintf("must be an integer from 0 to %d", hi)
 		}
-//line bind.ego:202
+//line bind.ego:240
 		return parsing(t, detail, func(s string) (uint64, error) { return strconv.ParseUint(s, 10, t.Bits()) }), true
 	case reflect.Float32, reflect.Float64:
 		return parsing(t, "must be a number", func(s string) (float64, error) { return parseFinite(s, t.Bits()) }), true
@@ -259,7 +298,7 @@ func parser(t reflect.Type) (func(string) (reflect.Value, error), bool) {
 func parsing[V any](t reflect.Type, detail string, parse func(string) (V, error)) func(string) (reflect.Value, error) {
 	return func(s string) (reflect.Value, error) {
 
-//line bind.ego:214
+//line bind.ego:252
 		v, err := parse(s)
 		if err != nil {
 			return reflect.Value{}, fmt.Errorf("%v", detail)
@@ -271,13 +310,14 @@ func parsing[V any](t reflect.Type, detail string, parse func(string) (V, error)
 
 // asString parses a string: any is fine.
 //
-//line bind.ego:223
+//line bind.ego:261
 func asString(s string) (string, error) { return s, nil }
 
-// bind fills in from r: the parameters first, then the body. Invalid
-// parameters are a 400 Problem listing them all; a body that can't be read
-// is a BodyError.
-func (b *binder) bind(w http.ResponseWriter, r *http.Request, in reflect.Value, bodyLimit int64) error {
+// bind fills in from r: the parameters first, then the body, of at most
+// bodyLimit bytes. Invalid parameters are a 400 Problem listing them all; a
+// body that can't be read is a BodyError. cleanup, when it isn't nil,
+// removes a form's files, once the endpoint returns.
+func (b *binder) bind(w http.ResponseWriter, r *http.Request, in reflect.Value, bodyLimit int64) (cleanup func(), err error) {
 	var violations []Violation
 	var query url.Values
 	queryRead := false
@@ -287,14 +327,14 @@ func (b *binder) bind(w http.ResponseWriter, r *http.Request, in reflect.Value, 
 		switch p.in {
 		case inPath:
 
-//line bind.ego:237
+//line bind.ego:276
 			if v := r.PathValue(p.key); v != "" {
 				values = []string{v}
 			}
 
 		case inQuery:
 
-//line bind.ego:242
+//line bind.ego:281
 			if !queryRead {
 				var err error
 				if query, err = url.ParseQuery(r.URL.RawQuery); err != nil {
@@ -305,57 +345,68 @@ func (b *binder) bind(w http.ResponseWriter, r *http.Request, in reflect.Value, 
 			values = nonEmpty(query[p.key])
 
 		case inHeader:
-//line bind.ego:251
+//line bind.ego:290
 			values = nonEmpty(r.Header.Values(p.key))
+		case inForm:
+//line bind.ego:291
+			panic("httpkernel: a form value among the parameters")
 		}
-		if len(values) == 0 {
-			if p.required && !emptyRemainder(r, p) {
-				violations = append(violations, p.violation("is required"))
-				continue
-			}
-			if values = p.def; values == nil {
-				continue
-			}
-		}
-		if detail := p.set(in.FieldByIndex(p.field), values); detail != "" {
+		if detail := p.fill(r, in.FieldByIndex(p.field), values); detail != "" {
 			violations = append(violations, p.violation(detail))
 		}
 	}
 	if len(violations) > 0 {
-		return Problem{Status: http.StatusBadRequest, Detail: "invalid request parameters", Errors: violations}
+		return nil, Problem{Status: http.StatusBadRequest, Detail: "invalid request parameters", Errors: violations}
 	}
 	if b.body < 0 {
-		return nil
+		return nil, nil
 	}
 	body := in.Field(b.body)
+	if b.form != nil {
+		return b.bindForm(w, r, body, bodyLimit)
+	}
 	if RawBody(body.Type()) {
-		raw, err := readBody(w, r, bodyLimit)
-		if err != nil {
-			return err
+		raw, err2 := readBody(w, r, bodyLimit)
+		if err2 != nil {
+			return nil, err2
 		}
-//line bind.ego:275
+//line bind.ego:309
 		if body.Kind() == reflect.String {
 			body.SetString(string(raw))
 		} else {
 			body.SetBytes(raw)
 		}
-		return nil
+		return nil, nil
 	}
 	if body.Kind() != reflect.Pointer {
-		return BodyDecoder{Limit: bodyLimit}.Decode(w, r, body.Addr().Interface())
+		return nil, BodyDecoder{Limit: bodyLimit}.Decode(w, r, body.Addr().Interface())
 	}
 	if r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0 {
-		return nil // an optional body, absent
+		return nil, nil // an optional body, absent
 	}
 	v := reflect.New(body.Type().Elem())
 	if err := (BodyDecoder{Limit: bodyLimit}).Decode(w, r, v.Interface()); err != nil {
 		if _, empty := errors.AsType[BodyEmpty](err); empty {
-			return nil // a chunked body that turned out empty
+			return nil, nil // a chunked body that turned out empty
 		}
-		return err
+		return nil, err
 	}
 	body.Set(v)
-	return nil
+	return nil, nil
+}
+
+// fill sets f from the values, or from p's default when there are none,
+// and returns a violation detail, or "".
+func (p *param) fill(r *http.Request, f reflect.Value, values []string) string {
+	if len(values) == 0 {
+		if p.required && !emptyRemainder(r, p) {
+			return "is required"
+		}
+		if values = p.def; values == nil {
+			return ""
+		}
+	}
+	return p.set(f, values)
 }
 
 // emptyRemainder reports whether p is a {name...} wildcard of the pattern

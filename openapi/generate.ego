@@ -257,10 +257,26 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 			validated, invalid = true, httpkernel.Violation{Parameter: p.Name, Detail: "is invalid"}
 		}
 	}
+	limit := cmp.Or(d.BodyLimit, g.k?.BodyLimit, httpkernel.DefaultBodyLimit)
 	if d.Body != nil && httpkernel.RawBody(d.Body) {
 		// Any media type, as it is: OpenAPI 3.1 says so without a schema.
 		op.RequestBody = &RequestBody{Description: inDoc.Fields["Body"], Content: map[string]*MediaType{"*/*": {}}}
-		op.Errors = append(op.Errors, httpkernel.BodyTooLarge{Limit: httpkernel.DefaultBodyLimit})
+		op.Errors = append(op.Errors, httpkernel.BodyTooLarge{Limit: limit})
+	} else if d.Form != nil {
+		op.RequestBody = g.form(d, inDoc)
+		op.Errors = append(op.Errors,
+			httpkernel.BodyMalformedForm{Cause: fmt.Errorf("multipart: NextPart: EOF")},
+			httpkernel.BodyMediaType{ContentType: "application/json", Want: "multipart/form-data or application/x-www-form-urlencoded"},
+			httpkernel.BodyTooLarge{Limit: limit},
+		)
+		v := httpkernel.Violation{Pointer: "#/" + d.Form[0].Name, Detail: "is invalid"}
+		if slices.ContainsFunc(d.Form, canFail) {
+			// Binding's 422, which comes with or without a validator.
+			op.Errors = append(op.Errors, httpkernel.Invalid(v))
+			validated = false // its 422 is there
+		} else if slices.ContainsFunc(d.Form, p => p.Field.Tag.Get("validate") != "") {
+			validated, invalid = true, v
+		}
 	} else if d.Body != nil {
 		t := d.Body
 		required := t.Kind() != reflect.Pointer
@@ -276,8 +292,8 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 		op.RequestBody = &RequestBody{Required: required, Description: inDoc.Fields["Body"], Content: map[string]*MediaType{"application/json": {Schema: schema}}}
 		op.Errors = append(op.Errors,
 			httpkernel.BodyMalformed{Offset: 1, Cause: fmt.Errorf("invalid character")},
-			httpkernel.BodyMediaType{ContentType: "text/plain"},
-			httpkernel.BodyTooLarge{Limit: httpkernel.DefaultBodyLimit},
+			httpkernel.BodyMediaType{ContentType: "text/plain", Want: "application/json"},
+			httpkernel.BodyTooLarge{Limit: limit},
 			httpkernel.BodyInvalid{Pointer: firstPointer(t), Cause: fmt.Errorf("invalid value")},
 		)
 		if hasValidateTags(t, map[reflect.Type]bool{}) {
@@ -294,6 +310,31 @@ func (g *generator) endpoint(op *Op, d httpkernel.Description, r routing.Info) {
 		res.Content = map[string]*MediaType{"application/json": {Schema: g.schemas.of(d.Result, writing)}}
 	}
 	op.Responses[status] = res
+}
+
+// form is the request body of a form: multipart/form-data, and
+// application/x-www-form-urlencoded too when it has no files.
+func (g *generator) form(d httpkernel.Description, inDoc TypeDoc) *RequestBody {
+	schema := &Schema{Type: Types{"object"}, Properties: map[string]*Schema{}}
+	files := false
+	for _, p := range d.Form {
+		s, required := g.paramSchema(p)
+		s.Description = inDoc.Fields["Body."+p.Field.Name]
+		schema.Properties[p.Name] = s
+		if p.Required || required {
+			schema.Required = append(schema.Required, p.Name)
+		}
+		t := p.Field.Type
+		for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice {
+			t = t.Elem()
+		}
+		files = files || t == fileType
+	}
+	content := map[string]*MediaType{"multipart/form-data": {Schema: schema}}
+	if !files {
+		content["application/x-www-form-urlencoded"] = &MediaType{Schema: schema}
+	}
+	return &RequestBody{Required: true, Description: inDoc.Fields["Body"], Content: content}
 }
 
 // fieldDoc returns the doc comment of t's field with the name, or of an

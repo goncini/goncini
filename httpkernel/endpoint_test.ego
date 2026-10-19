@@ -273,7 +273,7 @@ func TestEndpointRejectsBadInputs(t *testing.T) {
 			x int `query:"x"`
 		}](nil))
 	})
-	mustPanic(t, "has two of the path, query and header tags", func() {
+	mustPanic(t, "has two of the path, query, header and form tags", func() {
 		httpkernel.Endpoint(handler[struct {
 			X int `query:"x" header:"X"`
 		}](nil))

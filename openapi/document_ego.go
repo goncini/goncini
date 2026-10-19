@@ -180,6 +180,7 @@ type Schema struct {
 	Ref                  string             `json:"$ref,omitempty"`
 	Type                 Types              `json:"type,omitzero"`
 	Format               string             `json:"format,omitempty"`
+	ContentMediaType     string             `json:"contentMediaType,omitempty"`
 	Description          string             `json:"description,omitempty"`
 	Properties           map[string]*Schema `json:"properties,omitzero"`
 	Required             []string           `json:"required,omitempty"`
@@ -220,7 +221,7 @@ func (t *Types) UnmarshalJSON(b []byte) error {
 		if err := json.Unmarshal(b, &s); err != nil {
 			return err
 		}
-//line document.ego:204
+//line document.ego:205
 		*t = Types{s}
 		return nil
 	}

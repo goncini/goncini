@@ -32,6 +32,7 @@ enum paramSource {
 	inQuery
 	inPath
 	inHeader
+	inForm
 }
 
 // Query reads the query string of r. A malformed query string is a
@@ -165,6 +166,7 @@ func (p *Params) Err() error {
 		inQuery  => "invalid query parameters"
 		inPath   => "invalid path parameters"
 		inHeader => "invalid headers"
+		inForm   => "invalid form values"
 	}
 	return Problem{Status: http.StatusBadRequest, Detail: detail, Errors: slices.Clone(p.violations)}
 }
@@ -188,5 +190,6 @@ func violationOf(in paramSource, name, detail string) Violation {
 	return match in {
 		inQuery, inPath => Violation{Parameter: name, Detail: detail}
 		inHeader        => Violation{Header: name, Detail: detail}
+		inForm          => Violation{Pointer: "#/" + strings.NewReplacer("~", "~0", "/", "~1").Replace(name), Detail: detail}
 	}
 }

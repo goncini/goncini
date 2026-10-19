@@ -13,12 +13,14 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/goncini/goncini/httpkernel"
 )
 
 // SchemaProvider is a type that gives its own JSON Schema, such as a type
 // with a custom JSON form. Generate calls it on the zero value.
 //
-//line schema.ego:17
+//line schema.ego:19
 type SchemaProvider interface {
 	OpenAPISchema() *Schema
 }
@@ -48,7 +50,7 @@ func (v mode) String() string {
 
 // schemaKey is a named struct type, in a mode: a component.
 //
-//line schema.ego:33
+//line schema.ego:35
 type schemaKey struct {
 	t reflect.Type
 	m mode
@@ -68,6 +70,7 @@ func newSchemas(docs map[reflect.Type]TypeDoc) *schemas {
 }
 
 var (
+	fileType          = reflect.TypeFor[httpkernel.File]()
 	timeType          = reflect.TypeFor[time.Time]()
 	durationType      = reflect.TypeFor[time.Duration]()
 	jsontextValue     = reflect.TypeFor[jsontext.Value]()
@@ -96,6 +99,10 @@ func (s *schemas) of(t reflect.Type, m mode) *Schema {
 		return nullable(s.of(value.Type, m))
 	}
 	switch {
+	case t == fileType:
+		// A form's file: binary, as OpenAPI 3.1 says, and as 3.0 did, which
+		// tools still read.
+		return &Schema{Type: Types{"string"}, Format: "binary", ContentMediaType: "application/octet-stream"}
 	case t == timeType:
 		return &Schema{Type: Types{"string"}, Format: "date-time"}
 	case t == durationType:
@@ -157,7 +164,7 @@ func provided(t reflect.Type) *Schema {
 		v2 = &Schema{}
 	}
 	own := *(v2)
-//line schema.ego:137
+//line schema.ego:144
 	return &own
 }
 
@@ -185,7 +192,7 @@ func (s *schemas) object(t reflect.Type, m mode, doc TypeDoc, prefix string) *Sc
 		v = ""
 	}
 	o := &Schema{Type: Types{"object"}, Properties: map[string]*Schema{}, Description: v}
-//line schema.ego:158
+//line schema.ego:165
 	s.fields(o, t, m, doc, prefix)
 	if len(o.Properties) == 0 {
 		o.Properties = nil
@@ -342,7 +349,7 @@ func (s *schemas) inner(p *Schema, t reflect.Type, m mode) *Schema {
 		}
 		return v
 	}
-//line schema.ego:310
+//line schema.ego:317
 	return p
 }
 
@@ -414,13 +421,13 @@ func (s *schemas) finish() map[string]*Schema {
 			if len(ts) == 1 {
 				base[t] = b
 			} else {
-//line schema.ego:378
+//line schema.ego:385
 				base[t] = exported(packageName(t)) + b
 			}
 		}
 	}
 	// Refs hold markers of their keys until the names are known.
-//line schema.ego:382
+//line schema.ego:389
 	index := map[schemaKey]int{}
 	for i, k := range s.order {
 		index[k] = i
@@ -446,7 +453,7 @@ func (s *schemas) finish() map[string]*Schema {
 		}
 		return v
 	}
-//line schema.ego:399
+//line schema.ego:406
 	render := func(sch *Schema) string { return s.render(sch, label) }
 	for changed := true; changed; {
 		changed = false
@@ -477,7 +484,7 @@ func (s *schemas) finish() map[string]*Schema {
 		}
 		return v
 	})
-//line schema.ego:419
+//line schema.ego:426
 	for _, k := range keys {
 		if k.m == reading && shared[k.t] {
 			continue
@@ -498,7 +505,7 @@ func (s *schemas) finish() map[string]*Schema {
 		if !ok {
 			name = names[schemaKey{k.t, writing}]
 		}
-//line schema.ego:436
+//line schema.ego:443
 		marker := fmt.Sprintf("#/components/schemas/\x00%d\x00", i)
 		for _, r := range s.refs[k] {
 			if r.Ref == marker {
@@ -542,7 +549,7 @@ func baseName(t reflect.Type) string {
 			}
 			return v
 		}, a)
-//line schema.ego:471
+//line schema.ego:478
 		if a != "" {
 			b.WriteString(exported(a))
 		}
@@ -676,7 +683,7 @@ func limit(p *Schema, t reflect.Type, param string, upper, inclusive bool) {
 				count = count + 1
 			}
 		}
-//line schema.ego:600
+//line schema.ego:607
 		if t.Kind() == reflect.String {
 			if upper {
 				p.MaxLength = &count

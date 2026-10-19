@@ -163,6 +163,7 @@ type Schema struct {
 	Ref                  string             `json:"$ref,omitempty"`
 	Type                 Types              `json:"type,omitzero"`
 	Format               string             `json:"format,omitempty"`
+	ContentMediaType     string             `json:"contentMediaType,omitempty"`
 	Description          string             `json:"description,omitempty"`
 	Properties           map[string]*Schema `json:"properties,omitzero"`
 	Required             []string           `json:"required,omitempty"`

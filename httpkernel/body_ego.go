@@ -21,20 +21,24 @@ import (
 //line body.ego:17
 const DefaultBodyLimit = 1 << 20
 
-// BodyError is everything DecodeJSON can fail with. ProblemFor gives each
-// case its response: 415, 413, 400 or 422 for the client's mistakes, and 500
-// for BodyUnsupportedType, the API's.
+// BodyError is everything reading a request body can fail with, as
+// DecodeJSON and Endpoint do. ProblemFor gives each case its response: 415,
+// 413, 400 or 422 for the client's mistakes, and 500 for
+// BodyUnsupportedType, the API's.
 type BodyError interface {
 	error
 	isBodyError()
 }
 
-type BodyMediaType struct{ ContentType string }
+type BodyMediaType struct {
+	ContentType string
+	Want        string // the media types to send
+}
 
 func (BodyMediaType) isBodyError() {}
 
 func (e BodyMediaType) Error() string {
-	return fmt.Sprintf("unsupported Content-Type %q: send application/json", e.ContentType)
+	return fmt.Sprintf("unsupported Content-Type %q: send %v", e.ContentType, e.Want)
 }
 
 // As lets pointers to BodyMediaType match as BodyMediaType.
@@ -152,6 +156,23 @@ func (e BodyUnsupportedType) As(target any) bool {
 	return false
 }
 
+type BodyMalformedForm struct{ Cause error }
+
+func (BodyMalformedForm) isBodyError() {}
+
+func (e BodyMalformedForm) Error() string { return "malformed form body" }
+
+func (e BodyMalformedForm) Unwrap() error { return e.Cause }
+
+// As lets pointers to BodyMalformedForm match as BodyMalformedForm.
+func (e BodyMalformedForm) As(target any) bool {
+	if t, ok := target.(*BodyMalformedForm); ok {
+		*t = e
+		return true
+	}
+	return false
+}
+
 // DecodeJSON reads the JSON body of r into v, which must be a non-nil
 // pointer:
 //   - the Content-Type must be application/json, or end in +json;
@@ -164,7 +185,7 @@ func (e BodyUnsupportedType) As(target any) bool {
 // a BodyMalformed even if a value doesn't fit its field. A BodyDecoder has
 // other settings.
 //
-//line body.ego:49
+//line body.ego:54
 func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
 	return BodyDecoder{}.Decode(w, r, v)
 }
@@ -185,13 +206,13 @@ type BodyDecoder struct {
 func (d BodyDecoder) Decode(w http.ResponseWriter, r *http.Request, v any) error {
 	ct := r.Header.Get("Content-Type")
 	if !isJSON(ct) {
-		return BodyMediaType{ContentType: ct}
+		return BodyMediaType{ContentType: ct, Want: "application/json"}
 	}
 	b, err := readBody(w, r, d.Limit)
 	if err != nil {
 		return err
 	}
-//line body.ego:72
+//line body.ego:77
 	if len(bytes.Trim(b, " \t\r\n")) == 0 {
 		return BodyEmpty{}
 	}
@@ -220,16 +241,23 @@ func readBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, erro
 		body = http.NoBody
 	}
 	b, err := io.ReadAll(http.MaxBytesReader(w, body, limit))
-	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-		if w != nil {
-			w.Header().Set("Connection", "close")
-		}
+	if tooLarge(w, err) {
 		return nil, BodyTooLarge{Limit: limit}
 	}
 	if err != nil {
 		return nil, BodyUnreadable{Cause: err}
 	}
 	return b, nil
+}
+
+// tooLarge reports whether err is a body's that was larger than its limit,
+// and then makes w close the connection, since the rest is left unread.
+func tooLarge(w http.ResponseWriter, err error) bool {
+	_, ok := errors.AsType[*http.MaxBytesError](err)
+	if ok && w != nil {
+		w.Header().Set("Connection", "close")
+	}
+	return ok
 }
 
 // RawBody reports whether an endpoint's Body field of type t is the raw
@@ -291,25 +319,28 @@ func bodyProblem(err error) Problem {
 	if err == nil {
 		v = Problem{}
 	} else if e, ok := errors.AsType[BodyMediaType](err); ok {
-//line body.ego:169
+//line body.ego:181
 		v = Problem{Status: http.StatusUnsupportedMediaType, Detail: e.Error()}
 	} else if e, ok := errors.AsType[BodyTooLarge](err); ok {
-//line body.ego:170
+//line body.ego:182
 		v = Problem{Status: http.StatusRequestEntityTooLarge, Detail: e.Error()}
 	} else if e, ok := errors.AsType[BodyEmpty](err); ok {
-//line body.ego:171
+//line body.ego:183
 		v = Problem{Status: http.StatusBadRequest, Detail: e.Error()}
 	} else if e, ok := errors.AsType[BodyMalformed](err); ok {
-//line body.ego:172
+//line body.ego:184
 		v = Problem{Status: http.StatusBadRequest, Detail: fmt.Sprintf("%s: %s", e.Error(), syntaxReason(e.Cause))}
 	} else if e, ok := errors.AsType[BodyInvalid](err); ok {
-//line body.ego:173
+//line body.ego:185
 		v = invalidBody(e)
 	} else if e, ok := errors.AsType[BodyUnreadable](err); ok {
-//line body.ego:174
+//line body.ego:186
 		v = Problem{Status: http.StatusBadRequest, Detail: e.Error()}
 	} else if _, ok := errors.AsType[BodyUnsupportedType](err); ok {
 		v = Problem{Status: http.StatusInternalServerError}
+	} else if e, ok := errors.AsType[BodyMalformedForm](err); ok {
+//line body.ego:188
+		v = Problem{Status: http.StatusBadRequest, Detail: fmt.Sprintf("%s: %s", e.Error(), e.Cause.Error())}
 	} else {
 		panic(err)
 	}
@@ -319,7 +350,7 @@ func bodyProblem(err error) Problem {
 // invalidBody is the 422 for a value that doesn't fit its field, with a
 // violation pointing at it.
 //
-//line body.ego:181
+//line body.ego:194
 func invalidBody(e BodyInvalid) Problem {
 	return Problem{
 		Status: http.StatusUnprocessableEntity,

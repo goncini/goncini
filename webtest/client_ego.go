@@ -4,13 +4,18 @@ package webtest
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"io"
+	"maps"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
+	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -24,7 +29,7 @@ import (
 // that a test sees every check that fails, and return the response for
 // more checks.
 //
-//line client.ego:24
+//line client.ego:29
 type Client struct {
 	t       testing.TB
 	handler http.Handler
@@ -70,8 +75,9 @@ func (c *Client) Get(target string) *Response {
 	return c.Send(http.MethodGet, target, nil)
 }
 
-// Post sends a POST request for target with a JSON body: a string or
-// []byte is sent as it is, anything else encoded as JSON.
+// Post sends a POST request for target with a body: a Form as
+// multipart/form-data, url.Values as application/x-www-form-urlencoded, a
+// string or []byte as JSON, as it is, and anything else encoded as JSON.
 func (c *Client) Post(target string, body any) *Response {
 	c.t.Helper()
 	return c.Send(http.MethodPost, target, body)
@@ -95,31 +101,96 @@ func (c *Client) Delete(target string) *Response {
 	return c.Send(http.MethodDelete, target, nil)
 }
 
-// Send sends a request with the method, for target, with a JSON body
-// unless body is nil.
+// Send sends a request with the method, for target, with a body as Post
+// sends it, unless body is nil.
 func (c *Client) Send(method, target string, body any) *Response {
 	c.t.Helper()
-	var r io.Reader
-	if body != nil {
-		var b []byte
-		switch v := body.(type) {
+	if body == nil {
+		return c.Do(httptest.NewRequest(method, target, nil))
+	}
+	var b []byte
+	contentType := "application/json"
+	var err error
+	switch v := body.(type) {
+	case string:
+		b = []byte(v)
+	case []byte:
+		b = v
+	case url.Values:
+		b, contentType = []byte(v.Encode()), "application/x-www-form-urlencoded"
+	case Form:
+		b, contentType, err = v.encode()
+	default:
+		b, err = json.Marshal(v)
+	}
+	if err != nil {
+		c.t.Fatalf("%s %s: encoding the body: %v", method, target, err)
+	}
+	req := httptest.NewRequest(method, target, bytes.NewReader(b))
+	req.Header.Set("Content-Type", contentType)
+	return c.Do(req)
+}
+
+// Form is a multipart/form-data body, which Post, Put, Patch and Send
+// send: each member's value is a string, a []string, a File or a []File.
+//
+//	c.Post("/api/user/avatar", webtest.Form{"avatar": webtest.File{Name: "me.png", Data: png}, "alt": "Me"})
+type Form map[string]any
+
+// File is a file of a Form.
+type File struct {
+	Name string
+	// ContentType is the file's; empty means its name's extension's, or
+	// application/octet-stream.
+	ContentType string
+	Data        []byte
+}
+
+// encode writes f, in the order of its names, and returns its media type.
+func (f Form) encode() ([]byte, string, error) {
+	var b bytes.Buffer
+	w := multipart.NewWriter(&b)
+	for _, name := range slices.Sorted(maps.Keys(f)) {
+		var values []string
+		var files []File
+		switch v := f[name].(type) {
 		case string:
-			b = []byte(v)
-		case []byte:
-			b = v
+			values = []string{v}
+		case []string:
+			values = v
+		case File:
+			files = []File{v}
+		case []File:
+			files = v
 		default:
-			var err error
-			if b, err = json.Marshal(v); err != nil {
-				c.t.Fatalf("%s %s: encoding the body: %v", method, target, err)
+			return nil, "", fmt.Errorf("the form's %s is a %T, not a string, a []string, a File or a []File", name, v)
+		}
+		for _, v := range values {
+			if err := w.WriteField(name, v); err != nil {
+				return nil, "", err
 			}
 		}
-		r = bytes.NewReader(b)
+//line client.ego:167
+		for _, file := range files {
+			h := textproto.MIMEHeader{}
+			h.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": name, "filename": file.Name}))
+			h.Set("Content-Type", cmp.Or(file.ContentType, mime.TypeByExtension(filepath.Ext(file.Name)), "application/octet-stream"))
+			part, err := w.CreatePart(h)
+			if err != nil {
+				return nil, "", err
+			}
+//line client.ego:172
+			if _, err := part.Write(file.Data); err != nil {
+				return nil, "", err
+			}
+		}
 	}
-	req := httptest.NewRequest(method, target, r)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+//line client.ego:175
+	if err := w.Close(); err != nil {
+		return nil, "", err
 	}
-	return c.Do(req)
+//line client.ego:176
+	return b.Bytes(), w.FormDataContentType(), nil
 }
 
 // Do sends req, with the client's headers unless req has them, and its
@@ -278,7 +349,7 @@ func describe(vs []httpkernel.Violation) string {
 		} else {
 			where = v.Header
 		}
-//line client.ego:270
+//line client.ego:328
 		parts = append(parts, fmt.Sprintf("%s: %q", where, v.Detail))
 	}
 	return strings.Join(parts, ", ")

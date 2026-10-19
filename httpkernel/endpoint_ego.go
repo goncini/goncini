@@ -3,6 +3,7 @@
 package httpkernel
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"net/http"
@@ -39,7 +40,7 @@ import (
 // The handler has a String method naming h, which route listings show:
 // articles.(*Controller).Show.
 //
-//line endpoint.ego:39
+//line endpoint.ego:40
 func Endpoint[In, Out any](h func(context.Context, In) (Out, error)) http.Handler {
 	return &endpoint[In, Out]{h: h, b: newBinder(reflect.TypeFor[In]())}
 }
@@ -63,13 +64,17 @@ func (e *endpoint[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if st != nil {
 		k = st.kernel
 	}
-//line endpoint.ego:59
+//line endpoint.ego:60
 	var in In
-	if err := e.b.bind(w, r, reflect.ValueOf(&in).Elem(), k.bodyLimit()); err != nil {
+	cleanup, err := e.b.bind(w, r, reflect.ValueOf(&in).Elem(), cmp.Or(e.b.limit, k.bodyLimit()))
+	if err != nil {
 		WriteError(w, r, err)
 		return
 	}
-	if err := validate(r.Context(), k, &in); err != nil {
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if err = validate(r.Context(), k, &in); err != nil {
 		WriteError(w, r, err)
 		return
 	}

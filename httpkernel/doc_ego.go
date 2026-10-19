@@ -57,6 +57,19 @@
 //	Body           the field named Body gets the JSON body, decoded as by
 //	               DecodeJSON; when it is a pointer, the body is optional
 //
+// A Body that is a []byte or a string gets the raw body, of any media type.
+// A Body struct whose fields have form tags is a form, multipart/form-data
+// or application/x-www-form-urlencoded, whose fields take its values as a
+// query parameter does, or its files, as a File, *File or []File:
+//
+//	Body struct {
+//		Avatar httpkernel.File `form:"avatar,required"`
+//		Alt    string          `form:"alt"`
+//	} `limit:"8MiB"`
+//
+// The Body's limit tag replaces the kernel's BodyLimit for the endpoint, as
+// for uploads.
+//
 // A value is absent when it is missing or empty. Tags can add:
 //
 //	query:"q,required"  an absent value is a violation
@@ -69,7 +82,8 @@
 // encoding.TextUnmarshaler, a pointer to one of those (nil when the value is
 // absent), or a slice of them (every value of a repeated parameter).
 //
-// Invalid values are answered with a 400 problem that lists them all. Then
+// Invalid values are answered with a 400 problem that lists them all, and a
+// form's with a 422, that points at them in the body, as #/alt. Then
 // the kernel's Validator, and the input's own Validate method if it has
 // one, check it; they usually return Invalid, a 422.
 //
