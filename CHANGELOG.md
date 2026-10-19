@@ -60,7 +60,7 @@
   that the app's instances share their limits. An update watches the key,
   and tries again when another changed it first: a `Store`'s `Update` may
   call its function more than once.
-- **Wiring:** goncini requires effect-go v0.6.0, whose `layer.Decorate`
+- **Wiring:** goncini requires effect-go v0.6.1, whose `layer.Decorate`
   and `layer.Lazy` an app's `Services` can use: a decorator changes a
   service, goncini's too, rather than replacing it, and a lazy service is
   built at its first `Get`. `goncini generate` reads both, and

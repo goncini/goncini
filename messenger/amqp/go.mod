@@ -7,7 +7,7 @@ tool github.com/effect-go/effect-go/cmd/ego
 replace github.com/goncini/goncini => ../..
 
 require (
-	github.com/effect-go/effect-go v0.6.0
+	github.com/effect-go/effect-go v0.6.1
 	github.com/goncini/goncini v0.3.0
 	github.com/rabbitmq/amqp091-go v1.15.0
 	modernc.org/sqlite v1.60.1

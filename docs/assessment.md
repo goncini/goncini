@@ -399,7 +399,7 @@ to its maintainers' session the same day, once it ran.
 
    goncini names the type instead, in `notifier/push.ego`.
 
-> **Status (2026-10-19):** effect-go fixed the lambdas over struct types on its main branch, commit badf505, unreleased, and its user approved the other two, which it is building in `layer` as asked: `layer.Decorate(f)`, a marker like `layer.Close`, whose provider's one parameter of its result's type is the service it wraps, whichever provider gives it, and whose decorators wrap in the order they are listed; and `layer.Lazy[T]`, a value whose `Get` builds what only lazy services need, once, even when called at once, and tries again after a failure. goncini adopts them, and step 8, once a release has them. effect-go released them the same day, as v0.6.0.
+> **Status (2026-10-19):** effect-go fixed the lambdas over struct types on its main branch, commit badf505, unreleased, and its user approved the other two, which it is building in `layer` as asked: `layer.Decorate(f)`, a marker like `layer.Close`, whose provider's one parameter of its result's type is the service it wraps, whichever provider gives it, and whose decorators wrap in the order they are listed; and `layer.Lazy[T]`, a value whose `Get` builds what only lazy services need, once, even when called at once, and tries again after a failure. goncini adopts them, and step 8, once a release has them. effect-go released them the same day, as v0.6.0, then v0.6.1, which leaves out a set's decorator of a type that an injector doesn't provide, so that a framework's set can ship decorators.
 
 ## 5. Risks
 
