@@ -25,13 +25,14 @@ import (
 	"github.com/goncini/goncini/profiler"
 	"github.com/goncini/goncini/scheduler"
 	"github.com/goncini/goncini/security"
+	"github.com/goncini/goncini/validator"
 	"github.com/goncini/goncini/webhook"
 	"github.com/goncini/goncini/workflow"
 )
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigMailer, autoConfigProfiler, autoConfigWebhooks, autoDefaultOpenapiConfig, autoDefaultCacheConfig, autoDefaultMessengerConfig, autoDefaultSchedulerConfig, autoDefaultHubConfig)
+var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigMailer, autoConfigProfiler, autoConfigWebhooks, autoDefaultOpenapiConfig, autoDefaultValidatorConfig, autoDefaultCacheConfig, autoDefaultMessengerConfig, autoDefaultSchedulerConfig, autoDefaultHubConfig)
 
 // autoProblems are the error mappers that the app's packages declare.
 func autoProblems() []httpkernel.ErrorMapper {
@@ -124,7 +125,8 @@ func autoServices() []goncini.Service {
 		{Type: "[]httpkernel.Middleware", Provider: "goncini.NewMiddleware", Needs: []string{}},
 		{Type: "[]httpkernel.ErrorMapper", Provider: "autoProblems", Needs: []string{}},
 		{Type: "httpkernel.Renderer", Provider: "goncini.NewRenderer", Needs: []string{}},
-		{Type: "httpkernel.Validator", Provider: "goncini.NewValidator", Needs: []string{}},
+		{Type: "validator.Config", Provider: "autoDefaultValidatorConfig", Needs: []string{}},
+		{Type: "httpkernel.Validator", Provider: "goncini.NewValidator", Needs: []string{"validator.Config"}},
 		{Type: "*httpkernel.Kernel", Provider: "goncini.NewKernel", Needs: []string{"goncini.HTTP", "*routing.Router", "[]httpkernel.Middleware", "[]httpkernel.ErrorMapper", "httpkernel.Renderer", "httpkernel.Validator", "*event.Dispatcher", "*slog.Logger"}},
 		{Type: "*httpkernel.Server", Provider: "goncini.NewServer", Needs: []string{"goncini.HTTP", "*httpkernel.Kernel", "*slog.Logger"}},
 		{Type: "profiler.Config", Provider: "autoConfigProfiler", Needs: []string{"config.Config"}},
@@ -212,6 +214,9 @@ func autoConfigWebhooks(c config.Config) webhook.Config { return c.Webhooks }
 
 // autoDefaultOpenapiConfig is the default of openapi.Config, which the config doesn't have.
 func autoDefaultOpenapiConfig() openapi.Config { return openapi.Config{} }
+
+// autoDefaultValidatorConfig is the default of validator.Config, which the config doesn't have.
+func autoDefaultValidatorConfig() validator.Config { return validator.Config{} }
 
 // autoDefaultCacheConfig is the default of cache.Config, which the config doesn't have.
 func autoDefaultCacheConfig() cache.Config { return cache.Config{} }

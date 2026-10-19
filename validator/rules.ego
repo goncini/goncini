@@ -1,0 +1,245 @@
+package validator
+
+import (
+	"bufio"
+	"cmp"
+	"context"
+	"crypto/sha1"
+	"encoding/hex"
+	"math"
+	"math/big"
+	"net/http"
+	"reflect"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	playground "github.com/go-playground/validator/v10"
+
+	"github.com/goncini/goncini/httpclient"
+)
+
+// Config configures the rules of goncini's own.
+type Config struct {
+	// PwnedPasswords is the URL of the range API that not_compromised asks
+	// about the start of a password's hash; empty means Have I Been
+	// Pwned's, https://api.pwnedpasswords.com/range/.
+	PwnedPasswords string
+	// SkipPwnedPasswords passes every password that not_compromised
+	// checks, without asking: for tests, which shouldn't reach the network.
+	SkipPwnedPasswords bool
+}
+
+// register adds the rules of Symfony's constraints that go-playground
+// lacks.
+func (v *Validator) register() {
+	must v.rules.RegisterValidation("regex", matchesRegex)
+	must v.rules.RegisterValidation("iban", isIBAN)
+	must v.rules.RegisterValidation("isin", isISIN)
+	must v.rules.RegisterValidation("divisible_by", isDivisible)
+	must v.rules.RegisterValidation("password_strength", isStrong)
+	must v.rules.RegisterValidationCtx("not_compromised", v.notCompromised)
+}
+
+// regexps are the compiled patterns of regex tags.
+var regexps sync.Map
+
+// matchesRegex is regex=pattern: a string that the pattern matches, in
+// RE2's syntax. A tag's commas and bars are written 0x2C and 0x7C, as
+// go-playground's parameters have them.
+func matchesRegex(fl playground.FieldLevel) bool {
+	pattern := fl.Param()
+	re, ok := regexps.Load(pattern)
+	if !ok {
+		compiled, err := regexp.Compile(pattern)
+		if err != nil {
+			panic(f"validator: the pattern of regex={pattern} doesn't compile: {err}")
+		}
+		re, _ = regexps.LoadOrStore(pattern, compiled)
+	}
+	return re.(*regexp.Regexp).MatchString(fl.Field().String())
+}
+
+// isIBAN is iban: an International Bank Account Number whose check digits
+// hold, as ISO 13616 computes them, written without spaces.
+func isIBAN(fl playground.FieldLevel) bool {
+	s := fl.Field().String()
+	if len(s) < 15 || len(s) > 34 || !isUpperAlpha(s[:2]) || !isDigits(s[2:4]) || !isUpperAlnum(s[4:]) {
+		return false
+	}
+	return mod97(s[4:]+s[:4]) == 1
+}
+
+// mod97 returns the remainder by 97 of s, whose letters stand for 10 to
+// 35.
+func mod97(s string) int {
+	n, _ := new(big.Int).SetString(digits(s), 10)
+	return int(new(big.Int).Mod(n, big.NewInt(97)).Int64())
+}
+
+// digits returns s, of digits and capital letters, with its letters
+// written 10 to 35.
+func digits(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		if c >= 'A' {
+			b.WriteString(strconv.Itoa(int(c-'A') + 10))
+		} else {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+// isISIN is isin: an International Securities Identification Number, whose
+// last digit is the Luhn check digit of the others, letters standing for
+// 10 to 35.
+func isISIN(fl playground.FieldLevel) bool {
+	s := fl.Field().String()
+	if len(s) != 12 || !isUpperAlpha(s[:2]) || !isUpperAlnum(s[2:11]) || !isDigits(s[11:]) {
+		return false
+	}
+	d := digits(s)
+	sum := 0
+	for i := range len(d) {
+		n := int(d[len(d)-1-i] - '0')
+		if i%2 == 1 {
+			n *= 2
+			if n > 9 {
+				n -= 9
+			}
+		}
+		sum += n
+	}
+	return sum%10 == 0
+}
+
+func isUpperAlpha(s string) bool {
+	return strings.IndexFunc(s, c => c < 'A' || c > 'Z') < 0
+}
+
+func isDigits(s string) bool {
+	return strings.IndexFunc(s, c => c < '0' || c > '9') < 0
+}
+
+func isUpperAlnum(s string) bool {
+	return strings.IndexFunc(s, c => (c < 'A' || c > 'Z') && (c < '0' || c > '9')) < 0
+}
+
+// isDivisible is divisible_by=n: a number that is a multiple of n.
+func isDivisible(fl playground.FieldLevel) bool {
+	field := fl.Field()
+	switch field.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		n := must strconv.ParseInt(fl.Param(), 10, 64)
+		return n != 0 && field.Int()%n == 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		n := must strconv.ParseUint(fl.Param(), 10, 64)
+		return n != 0 && field.Uint()%n == 0
+	case reflect.Float32, reflect.Float64:
+		n := must strconv.ParseFloat(fl.Param(), 64)
+		r := math.Abs(math.Remainder(field.Float(), n))
+		return n != 0 && r <= 1e-9*math.Max(1, math.Abs(n))
+	}
+	panic(f"validator: divisible_by checks numbers, not {field.Type()}")
+}
+
+// isStrong is password_strength=score: a password whose strength is at
+// least the score, from 0, very weak, to 4, very strong; none means 2, as
+// Symfony's PasswordStrength has it.
+func isStrong(fl playground.FieldLevel) bool {
+	least := 2
+	if p := fl.Param(); p != "" {
+		least = must strconv.Atoi(p)
+	}
+	return Strength(fl.Field().String()) >= least
+}
+
+// Strength estimates a password's strength as Symfony's PasswordStrength
+// does, from 0, very weak, to 4, very strong: the entropy of its bytes,
+// from their number, how many differ, and the kinds they are of.
+func Strength(password string) int {
+	if password == "" {
+		return 0
+	}
+	seen := map[byte]bool{}
+	var control, digit, upper, lower, symbol, other float64
+	for i := range len(password) {
+		c := password[i]
+		seen[c] = true
+		switch {
+		case c < 32 || c == 127:
+			control = 33
+		case c >= '0' && c <= '9':
+			digit = 10
+		case c >= 'A' && c <= 'Z':
+			upper = 26
+		case c >= 'a' && c <= 'z':
+			lower = 26
+		case c >= 128:
+			other = 128
+		default:
+			symbol = 33
+		}
+	}
+	pool := lower + upper + digit + symbol + control + other
+	chars := float64(len(seen))
+	entropy := chars*math.Log2(pool) + (float64(len(password))-chars)*math.Log2(chars)
+	switch {
+	case entropy >= 120:
+		return 4
+	case entropy >= 100:
+		return 3
+	case entropy >= 80:
+		return 2
+	case entropy >= 60:
+		return 1
+	}
+	return 0
+}
+
+// pwned is the client of the range API of not_compromised.
+var pwned = httpclient.New(httpclient.Config{Timeout: 5 * time.Second, Retries: 1})
+
+// notCompromised is not_compromised=threshold: a password that hasn't
+// appeared that many times in the data breaches that Have I Been Pwned
+// knows of; none means once. Only the first five characters of its SHA-1
+// hash are sent, and the answer is padded, so that the API learns nothing
+// of it. A password passes when the API can't be asked, rather than
+// keeping everyone out.
+func (v *Validator) notCompromised(ctx context.Context, fl playground.FieldLevel) bool {
+	password := fl.Field().String()
+	if v.Config.SkipPwnedPasswords || password == "" {
+		return true
+	}
+	threshold := 1
+	if p := fl.Param(); p != "" {
+		threshold = must strconv.Atoi(p)
+	}
+	sum := sha1.Sum([]byte(password))
+	hash := strings.ToUpper(hex.EncodeToString(sum[:]))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cmp.Or(v.Config.PwnedPasswords, "https://api.pwnedpasswords.com/range/")+hash[:5], nil)
+	if err != nil {
+		return true
+	}
+	req.Header.Set("Add-Padding", "true")
+	res, err := pwned.Do(req)
+	if err != nil {
+		return true
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return true
+	}
+	lines := bufio.NewScanner(res.Body)
+	for lines.Scan() {
+		suffix, count, _ := strings.Cut(strings.TrimSpace(lines.Text()), ":")
+		if suffix == hash[5:] {
+			n, _ := strconv.Atoi(count)
+			return n < threshold
+		}
+	}
+	return true
+}

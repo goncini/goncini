@@ -22,12 +22,13 @@ import (
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
 	"github.com/goncini/goncini/translation"
+	"github.com/goncini/goncini/validator"
 	"github.com/goncini/goncini/workflow"
 )
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigEditors, autoConfigProfiler, autoConfigOTLP, autoDefaultOpenapiConfig, autoDefaultTranslationConfig, autoDefaultMaintenanceConfig)
+var Autoconfigured = layer.Set(autoRoutes, autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigEditors, autoConfigProfiler, autoConfigOTLP, autoDefaultOpenapiConfig, autoDefaultValidatorConfig, autoDefaultTranslationConfig, autoDefaultMaintenanceConfig)
 
 // autoRoutes are the services that have routes, in the order they are provided.
 func autoRoutes(p1 *articles.Articles, p2 *profiler.Profiler, p3 *maintenance.Maintenance) []routing.Routes {
@@ -101,7 +102,8 @@ func autoServices() []goncini.Service {
 		{Type: "[]httpkernel.Middleware", Provider: "editors.NewMiddleware", Needs: []string{"*security.Firewall[*editors.Editor]"}},
 		{Type: "[]httpkernel.ErrorMapper", Provider: "autoProblems", Needs: []string{}},
 		{Type: "httpkernel.Renderer", Provider: "goncini.NewRenderer", Needs: []string{}},
-		{Type: "httpkernel.Validator", Provider: "goncini.NewValidator", Needs: []string{}},
+		{Type: "validator.Config", Provider: "autoDefaultValidatorConfig", Needs: []string{}},
+		{Type: "httpkernel.Validator", Provider: "goncini.NewValidator", Needs: []string{"validator.Config"}},
 		{Type: "*httpkernel.Kernel", Provider: "goncini.NewKernel", Needs: []string{"goncini.HTTP", "*routing.Router", "[]httpkernel.Middleware", "[]httpkernel.ErrorMapper", "httpkernel.Renderer", "httpkernel.Validator", "*event.Dispatcher", "*slog.Logger"}},
 		{Type: "*httpkernel.Server", Provider: "goncini.NewServer", Needs: []string{"goncini.HTTP", "*httpkernel.Kernel", "*slog.Logger"}},
 		{Type: "*articles.SlugCommand", Provider: "articles.NewSlugCommand", Needs: []string{"*articles.Articles"}},
@@ -164,6 +166,9 @@ func autoConfigOTLP(c config.Config) otlp.Config { return c.OTLP }
 
 // autoDefaultOpenapiConfig is the default of openapi.Config, which the config doesn't have.
 func autoDefaultOpenapiConfig() openapi.Config { return openapi.Config{} }
+
+// autoDefaultValidatorConfig is the default of validator.Config, which the config doesn't have.
+func autoDefaultValidatorConfig() validator.Config { return validator.Config{} }
 
 // autoDefaultTranslationConfig is the default of translation.Config, which the config doesn't have.
 func autoDefaultTranslationConfig() translation.Config { return translation.Config{} }

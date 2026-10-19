@@ -20,6 +20,7 @@ import (
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/validator"
 )
 
 // config is an app's config.
@@ -43,7 +44,7 @@ func load(env *goncini.Env) config {
 func build(c goncini.HTTP, routes []routing.Routes, commands []console.Command) *goncini.App {
 	logger := slog.New(slog.DiscardHandler)
 	router := goncini.NewRouter(routes)
-	kernel := must goncini.NewKernel(c, router, nil, nil, goncini.NewRenderer(), goncini.NewValidator(), nil, logger)
+	kernel := must goncini.NewKernel(c, router, nil, nil, goncini.NewRenderer(), goncini.NewValidator(validator.Config{}), nil, logger)
 	services := []goncini.Service{{Type: "*routing.Router", Provider: "goncini.NewRouter", Needs: []string{"[]routing.Routes"}}}
 	doc := must goncini.NewOpenAPI(openapi.Config{Title: "Hello"}, router, kernel, openapi.Annotations{})
 	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, services, logger, doc, goncini.NewDispatcher(nil), nil, nil)

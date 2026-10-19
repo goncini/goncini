@@ -69,8 +69,9 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v4 := editors.NewMiddleware(firewall)
 	v5 := autoProblems()
 	renderer := goncini.NewRenderer()
-	validator := goncini.NewValidator()
-	kernel, err := goncini.NewKernel(http, router, v4, v5, renderer, validator, dispatcher, logger2)
+	config7 := autoDefaultValidatorConfig()
+	validator2 := goncini.NewValidator(config7)
+	kernel, err := goncini.NewKernel(http, router, v4, v5, renderer, validator2, dispatcher, logger2)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
@@ -86,15 +87,15 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v6 := autoCommands(slugCommand, requests, down, up, migrator2, translator, registry)
 	v7 := autoChecks(db2)
 	v8 := autoServices()
-	config7 := autoDefaultOpenapiConfig()
+	config8 := autoDefaultOpenapiConfig()
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config7, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config8, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
 	v9 := autoBackground()
-	config8 := autoConfigOTLP(cfg)
-	exporter, err := otlp.New(config8)
+	config9 := autoConfigOTLP(cfg)
+	exporter, err := otlp.New(config9)
 	if err != nil {
 		return nil, fmt.Errorf("New: %w", err)
 	}
@@ -152,8 +153,9 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	v3 := editors.NewMiddleware(firewall)
 	v4 := autoProblems()
 	renderer := goncini.NewRenderer()
-	validator := goncini.NewValidator()
-	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator, dispatcher, logger2)
+	config7 := autoDefaultValidatorConfig()
+	validator2 := goncini.NewValidator(config7)
+	kernel, err := goncini.NewKernel(http, router, v3, v4, renderer, validator2, dispatcher, logger2)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
@@ -169,15 +171,15 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config, now func(
 	v5 := autoCommands(slugCommand, requests, down, up, migrator2, translator, registry)
 	v6 := autoChecks(db2)
 	v7 := autoServices()
-	config7 := autoDefaultOpenapiConfig()
+	config8 := autoDefaultOpenapiConfig()
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config7, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config8, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
 	v8 := autoBackground()
-	config8 := autoConfigOTLP(cfg)
-	exporter, err := otlp.New(config8)
+	config9 := autoConfigOTLP(cfg)
+	exporter, err := otlp.New(config9)
 	if err != nil {
 		return nil, fmt.Errorf("New: %w", err)
 	}

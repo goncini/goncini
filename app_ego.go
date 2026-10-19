@@ -168,9 +168,12 @@ func NewRenderer() httpkernel.Renderer {
 }
 
 // NewValidator returns the validator of inputs, which checks their validate
-// struct tags: see the validator package.
-func NewValidator() httpkernel.Validator {
-	return validator.New()
+// struct tags, with the rules of goncini's own that c configures: see the
+// validator package.
+func NewValidator(c validator.Config) httpkernel.Validator {
+	v := validator.New()
+	v.Config = c
+	return v
 }
 
 // NewDispatcher returns the dispatcher of the app's events, with the
@@ -189,7 +192,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:182
+//line app.ego:185
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -197,7 +200,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:186
+//line app.ego:189
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
@@ -206,7 +209,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:191
+//line app.ego:194
 		mw = append(mw, cors)
 	}
 	return &httpkernel.Kernel{
@@ -248,17 +251,17 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 // serves, with the doc comments and errors of a, and serves it on router
 // as c says.
 //
-//line app.ego:225
+//line app.ego:228
 func NewOpenAPI(c openapi.Config, router *routing.Router, kernel *httpkernel.Kernel, a openapi.Annotations) (*openapi.Document, error) {
 	doc, err := openapi.Generate(router.List(), kernel, c, a)
 	if err != nil {
 		return nil, err
 	}
-//line app.ego:227
+//line app.ego:230
 	if err := openapi.Mount(router, doc, c); err != nil {
 		return nil, err
 	}
-//line app.ego:228
+//line app.ego:231
 	return doc, nil
 }
 

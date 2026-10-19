@@ -103,8 +103,8 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v6 := goncini.NewMiddleware()
 	v7 := autoProblems()
 	renderer := conduit.NewRenderer()
-	validator := conduit.NewValidator()
-	kernel, err := goncini.NewKernel(http, router, v6, v7, renderer, validator, dispatcher, logger)
+	validator2 := conduit.NewValidator()
+	kernel, err := goncini.NewKernel(http, router, v6, v7, renderer, validator2, dispatcher, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
@@ -216,8 +216,8 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config) (*Test, e
 	v6 := goncini.NewMiddleware()
 	v7 := autoProblems()
 	renderer := conduit.NewRenderer()
-	validator := conduit.NewValidator()
-	kernel, err := goncini.NewKernel(http, router, v6, v7, renderer, validator, dispatcher, logger)
+	validator2 := conduit.NewValidator()
+	kernel, err := goncini.NewKernel(http, router, v6, v7, renderer, validator2, dispatcher, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}

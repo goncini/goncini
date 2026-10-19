@@ -89,33 +89,34 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v5 := goncini.NewMiddleware()
 	v6 := autoProblems()
 	renderer := goncini.NewRenderer()
-	validator := goncini.NewValidator()
-	kernel, err := goncini.NewKernel(http, router, v5, v6, renderer, validator, dispatcher, logger)
+	config8 := autoDefaultValidatorConfig()
+	validator2 := goncini.NewValidator(config8)
+	kernel, err := goncini.NewKernel(http, router, v5, v6, renderer, validator2, dispatcher, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
 	server := goncini.NewServer(http, kernel, logger)
-	config8 := autoConfigProfiler(cfg)
-	profiler2 := profiler.New(config8, logger)
+	config9 := autoConfigProfiler(cfg)
+	profiler2 := profiler.New(config9, logger)
 	requests := profiler.NewCommand(profiler2)
 	createCommand := projects.NewCreateCommand(store, v)
 	migrator2, err := migrator(db2)
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	config9 := autoDefaultSchedulerConfig()
+	config10 := autoDefaultSchedulerConfig()
 	sqlStore, err := lock.NewSQLStore(db2)
 	if err != nil {
 		return nil, fmt.Errorf("NewSQLStore: %w", err)
 	}
 	v7 := autoTasks(checks2, alertHandler)
-	scheduler2 := scheduler.New(config9, sqlStore, v7, logger)
+	scheduler2 := scheduler.New(config10, sqlStore, v7, logger)
 	v8 := autoCommands(requests, createCommand, migrator2, bus, scheduler2, registry)
 	v9 := autoChecks(db2)
 	v10 := autoServices()
-	config10 := autoDefaultOpenapiConfig()
+	config11 := autoDefaultOpenapiConfig()
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config10, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config11, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}

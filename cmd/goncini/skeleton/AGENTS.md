@@ -157,11 +157,16 @@ type UpdateInput struct {
 }
 ```
 
-- `validate` tags are go-playground/validator rules. A failing value is a
-  422 that points at it. Rules across fields, or on the app's data, go in a
-  `Validate() error` method on the input's pointer, which runs after the
-  tags and returns `httpkernel.Invalid(httpkernel.Violation{Pointer:
-  "#/article/title", Detail: "can't be blank"})`.
+- `validate` tags are go-playground/validator rules, and goncini's
+  `regex=pattern`, `iban`, `isin`, `divisible_by=n`, `password_strength`
+  and `not_compromised`, which asks Have I Been Pwned unless
+  `validator.Config.SkipPwnedPasswords`, for `config/test.ego`. goncini's
+  `validator/constraints.md` gives the tag of each of Symfony's
+  constraints. A failing value is a 422 that points at it. Rules across
+  fields, or on the app's data, go in a `Validate() error` method on the
+  input's pointer, which runs after the tags and returns
+  `httpkernel.Invalid(httpkernel.Violation{Pointer: "#/article/title",
+  Detail: "can't be blank"})`.
 - `httpkernel.Optional[T]` tells an absent member from `null` and from a
   value, for updates: `.Set`, `.Null`, `.Value`, `.Present()`. Its
   `validate` tags check its value when it is present:

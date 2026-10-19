@@ -22,11 +22,12 @@ import (
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/openapi"
 	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/validator"
 )
 
 // config is an app's config.
 //
-//line main_test.ego:26
+//line main_test.ego:27
 type config struct {
 	HTTP goncini.HTTP
 	DSN  string
@@ -37,13 +38,13 @@ func load(env *goncini.Env) config {
 	c := config{HTTP: goncini.HTTP{ShutdownTimeout: 5 * time.Second}}
 	switch env.Name {
 	case "dev":
-//line main_test.ego:35
+//line main_test.ego:36
 		c.DSN = "sqlite::memory:"
 	case "prod":
-//line main_test.ego:36
+//line main_test.ego:37
 		c.DSN = "postgres://app:" + env.Secret("DB_PASSWORD") + "@" + env.Secret("DB_HOST")
 	default:
-//line main_test.ego:37
+//line main_test.ego:38
 		env.Unknown()
 	}
 	return c
@@ -53,17 +54,17 @@ func load(env *goncini.Env) config {
 func build(c goncini.HTTP, routes []routing.Routes, commands []console.Command) *goncini.App {
 	logger := slog.New(slog.DiscardHandler)
 	router := goncini.NewRouter(routes)
-	kernel, err := goncini.NewKernel(c, router, nil, nil, goncini.NewRenderer(), goncini.NewValidator(), nil, logger)
+	kernel, err := goncini.NewKernel(c, router, nil, nil, goncini.NewRenderer(), goncini.NewValidator(validator.Config{}), nil, logger)
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:47
+//line main_test.ego:48
 	services := []goncini.Service{{Type: "*routing.Router", Provider: "goncini.NewRouter", Needs: []string{"[]routing.Routes"}}}
 	doc, err := goncini.NewOpenAPI(openapi.Config{Title: "Hello"}, router, kernel, openapi.Annotations{})
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:49
+//line main_test.ego:50
 	return goncini.NewApp(kernel, goncini.NewServer(c, kernel, logger), router, commands, nil, services, logger, doc, goncini.NewDispatcher(nil), nil, nil)
 }
 
@@ -76,7 +77,7 @@ func (routes) Routes(r *routing.Router) {
 	})).Name("hello")
 }
 
-//line main_test.ego:59
+//line main_test.ego:60
 func TestLoad(t *testing.T) {
 	t.Setenv("DB_HOST", "db.internal")
 	_, _, err := goncini.Load(t.TempDir(), "prod", load)
@@ -88,7 +89,7 @@ func TestLoad(t *testing.T) {
 	if err2 != nil {
 		panic(err2)
 	}
-//line main_test.ego:67
+//line main_test.ego:68
 	if cfg.DSN != "postgres://app:s3cret@db.internal" {
 		t.Errorf("DSN = %q", cfg.DSN)
 	}
@@ -102,12 +103,12 @@ func TestRun(t *testing.T) {
 	cfg := load(env)
 	greet := console.New("greet", "Greets", func(ctx context.Context, out io.Writer, args []string) error {
 
-//line main_test.ego:79
+//line main_test.ego:80
 		_, err := io.WriteString(out, "hello "+strings.Join(args, " "))
 		return err
 
 	})
-//line main_test.ego:82
+//line main_test.ego:83
 	app := build(cfg.HTTP, []routing.Routes{routes{}}, []console.Command{greet})
 	run := func(args ...string) (string, error) {
 		var out bytes.Buffer
@@ -153,7 +154,7 @@ func TestRun(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:124
+//line main_test.ego:125
 	for _, name := range []string{"serve", "debug:router", "debug:config", "greet"} {
 		if !strings.Contains(list, "\n"+name+" ") {
 			t.Errorf("list doesn't have %s:\n%s", name, list)
@@ -219,19 +220,19 @@ func TestNewKernel(t *testing.T) {
 	var mw httpkernel.Middleware = func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-//line main_test.ego:187
+//line main_test.ego:188
 			w.Header().Set("X-App", "1")
 			next.ServeHTTP(w, r)
 
 		})
 	}
-//line main_test.ego:190
+//line main_test.ego:191
 	logger := slog.New(slog.DiscardHandler)
 	k, err := goncini.NewKernel(goncini.HTTP{TrustedHosts: []string{"api.example.com"}}, routing.New(), []httpkernel.Middleware{mw}, nil, nil, nil, nil, logger)
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:192
+//line main_test.ego:193
 	rec := httptest.NewRecorder()
 	k.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://evil.example/", nil))
 	if rec.Code != 400 || rec.Header().Get("X-App") != "" {
@@ -257,7 +258,7 @@ func TestDebugContainerWithoutServices(t *testing.T) {
 	if err := goncini.Run(context.Background(), &out, goncini.NewEnv("dev", nil), config{}, app, []string{"debug:container"}); err != nil {
 		panic(err)
 	}
-//line main_test.ego:215
+//line main_test.ego:216
 	if out.String() != "no services are described: run goncini generate\n" {
 		t.Errorf("debug:container: %q", out.String())
 	}
@@ -275,7 +276,7 @@ func TestDebugConfigMasksStringsOnly(t *testing.T) {
 	if err := goncini.Run(context.Background(), &out, env, cfg, build(goncini.HTTP{}, nil, nil), []string{"debug:config"}); err != nil {
 		panic(err)
 	}
-//line main_test.ego:230
+//line main_test.ego:231
 	if want := "{\n  \"Limit\": 51,\n  \"URL\": \"db://u:******@h\"\n}\n"; out.String() != want {
 		t.Errorf("debug:config:\n%s\nwant:\n%s", out.String(), want)
 	}
@@ -291,12 +292,12 @@ func (r *recorder) WithGroup(string) slog.Handler            { return r }
 func (r *recorder) Handle(_ context.Context, rec slog.Record) error {
 	rec.Attrs(func(a slog.Attr) bool {
 
-//line main_test.ego:244
+//line main_test.ego:245
 		r.attrs[a.Key] = a.Value.String()
 		return true
 
 	})
-//line main_test.ego:247
+//line main_test.ego:248
 	return nil
 }
 
@@ -307,12 +308,12 @@ func TestLoggerOnAnotherHandler(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:254
+//line main_test.ego:255
 	sid, err := trace.SpanIDFromHex("0102030405060708")
 	if err != nil {
 		panic(err)
 	}
-//line main_test.ego:255
+//line main_test.ego:256
 	ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid}))
 	goncini.NewLogger(h).InfoContext(ctx, "hello", "k", "v")
 	if h.attrs["k"] != "v" || h.attrs["trace_id"] != tid.String() || h.attrs["span_id"] != sid.String() {

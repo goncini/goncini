@@ -1,0 +1,142 @@
+package validator_test
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"testing"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/validator"
+)
+
+// failing returns the details of in's violations, by pointer.
+func failing(t *testing.T, v *validator.Validator, in any) map[string]string {
+	t.Helper()
+	err := v.Validate(context.Background(), in)
+	if err == nil {
+		return nil
+	}
+	p, ok := errors.AsType[httpkernel.Problem](err)
+	if !ok {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, e := range p.Errors {
+		out[e.Pointer] = e.Detail
+	}
+	return out
+}
+
+func TestRules(t *testing.T) {
+	type input struct {
+		Body struct {
+			Slug     string  `json:"slug" validate:"regex=^[a-z]{20x2C3}(-[a-z]+)*$"`
+			IBAN     string  `json:"iban" validate:"iban"`
+			ISIN     string  `json:"isin" validate:"isin"`
+			Pack     int     `json:"pack" validate:"divisible_by=6"`
+			Step     float64 `json:"step" validate:"divisible_by=0.1"`
+			Password string  `json:"password" validate:"password_strength"`
+		}
+	}
+	valid := func() input {
+		var in input
+		in.Body.Slug, in.Body.IBAN, in.Body.ISIN = "go-tips", "DE89370400440532013000", "US0378331005"
+		in.Body.Pack, in.Body.Step, in.Body.Password = 12, 0.3, "correct horse battery staple"
+		return in
+	}
+	v := validator.New()
+	if got := failing(t, v, valid()); got != nil {
+		t.Errorf("valid values fail: %v", got)
+	}
+	for _, iban := range []string{"GB82WEST12345698765432", "FR1420041010050500013M02606", "NO9386011117947"} {
+		in := valid()
+		in.Body.IBAN = iban
+		if got := failing(t, v, in); got != nil {
+			t.Errorf("%s: %v", iban, got)
+		}
+	}
+	in := valid()
+	in.Body.Slug, in.Body.IBAN, in.Body.ISIN = "x", "DE89370400440532013001", "US0378331006"
+	in.Body.Pack, in.Body.Step, in.Body.Password = 10, 0.35, "password"
+	want := map[string]string{
+		"#/slug":     "must match ^[a-z]{2,3}(-[a-z]+)*$",
+		"#/iban":     "must be an IBAN",
+		"#/isin":     "must be an ISIN",
+		"#/pack":     "must be a multiple of 6",
+		"#/step":     "must be a multiple of 0.1",
+		"#/password": "is too weak: make it longer, or mix more kinds of characters",
+	}
+	got := failing(t, v, in)
+	for k, d := range want {
+		if got[k] != d {
+			t.Errorf("%s: %q, want %q", k, got[k], d)
+		}
+	}
+	for _, iban := range []string{"de89370400440532013000", "DE89 3704 0044 0532 0130 00", "DE8937040044"} {
+		in := valid()
+		in.Body.IBAN = iban
+		if got := failing(t, v, in); got["#/iban"] == "" {
+			t.Errorf("%q is an IBAN", iban)
+		}
+	}
+}
+
+// TestStrength checks the estimate against Symfony's scores.
+func TestStrength(t *testing.T) {
+	for password, want := range map[string]int{
+		"":                             0,
+		"password":                     0,
+		"Tr0ub4dour&3":                 1,
+		"correct horse battery staple": 4,
+	} {
+		if got := validator.Strength(password); got != want {
+			t.Errorf("%q: %d, want %d", password, got, want)
+		}
+	}
+}
+
+// TestNotCompromised checks that a password is looked up by the start of
+// its hash, and fails when it appeared as often as the threshold says.
+func TestNotCompromised(t *testing.T) {
+	var asked []string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.URL.Path+" "+r.Header.Get("Add-Padding"))
+		// "password", whose SHA-1 is 5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8, and padding.
+		w.Write([]byte("0018A45C4D1DEF81644B54AB7F969B88D65:0\r\n1E4C9B93F3F0682250B6CF8331B7EE68FD8:3861493\r\n"))
+	}))
+	t.Cleanup(api.Close)
+	type input struct {
+		Body struct {
+			Password string `json:"password" validate:"not_compromised"`
+			Often    string `json:"often" validate:"not_compromised=5000000"`
+		}
+	}
+	v := validator.New()
+	v.Config.PwnedPasswords = api.URL + "/range/"
+	var in input
+	in.Body.Password, in.Body.Often = "password", "password"
+	got := failing(t, v, in)
+	if len(got) != 1 || got["#/password"] != "has appeared in a data breach: choose another one" {
+		t.Errorf("violations %v", got)
+	}
+	if !slices.Equal(asked, []string{"/range/5BAA6 true", "/range/5BAA6 true"}) {
+		t.Errorf("asked %v", asked)
+	}
+	in.Body.Password = "a password of my own"
+	if got := failing(t, v, in); got != nil {
+		t.Errorf("violations %v", got)
+	}
+	in.Body.Password = "password"
+	v.Config.SkipPwnedPasswords = true
+	if got := failing(t, v, in); got != nil {
+		t.Errorf("skipped, violations %v", got)
+	}
+	api.Close()
+	v.Config.SkipPwnedPasswords = false
+	if got := failing(t, v, in); got != nil {
+		t.Errorf("without the API, violations %v", got)
+	}
+}

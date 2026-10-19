@@ -31,6 +31,9 @@ import (
 
 // Validator checks inputs against their validate tags.
 type Validator struct {
+	// Config configures the rules of goncini's own.
+	Config Config
+
 	rules    *playground.Validate
 	messages map[string]string
 	// mu keeps the rules from changing while they validate: an input's
@@ -40,11 +43,28 @@ type Validator struct {
 }
 
 // New returns a validator with go-playground/validator's rules, as
-// documented at https://pkg.go.dev/github.com/go-playground/validator/v10.
+// documented at https://pkg.go.dev/github.com/go-playground/validator/v10,
+// and the rules of Symfony's constraints that it lacks:
+//
+//   - regex=pattern: a string that the pattern matches, in RE2's syntax,
+//     whose commas and bars are written 0x2C and 0x7C;
+//   - iban and isin: an IBAN, or an ISIN, whose check digits hold;
+//   - divisible_by=n: a multiple of n;
+//   - password_strength=score: a password at least that strong, from 0
+//     to 4, 2 without a score, estimated as Symfony's PasswordStrength
+//     does;
+//   - not_compromised=n: a password that hasn't appeared n times, or
+//     once, in the breaches that Have I Been Pwned knows of. Config says
+//     where to ask, or not to, in tests.
+//
+// https://github.com/goncini/goncini/blob/main/validator/constraints.md
+// lists the tag of each of Symfony's constraints.
 func New() *Validator {
 	rules := playground.New(playground.WithRequiredStructEnabled())
 	rules.RegisterTagNameFunc(fieldName)
-	return &Validator{rules: rules}
+	v := &Validator{rules: rules}
+	v.register()
+	return v
 }
 
 // Message replaces the detail of the violations of a rule, such as
@@ -245,6 +265,12 @@ func detailOf(f playground.FieldError) string {
 		"uppercase"                                                                       => "must be uppercase"
 		"datetime"                                                                        => f"must be a date and time in the layout {p}"
 		"unique"                                                                          => "must have no duplicates"
+		"regex"                                                                           => f"must match {p}"
+		"iban"                                                                            => "must be an IBAN"
+		"isin"                                                                            => "must be an ISIN"
+		"divisible_by"                                                                    => f"must be a multiple of {p}"
+		"password_strength"                                                               => "is too weak: make it longer, or mix more kinds of characters"
+		"not_compromised"                                                                 => "has appeared in a data breach: choose another one"
 		_                                                                                 => if p != "" { f"must satisfy {f.Tag()}={p}" } else { f"must satisfy {f.Tag()}" }
 	}
 }

@@ -36,6 +36,9 @@ import (
 //
 //line validator.ego:33
 type Validator struct {
+	// Config configures the rules of goncini's own.
+	Config Config
+
 	rules    *playground.Validate
 	messages map[string]string
 	// mu keeps the rules from changing while they validate: an input's
@@ -45,11 +48,28 @@ type Validator struct {
 }
 
 // New returns a validator with go-playground/validator's rules, as
-// documented at https://pkg.go.dev/github.com/go-playground/validator/v10.
+// documented at https://pkg.go.dev/github.com/go-playground/validator/v10,
+// and the rules of Symfony's constraints that it lacks:
+//
+//   - regex=pattern: a string that the pattern matches, in RE2's syntax,
+//     whose commas and bars are written 0x2C and 0x7C;
+//   - iban and isin: an IBAN, or an ISIN, whose check digits hold;
+//   - divisible_by=n: a multiple of n;
+//   - password_strength=score: a password at least that strong, from 0
+//     to 4, 2 without a score, estimated as Symfony's PasswordStrength
+//     does;
+//   - not_compromised=n: a password that hasn't appeared n times, or
+//     once, in the breaches that Have I Been Pwned knows of. Config says
+//     where to ask, or not to, in tests.
+//
+// https://github.com/goncini/goncini/blob/main/validator/constraints.md
+// lists the tag of each of Symfony's constraints.
 func New() *Validator {
 	rules := playground.New(playground.WithRequiredStructEnabled())
 	rules.RegisterTagNameFunc(fieldName)
-	return &Validator{rules: rules}
+	v := &Validator{rules: rules}
+	v.register()
+	return v
 }
 
 // Message replaces the detail of the violations of a rule, such as
@@ -86,12 +106,12 @@ func (v *Validator) Validate(ctx context.Context, in any) error {
 	for i, f := range failures {
 		v2, ok := v.messages[f.Tag()]
 		if !ok {
-//line validator.ego:82
+//line validator.ego:102
 			v2 = detailOf(f)
 		}
 		violations[i] = violation(f, v2)
 	}
-//line validator.ego:84
+//line validator.ego:104
 	return httpkernel.Invalid(violations...)
 }
 
@@ -188,7 +208,7 @@ func fieldName(f reflect.StructField) string {
 
 // violation is where f failed, with the detail.
 //
-//line validator.ego:174
+//line validator.ego:194
 func violation(f playground.FieldError, detail string) httpkernel.Violation {
 	segments := strings.Split(f.Namespace(), ".")[1:] // without the input's type
 	for _, s := range segments {
@@ -208,7 +228,7 @@ func violation(f playground.FieldError, detail string) httpkernel.Violation {
 		}
 		return v
 	}
-//line validator.ego:188
+//line validator.ego:208
 	if len(segments) > 0 && segments[0] == "Body" {
 		segments = segments[1:]
 	}
@@ -248,7 +268,7 @@ func detailOf(f playground.FieldError) string {
 	default:
 		size = ""
 	}
-//line validator.ego:223
+//line validator.ego:243
 	if p == "1" {
 		size = strings.TrimSuffix(size, "s") // 1 character
 	}
@@ -291,7 +311,7 @@ func detailOf(f playground.FieldError) string {
 	case "ne":
 		v = fmt.Sprintf("must not be %s", p)
 	case "oneof":
-//line validator.ego:235
+//line validator.ego:255
 		v = fmt.Sprintf("must be one of %s", strings.ReplaceAll(p, " ", ", "))
 	case "email":
 		v = "must be an email address"
@@ -317,13 +337,25 @@ func detailOf(f playground.FieldError) string {
 		v = fmt.Sprintf("must be a date and time in the layout %s", p)
 	case "unique":
 		v = "must have no duplicates"
+	case "regex":
+		v = fmt.Sprintf("must match %s", p)
+	case "iban":
+		v = "must be an IBAN"
+	case "isin":
+		v = "must be an ISIN"
+	case "divisible_by":
+		v = fmt.Sprintf("must be a multiple of %s", p)
+	case "password_strength":
+		v = "is too weak: make it longer, or mix more kinds of characters"
+	case "not_compromised":
+		v = "has appeared in a data breach: choose another one"
 	default:
-//line validator.ego:248
+//line validator.ego:274
 		if p != "" {
-//line validator.ego:248
+//line validator.ego:274
 			v = fmt.Sprintf("must satisfy %s=%s", f.Tag(), p)
 		} else {
-//line validator.ego:248
+//line validator.ego:274
 			v = fmt.Sprintf("must satisfy %s", f.Tag())
 		}
 	}

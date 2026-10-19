@@ -101,6 +101,15 @@
   which asks for HTML: the last requests, with their statuses, queries and
   durations, and a request's timeline of spans, whose details unfold, its
   queries and its logs. Other clients, and `?format=json`, still get JSON.
+- **validator:** tags for Symfony's constraints that go-playground lacks:
+  `regex=pattern`, `iban`, `isin`, `divisible_by=n`,
+  `password_strength=score`, estimated as Symfony's `PasswordStrength`
+  does, and `not_compromised=n`, which asks Have I Been Pwned's range API
+  with the first five characters of the password's SHA-1 hash, and passes
+  when it can't be asked. `validator.Config` says where to ask, or, with
+  `SkipPwnedPasswords`, not to, for tests; `goncini`'s `NewValidator` takes
+  it. `validator/constraints.md` gives the tag of each of Symfony's
+  constraints.
 
 ## v0.3.0 (2026-10-19)
 

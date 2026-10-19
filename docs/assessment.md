@@ -356,6 +356,8 @@ Form login, sessions, remember-me and CSRF stay out, as browser concerns.
 
 > **Status (2026-10-19), step 8:** decoration and lazy services are written up as requests to effect-go, in §4.7, with a formatting bug that step 6 found; goncini builds them once `layer` has them.
 
+> **Status (2026-10-19), step 9:** goncini's validator has tags for the constraints of Symfony's that go-playground lacks, and [validator/constraints.md](../validator/constraints.md) maps each of Symfony's to its tag. Decisions taken on the user's behalf: `regex`, `iban`, `isin`, `divisible_by`, `password_strength` and `not_compromised`, the constraints that APIs need most, rather than `Charset`, `WordCount`, `Week` or `NoSuspiciousCharacters`, which ICU's checks would need; `regex`, which go-playground left out as its patterns' commas and bars clash with the tags' syntax, with go-playground's escapes for them; an IBAN's check digits, without the lengths of each country's, which change; a password's strength estimated as Symfony does, so that its scores mean the same; `not_compromised` passes a password when Have I Been Pwned can't be asked, rather than keeping everyone from signing up, and asks for padded answers; its config in `validator.Config`, which `goncini.NewValidator` takes, so that `config/test.ego` keeps tests off the network.
+
 ### 4.7 Asked of effect-go
 
 Step 8 of the backlog needs effect-go's `layer`, whose resolver `ego
