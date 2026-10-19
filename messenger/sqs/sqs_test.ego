@@ -1,0 +1,126 @@
+package sqs_test
+
+import (
+	"context"
+	"database/sql"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/config"
+	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
+	_ "modernc.org/sqlite"
+
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/messenger/sqs"
+	"github.com/goncini/goncini/messenger/transporttest"
+	"github.com/goncini/goncini/uid"
+)
+
+// transport returns the transport of a queue of the test's own, in the SQS
+// of SQS_TEST_ENDPOINT, such as ElasticMQ, which goes when the test ends;
+// or skips the test without one.
+func transport(t *testing.T) *sqs.Transport {
+	endpoint := os.Getenv("SQS_TEST_ENDPOINT")
+	if endpoint == "" {
+		t.Skip("SQS_TEST_ENDPOINT names no SQS to test with")
+	}
+	t.Setenv("AWS_ACCESS_KEY_ID", "test")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "test")
+	client := must sqs.NewClient(sqs.Config{Endpoint: endpoint, Region: "us-east-1"})
+	queue := "test-" + uid.NewV4().String()
+	tr := sqs.NewTransport(client, queue)
+	ctx := context.Background()
+	must client.PingContext(ctx) // creates the queue
+	t.Cleanup(() => {
+		cfg := must config.LoadDefaultConfig(ctx, config.WithRegion("us-east-1"))
+		raw := awssqs.NewFromConfig(cfg, func(o *awssqs.Options) { o.BaseEndpoint = &endpoint })
+		url := must raw.GetQueueUrl(ctx, &awssqs.GetQueueUrlInput{QueueName: &queue})
+		must raw.DeleteQueue(ctx, &awssqs.DeleteQueueInput{QueueUrl: url.QueueUrl})
+	})
+	return tr
+}
+
+func TestTransport(t *testing.T) {
+	transporttest.RunBroker(t, (t *testing.T) => transport(t))
+}
+
+// TestLongDelays checks that a message delayed longer than SQS delays is
+// sent again for the rest, with SQS's longest delay made a second.
+func TestLongDelays(t *testing.T) {
+	ctx := context.Background()
+	tr := transport(t)
+	old := *sqs.MaxDelay
+	*sqs.MaxDelay = time.Second
+	t.Cleanup(() => { *sqs.MaxDelay = old })
+	at := time.Now().Add(3 * time.Second)
+	must tr.Send(ctx, messenger.Message{ID: "a", Type: "test.Message", Body: []byte(`{}`), AvailableAt: at})
+	for {
+		lease, ok := must tr.Receive(ctx, time.Minute)
+		if ok {
+			if early := time.Until(lease.Message().AvailableAt); early > 0 {
+				t.Errorf("received %v early", early)
+			}
+			return
+		}
+		if time.Now().After(at.Add(3 * time.Second)) {
+			t.Fatal("received none")
+		}
+	}
+}
+
+// TestLostLease checks that a lease runs out with its visibility timeout:
+// the message is then another's to receive, and the lost lease can neither
+// extend it, nor delete it, nor retry it.
+func TestLostLease(t *testing.T) {
+	ctx := context.Background()
+	tr := transport(t)
+	must tr.Send(ctx, messenger.Message{ID: "a", Type: "test.Message", Body: []byte(`{}`)})
+	dead, _ := must tr.Receive(ctx, time.Second)
+	time.Sleep(1500 * time.Millisecond)
+	alive, ok := must tr.Receive(ctx, time.Minute)
+	if !ok || alive.Message().ID != "a" {
+		t.Fatalf("received %v", ok)
+	}
+	held := must dead.Extend(ctx, time.Minute)
+	if held {
+		t.Error("the lost lease extended")
+	}
+	must dead.Ack(ctx)
+	retried := dead.Message()
+	retried.Attempts = 9
+	must dead.Retry(ctx, retried)
+	held = must alive.Extend(ctx, time.Minute)
+	if !held {
+		t.Fatal("the lost lease's Ack deleted the message")
+	}
+	must alive.Ack(ctx)
+	_, ok = must tr.Receive(ctx, time.Minute)
+	if ok {
+		t.Error("the lost lease's Retry sent the message again")
+	}
+}
+
+func TestTransports(t *testing.T) {
+	pool := must sql.Open("sqlite", "file::memory:")
+	t.Cleanup(() => { pool.Close() })
+	mc := messenger.Config{Queues: []string{"async", "mail"}}
+
+	memory := must sqs.NewClient(sqs.Config{Endpoint: "memory://"})
+	ts := must sqs.NewTransports(memory, pool, sqs.Config{}, mc)
+	for _, name := range []string{"async", "mail", "failed"} {
+		if _, ok := ts[name].(*messenger.MemoryTransport); !ok {
+			t.Errorf("%s is a %T", name, ts[name])
+		}
+	}
+
+	t.Setenv("AWS_REGION", "us-east-1")
+	client := must sqs.NewClient(sqs.Config{}) // not called
+	ts = must sqs.NewTransports(client, pool, sqs.Config{}, mc)
+	if _, ok := ts["async"].(*sqs.Transport); !ok || len(ts) != 3 {
+		t.Errorf("transports %v", ts)
+	}
+	if _, ok := ts["failed"].(*messenger.SQLTransport); !ok {
+		t.Errorf("the failure transport is a %T", ts["failed"])
+	}
+}

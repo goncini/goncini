@@ -193,20 +193,25 @@ func (c Config) TransportNames() []string {
 	if len(queues) == 0 {
 		queues = []string{"async"}
 	}
-	v := slices.Clone(queues)
-	var v2 string
+	return append(slices.Clone(queues), c.FailureTransport())
+}
+
+// FailureTransport returns the failure transport's name: Failed, or
+// "failed".
+func (c Config) FailureTransport() string {
+	var v string
 	if c.Failed == "" {
-		v2 = "failed"
+		v = "failed"
 	} else {
-		v2 = c.Failed
+		v = c.Failed
 	}
-	return append(v, v2)
+	return v
 }
 
 // Background runs a worker of the queues until ctx is done, if
 // Config.Consume says so: serve runs it beside the server.
 //
-//line messenger.ego:192
+//line messenger.ego:198
 func (b *Bus) Background(ctx context.Context) error {
 	if !b.Config.Consume {
 		return nil
@@ -235,31 +240,24 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 	if c.Retries == 0 {
 		retries = 3
 	} else {
-//line messenger.ego:216
+//line messenger.ego:222
 		retries = max(c.Retries, 0)
 	}
-//line messenger.ego:217
+//line messenger.ego:223
 	var delay time.Duration
 	if c.Delay == 0 {
 		delay = time.Second
 	} else {
 		delay = c.Delay
 	}
-//line messenger.ego:218
-	var v string
-	if c.Failed == "" {
-		v = "failed"
-	} else {
-		v = c.Failed
-	}
+//line messenger.ego:224
 	b := &Bus{
 		Transports: transports,
-		Failed:     v,
+		Failed:     c.FailureTransport(),
 		Retry:      schedule.Max(schedule.Exponential(delay), schedule.Recurs(retries)),
 		Config:     c,
 		Logger:     logger,
 	}
-//line messenger.ego:225
 	for _, h := range handlers {
 		h.Handlers(b)
 	}
@@ -330,7 +328,7 @@ type Option func(*Message)
 // DelayStamp does.
 func Delay(d time.Duration) Option {
 	return func(m *Message) {
-//line messenger.ego:294
+//line messenger.ego:300
 		m.AvailableAt = m.AvailableAt.Add(d)
 	}
 }
@@ -338,7 +336,7 @@ func Delay(d time.Duration) Option {
 // Dispatch handles m now, if its type has no route, or sends it to its
 // transport.
 //
-//line messenger.ego:299
+//line messenger.ego:305
 func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
 	t := reflect.TypeFor[M]()
 	b.mu.RLock()
@@ -356,7 +354,7 @@ func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
 	if err != nil {
 		return err
 	}
-//line messenger.ego:313
+//line messenger.ego:319
 	msg := Message{ID: uid.NewV7().String(), Type: name, Body: body, AvailableAt: b.now()}
 	for _, o := range opts {
 		o(&msg)
@@ -377,7 +375,7 @@ func (b *Bus) handle(ctx context.Context, t reflect.Type, m any) error {
 			return err
 		}
 	}
-//line messenger.ego:331
+//line messenger.ego:337
 	return nil
 }
 

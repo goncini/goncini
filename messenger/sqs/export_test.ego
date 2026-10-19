@@ -1,0 +1,4 @@
+package sqs
+
+// MaxDelay is maxDelay, for tests to shorten.
+var MaxDelay = &maxDelay

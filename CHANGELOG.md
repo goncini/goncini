@@ -60,6 +60,24 @@
   that the app's instances share their limits. An update watches the key,
   and tries again when another changed it first: a `Store`'s `Update` may
   call its function more than once.
+- **messenger/amqp:** a new module whose `amqp.Messenger` provides a bus
+  whose queues are RabbitMQ's, or another AMQP 0.9.1 broker's, and whose
+  failure transport is in the app's database, where `messenger:failed:show`
+  lists it. `amqp.Config` has the URL, `memory://` in tests, a prefix of
+  the queues' names, and their type, such as `quorum`. A delayed message
+  waits in a queue of its delay, a power of two seconds, whose messages
+  expire back to the queue; a lease lasts as long as the worker's
+  connection.
+- **messenger/sqs:** a new module whose `sqs.Messenger` provides a bus
+  whose queues are Amazon SQS's standard queues, created when first used,
+  and whose failure transport is in the app's database. The AWS SDK's
+  default configuration gives the region and the credentials;
+  `sqs.Config` has the endpoint, `memory://` in tests, the region and a
+  prefix. A lease is the message's visibility timeout; a message delayed
+  longer than SQS's 15 minutes is sent again for the rest.
+- **messenger:** `transporttest.RunBroker` checks the transport of a
+  broker that times the delays and the leases itself, by the clock.
+  `Config.FailureTransport` returns the failure transport's name.
 
 ## v0.3.0 (2026-10-19)
 

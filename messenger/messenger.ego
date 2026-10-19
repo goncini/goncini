@@ -184,7 +184,13 @@ func (c Config) TransportNames() []string {
 	if len(queues) == 0 {
 		queues = []string{"async"}
 	}
-	return append(slices.Clone(queues), if c.Failed == "" { "failed" } else { c.Failed })
+	return append(slices.Clone(queues), c.FailureTransport())
+}
+
+// FailureTransport returns the failure transport's name: Failed, or
+// "failed".
+func (c Config) FailureTransport() string {
+	return if c.Failed == "" { "failed" } else { c.Failed }
 }
 
 // Background runs a worker of the queues until ctx is done, if
@@ -217,7 +223,7 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 	delay := if c.Delay == 0 { time.Second } else { c.Delay }
 	b := &Bus{
 		Transports: transports,
-		Failed:     if c.Failed == "" { "failed" } else { c.Failed },
+		Failed:     c.FailureTransport(),
 		Retry:      schedule.Max(schedule.Exponential(delay), schedule.Recurs(retries)),
 		Config:     c,
 		Logger:     logger,

@@ -29,7 +29,8 @@ golang-migrate, [`webtest`](webtest), [`security`](security) with voters,
 API keys and [OpenID Connect](security/oidc), [`openapi`](openapi),
 [`cors`](cors), [`ratelimit`](ratelimit), [`uid`](uid) and
 [`listing`](listing); [`event`](event), [`messenger`](messenger),
-[`scheduler`](scheduler) and [`lock`](lock), in SQL or [Redis](redis);
+[`scheduler`](scheduler) and [`lock`](lock), in SQL or [Redis](redis), with
+messages in [RabbitMQ](messenger/amqp) or [SQS](messenger/sqs) too;
 [`cache`](cache), [`httpclient`](httpclient), [`webhook`](webhook), [`mailer`](mailer),
 [`notifier`](notifier), [`translation`](translation) and
 [`workflow`](workflow); the [`profiler`](profiler) and the `goncini` tool

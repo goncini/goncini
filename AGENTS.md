@@ -452,7 +452,10 @@ plain constructors, matched by their result types.
   are in the database, from `messenger.Config`), `lock.SQL`, `pgxdb.Layer`;
   and in the `github.com/goncini/goncini/redis` module, `redis.Messenger`
   and `redis.Lock`, from a `redis.Config` whose URL is `memory://` in
-  `.env.test`, so that tests need no Redis.
+  `.env.test`, so that tests need no Redis. The `messenger/amqp` and
+  `messenger/sqs` modules' `amqp.Messenger` and `sqs.Messenger` put the
+  queues in RabbitMQ or Amazon SQS, and the failure transport in the
+  database, `memory://` in tests too.
 - `messenger.Config.Consume` and `scheduler.Config.Run` run a worker and
   the scheduled tasks inside `serve`, beside the server, instead of as
   processes of their own.

@@ -96,3 +96,52 @@ jobs:
       - run: go test -race ./...
       - name: generated code is up to date
         run: go tool ego generate -check ./...
+
+  amqp:
+    runs-on: ubuntu-latest
+    services:
+      rabbitmq:
+        image: rabbitmq:4
+        env: # guest may only connect from the broker's own host
+          RABBITMQ_DEFAULT_USER: goncini
+          RABBITMQ_DEFAULT_PASS: goncini
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping" --health-interval 5s --health-timeout 10s --health-retries 20
+    env:
+      AMQP_TEST_URL: amqp://goncini:goncini@localhost:5672/
+    defaults:
+      run:
+        working-directory: messenger/amqp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache-dependency-path: messenger/amqp/go.sum
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: generated code is up to date
+        run: go tool ego generate -check ./...
+
+  sqs:
+    runs-on: ubuntu-latest
+    services:
+      elasticmq: # SQS's API
+        image: softwaremill/elasticmq-native
+        ports: ["9324:9324"]
+    env:
+      SQS_TEST_ENDPOINT: http://localhost:9324
+    defaults:
+      run:
+        working-directory: messenger/sqs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+          cache-dependency-path: messenger/sqs/go.sum
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: generated code is up to date
+        run: go tool ego generate -check ./...
