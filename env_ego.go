@@ -7,17 +7,20 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/goncini/goncini/secrets"
 )
 
 // Env is the environment an app runs in: its name, which APP_ENV sets, and
 // the secrets that environment variables give it. An app's config reads it,
 // and nothing else reads the environment.
 //
-//line env.ego:16
+//line env.ego:19
 type Env struct {
 	// Name is the environment's name, such as dev, test or prod.
 	Name string
@@ -25,6 +28,7 @@ type Env struct {
 	vars    map[string]string
 	read    []string // the values of the secrets read, to mask them
 	missing []string
+	locked  []string // the secrets of a vault without its decryption key
 	unknown bool
 }
 
@@ -71,6 +75,28 @@ func (e MissingSecret) As(target any) bool {
 	return false
 }
 
+// LockedSecret means that the config reads a secret of the
+// environment's vault, whose decryption key is missing.
+type LockedSecret struct {
+	Name string
+	Env  string
+}
+
+func (LockedSecret) isEnvError() {}
+
+func (e LockedSecret) Error() string {
+	return fmt.Sprintf("secret %v is in the %v vault, whose decryption key is missing: set GONCINI_DECRYPTION_KEY", e.Name, e.Env)
+}
+
+// As lets pointers to LockedSecret match as LockedSecret.
+func (e LockedSecret) As(target any) bool {
+	if t, ok := target.(*LockedSecret); ok {
+		*t = e
+		return true
+	}
+	return false
+}
+
 // DotenvSyntax means that a line of a .env file doesn't parse.
 type DotenvSyntax struct {
 	File   string
@@ -91,8 +117,18 @@ func (e DotenvSyntax) As(target any) bool {
 	return false
 }
 
+// DecryptionKey is the environment variable that holds the decryption key
+// of the environment's vault, when its decrypt.key file isn't there, as in
+// prod.
+//
+//line env.ego:54
+const DecryptionKey = "GONCINI_DECRYPTION_KEY"
+
 // LoadEnv returns the environment named name, with the environment
-// variables of the process over those of the .env files in dir. An empty
+// variables of the process over the secrets of its vault, in
+// config/secrets/<name>, over those of the .env files in dir. A vault
+// without its decryption key, decrypt.key or DecryptionKey, gives its
+// secrets no value: the .env files' don't count for them. An empty
 // name means APP_ENV's value, from the process or the .env files, or else
 // dev; an empty APP_ENV counts as unset.
 //
@@ -104,20 +140,18 @@ func (e DotenvSyntax) As(target any) bool {
 // A .env file has a NAME=value per line, and # starts a comment. A value can
 // be quoted: in single quotes it is taken as is, and in double quotes \n,
 // \t, \" and \\ are escapes. Other variables aren't expanded.
-//
-//line env.ego:54
 func LoadEnv(dir, name string) (*Env, error) {
 	vars := map[string]string{}
 	if err := loadDotenv(filepath.Join(dir, ".env"), vars); err != nil {
 		return nil, err
 	}
-//line env.ego:57
+//line env.ego:75
 	if name == "" {
 		local := map[string]string{}
 		if err := loadDotenv(filepath.Join(dir, ".env.local"), local); err != nil {
 			return nil, err
 		}
-//line env.ego:60
+//line env.ego:78
 		name = cmp.Or(os.Getenv("APP_ENV"), local["APP_ENV"], vars["APP_ENV"], "dev")
 	}
 	files := []string{".env.local", ".env." + name, ".env." + name + ".local"}
@@ -129,13 +163,55 @@ func LoadEnv(dir, name string) (*Env, error) {
 			return nil, err
 		}
 	}
-//line env.ego:69
+//line env.ego:87
+	key := cmp.Or(os.Getenv(DecryptionKey), vars[DecryptionKey])
+	locked, err := loadVault(filepath.Join(dir, "config", "secrets", name), key, vars)
+	if err != nil {
+		return nil, err
+	}
+//line env.ego:89
 	for _, kv := range os.Environ() {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			vars[k] = v
 		}
 	}
-	return NewEnv(name, vars), nil
+	delete(vars, DecryptionKey) // no config needs it
+	e := NewEnv(name, vars)
+	e.locked = locked
+	return e, nil
+}
+
+// loadVault adds the secrets of the vault in dir to vars, if there is one.
+// If it is locked, it returns their names instead, and removes the values
+// that the .env files give them, such as dev's: only the process's
+// environment can stand in for the vault.
+func loadVault(dir, key string, vars map[string]string) ([]string, error) {
+	v, err := secrets.Open(dir, key)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+//line env.ego:110
+	if v.Locked() {
+		names, err2 := v.Names()
+		if err2 != nil {
+			return nil, err2
+		}
+//line env.ego:112
+		for _, name := range names {
+			delete(vars, name)
+		}
+		return names, nil
+	}
+	all, err3 := v.All()
+	if err3 != nil {
+		return nil, err3
+	}
+//line env.ego:118
+	maps.Copy(vars, all)
+	return nil, nil
 }
 
 // NewEnv returns the environment named name, with vars as its environment
@@ -185,7 +261,11 @@ func (e *Env) Err() error {
 		errs = append(errs, UnknownEnv{Name: e.Name})
 	}
 	for _, name := range e.missing {
-		errs = append(errs, MissingSecret{Name: name})
+		if slices.Contains(e.locked, name) {
+			errs = append(errs, LockedSecret{Name: name, Env: e.Name})
+		} else {
+			errs = append(errs, MissingSecret{Name: name})
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -200,7 +280,7 @@ func loadDotenv(path string, vars map[string]string) error {
 	if err != nil {
 		return err
 	}
-//line env.ego:137
+//line env.ego:186
 	for i, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || line[0] == '#' {
@@ -265,7 +345,7 @@ func dotenvValue(s string) (value, reason string) {
 			default:
 				esc = ""
 			}
-//line env.ego:193
+//line env.ego:242
 			if esc == "" {
 				return "", fmt.Sprintf("unknown escape \\%c", s[i])
 			}

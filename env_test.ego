@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/secrets"
 )
 
 // dotenv writes .env files into a new directory, by name.
@@ -42,6 +43,39 @@ func TestLoadEnvPrecedence(t *testing.T) {
 		if got := test.Secret(name); got != want {
 			t.Errorf("test: %s = %q, want %q", name, got, want)
 		}
+	}
+}
+
+// TestLoadEnvVault checks that the secrets of the environment's vault are
+// over the .env files', and under the process's; and that a vault without
+// its decryption key fails the secrets that the config reads of it.
+func TestLoadEnvVault(t *testing.T) {
+	dir := dotenv(t, map[string]string{".env": "A=env\nB=env\nC=env\n"})
+	prod := filepath.Join(dir, "config", "secrets", "prod")
+	must secrets.Generate(prod)
+	v := must secrets.Open(prod, "")
+	must v.Set("B", "vault")
+	must v.Set("C", "vault")
+	t.Setenv("C", "process")
+	env := must goncini.LoadEnv(dir, "prod")
+	for name, want := range map[string]string{"A": "env", "B": "vault", "C": "process"} {
+		if got := env.Secret(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	key := must os.ReadFile(filepath.Join(prod, secrets.DecryptKey))
+	must os.Remove(filepath.Join(prod, secrets.DecryptKey))
+	env = must goncini.LoadEnv(dir, "prod")
+	env.Secret("B")
+	env.Secret("D")
+	if err := env.Err(); err == nil || !strings.Contains(err.Error(), "secret B is in the prod vault, whose decryption key is missing") || !strings.Contains(err.Error(), "missing secret D") {
+		t.Errorf("locked: %v", err)
+	}
+	t.Setenv(goncini.DecryptionKey, string(key))
+	env = must goncini.LoadEnv(dir, "prod")
+	if got := env.Secret("B"); got != "vault" || env.OptionalSecret(goncini.DecryptionKey) != "" {
+		t.Errorf("with the key in the environment, B = %q, and the key is a secret", got)
 	}
 }
 

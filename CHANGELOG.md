@@ -53,6 +53,17 @@ new` and the makers.
   authenticated the request, which a verifier records with
   `security.SetClaims`, as oidc's does: `Load` reads them to create the
   user of a first request.
+- **secrets**, a new package, is a vault of secrets per environment, as
+  Symfony's is: in `config/secrets/<env>`, each secret sealed with HPKE,
+  ML-KEM-768 and X25519, with its public `encrypt.key`; `decrypt.key`, or
+  `GONCINI_DECRYPTION_KEY`, opens them. `goncini.LoadEnv` reads the vault
+  of the environment over the `.env` files and under the process's
+  environment; without its decryption key, a secret of the vault that the
+  config reads fails, rather than taking a `.env` file's value, such as
+  dev's. The goncini tool's `secrets:generate-keys` (`-rotate`),
+  `secrets:set` (`-random`), `secrets:list` (`-reveal`) and
+  `secrets:remove` manage it, and `goncini new` ignores prod's
+  `decrypt.key`.
 - **webhook**, a new package, sends and receives webhooks, as Symfony's
   Webhook component does. `Sender.Send` queues a webhook, which a worker
   posts signed as the Standard Webhooks specification says, retried on a

@@ -32,6 +32,13 @@
 //	go tool goncini make:command -summary "Prunes the old notes" notes:prune
 //	go tool goncini make:migration add_note_tags
 //
+// The secrets: commands keep an environment's secrets in its vault, in
+// config/secrets/<env>, encrypted, as Symfony's secrets: commands do:
+//
+//	go tool goncini secrets:generate-keys -env prod
+//	printf %s "$URL" | go tool goncini secrets:set -env prod DATABASE_URL
+//	go tool goncini secrets:list -env prod -reveal
+//
 // goncini tidy is go mod tidy for an app's .ego files, which go mod tidy
 // doesn't read: run it after importing a new module in a .ego file.
 //
@@ -69,7 +76,7 @@ import (
 	"text/tabwriter"
 )
 
-//line main.ego:70
+//line main.ego:77
 const usage = `usage: goncini new [-replace dir] module [dir]
        goncini serve [-addr address]
        goncini check
@@ -80,6 +87,10 @@ const usage = `usage: goncini new [-replace dir] module [dir]
        goncini make:message feature Name
        goncini make:command -summary text feature:name
        goncini make:migration name
+       goncini secrets:generate-keys [-env dev] [-rotate]
+       goncini secrets:set [-env dev] [-random] NAME
+       goncini secrets:list [-env dev] [-reveal]
+       goncini secrets:remove [-env dev] NAME
        goncini command [args]       the app's command, such as list`
 
 // commands are the tool's commands for an app, which goncini list shows
@@ -94,6 +105,10 @@ var commands = [][2]string{
 	{"make:message", "Makes a message, and its handler"},
 	{"make:command", "Makes a command"},
 	{"make:migration", "Makes a migration"},
+	{"secrets:generate-keys", "Makes an environment's vault of secrets, or replaces its keys"},
+	{"secrets:set", "Seals a secret in a vault, from the standard input"},
+	{"secrets:list", "Lists the secrets of a vault, and their values with -reveal"},
+	{"secrets:remove", "Removes a secret from a vault"},
 }
 
 func main() {
@@ -117,7 +132,7 @@ func main() {
 	fs.Usage = func() { fmt.Fprintln(os.Stderr, usage) }
 	args := func(min, max int) {
 
-//line main.ego:116
+//line main.ego:131
 		fs.Parse(os.Args[2:])
 		if fs.NArg() < min || fs.NArg() > max {
 			fs.Usage()
@@ -125,7 +140,7 @@ func main() {
 		}
 
 	}
-//line main.ego:122
+//line main.ego:137
 	var err error
 	var files []string // that a maker wrote
 	switch cmd {
@@ -171,6 +186,33 @@ func main() {
 	case "make:migration":
 		args(1, 1)
 		files, err = makeMigration(root, fs.Arg(0))
+	case "secrets:generate-keys", "secrets:set", "secrets:list", "secrets:remove":
+		env := fs.String("env", "dev", "the environment whose vault it is")
+		rotate := fs.Bool("rotate", false, "secrets:generate-keys: replace the keys, sealing the secrets again")
+		random := fs.Bool("random", false, "secrets:set: a random value, instead of the standard input's")
+		reveal := fs.Bool("reveal", false, "secrets:list: the values too")
+		var n int
+		if cmd == "secrets:set" || cmd == "secrets:remove" {
+			n = 1
+		} else {
+			n = 0
+		}
+//line main.ego:188
+		args(n, n)
+		switch cmd {
+		case "secrets:generate-keys":
+//line main.ego:190
+			err = generateKeys(os.Stdout, root, *env, *rotate)
+		case "secrets:set":
+//line main.ego:191
+			err = setSecret(os.Stderr, os.Stdin, root, *env, fs.Arg(0), *random)
+		case "secrets:list":
+//line main.ego:192
+			err = listSecrets(os.Stdout, root, *env, *reveal)
+		default:
+//line main.ego:193
+			err = removeSecret(os.Stdout, root, *env, fs.Arg(0))
+		}
 	default:
 		if !inApp {
 			fs.Usage()
@@ -186,8 +228,6 @@ func main() {
 			tw.Flush()
 		}
 		os.Exit(status)
-		fs.Usage()
-		os.Exit(2)
 	}
 	for _, f := range files {
 		fmt.Println("wrote", f)

@@ -24,7 +24,7 @@ its ecosystem, and [effect-go](https://github.com/effect-go/effect-go).
 
 Status: early. [`httpkernel`](httpkernel), [`routing`](routing),
 [`validator`](validator), config as code, the [`console`](console),
-`goncini.Main` and [`db`](db), with adapters for pgx, GORM, goose and
+`goncini.Main`, [`secrets`](secrets) and [`db`](db), with adapters for pgx, GORM, goose and
 golang-migrate, [`webtest`](webtest), [`security`](security) with voters,
 API keys and [OpenID Connect](security/oidc), [`openapi`](openapi),
 [`cors`](cors), [`ratelimit`](ratelimit), [`uid`](uid) and

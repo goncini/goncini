@@ -20,6 +20,8 @@ go tool goncini debug:container    # lists the services, with their providers an
 go tool goncini openapi:dump       # prints the API's OpenAPI document
 go tool goncini messenger:consume  # handles the queued messages, until stopped
 go tool goncini scheduler:run      # runs the scheduled tasks, until stopped
+go tool goncini secrets:set -env prod NAME   # seals a secret, from the standard input, in prod's vault
+go tool goncini secrets:list -env prod       # its secrets; -reveal, their values, with its decryption key
 ```
 
 `go tool goncini` runs the app's commands, such as `list`, from a binary
@@ -28,6 +30,12 @@ when a `.ego` file did. `goncini serve` answers what went wrong, such as
 what doesn't compile, until it is fixed. `go install
 github.com/goncini/goncini/cmd/goncini@latest` puts a `goncini` in the
 path, which runs the app's own: `goncini debug:router`.
+
+A secret that the servers need, such as prod's database URL, goes in the
+environment's vault, which `secrets:generate-keys -env prod` makes: its
+`encrypt.key` is committed, and its `decrypt.key` isn't, but the servers
+get it in `GONCINI_DECRYPTION_KEY`. `env.Secret("NAME")` reads the vault
+over the `.env` files, and under the process's environment.
 
 The makers write `.ego` files in the app's layout, add their services to
 `app/services.ego`, and run `goncini generate`; what doesn't compile is
@@ -54,6 +62,7 @@ requires the modules they import.
 ```
 main.ego              goncini.Main(config.Load, app.Build)
 .env, .env.test       APP_ENV and secrets for local work and tests
+config/secrets/<env>/ an environment's vault: its secrets, encrypted, committed
 config/               type Config, Load(env), and one file per environment
 app/                  the wiring: inject.go, services.ego, and the generated autoconfigured_gen.go
 migrations/           goose SQL files, embedded

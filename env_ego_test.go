@@ -10,11 +10,12 @@ import (
 	"testing"
 
 	"github.com/goncini/goncini"
+	"github.com/goncini/goncini/secrets"
 )
 
 // dotenv writes .env files into a new directory, by name.
 //
-//line env_test.ego:14
+//line env_test.ego:15
 func dotenv(t *testing.T, files map[string]string) string {
 	dir := t.TempDir()
 	for name, content := range files {
@@ -22,7 +23,7 @@ func dotenv(t *testing.T, files map[string]string) string {
 			panic(err)
 		}
 	}
-//line env_test.ego:19
+//line env_test.ego:20
 	return dir
 }
 
@@ -41,7 +42,7 @@ func TestLoadEnvPrecedence(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line env_test.ego:34
+//line env_test.ego:35
 	for name, want := range map[string]string{"A": "env", "B": "local", "C": "dev", "D": "dev.local", "E": "process"} {
 		if got := dev.Secret(name); got != want {
 			t.Errorf("dev: %s = %q, want %q", name, got, want)
@@ -52,11 +53,78 @@ func TestLoadEnvPrecedence(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line env_test.ego:41
+//line env_test.ego:42
 	for name, want := range map[string]string{"A": "env", "B": "env", "C": "test", "D": "test.local"} {
 		if got := test.Secret(name); got != want {
 			t.Errorf("test: %s = %q, want %q", name, got, want)
 		}
+	}
+}
+
+// TestLoadEnvVault checks that the secrets of the environment's vault are
+// over the .env files', and under the process's; and that a vault without
+// its decryption key fails the secrets that the config reads of it.
+func TestLoadEnvVault(t *testing.T) {
+	dir := dotenv(t, map[string]string{".env": "A=env\nB=env\nC=env\n"})
+	prod := filepath.Join(dir, "config", "secrets", "prod")
+	if err := secrets.Generate(prod); err != nil {
+		panic(err)
+	}
+//line env_test.ego:56
+	v, err := secrets.Open(prod, "")
+	if err != nil {
+		panic(err)
+	}
+//line env_test.ego:57
+	if err := v.Set("B", "vault"); err != nil {
+		panic(err)
+	}
+//line env_test.ego:58
+	if err := v.Set("C", "vault"); err != nil {
+		panic(err)
+	}
+//line env_test.ego:59
+	t.Setenv("C", "process")
+	env, err := goncini.LoadEnv(dir, "prod")
+	if err != nil {
+		panic(err)
+	}
+//line env_test.ego:61
+	for name, want := range map[string]string{"A": "env", "B": "vault", "C": "process"} {
+		if got := env.Secret(name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	key, err := os.ReadFile(filepath.Join(prod, secrets.DecryptKey))
+	if err != nil {
+		panic(err)
+	}
+//line env_test.ego:68
+	if err := os.Remove(filepath.Join(prod, secrets.DecryptKey)); err != nil {
+		panic(err)
+	}
+//line env_test.ego:69
+	v2, err := goncini.LoadEnv(dir, "prod")
+	if err != nil {
+		panic(err)
+	}
+	env = v2
+//line env_test.ego:70
+	env.Secret("B")
+	env.Secret("D")
+	if err := env.Err(); err == nil || !strings.Contains(err.Error(), "secret B is in the prod vault, whose decryption key is missing") || !strings.Contains(err.Error(), "missing secret D") {
+		t.Errorf("locked: %v", err)
+	}
+	t.Setenv(goncini.DecryptionKey, string(key))
+	v3, err := goncini.LoadEnv(dir, "prod")
+	if err != nil {
+		panic(err)
+	}
+	env = v3
+//line env_test.ego:77
+	if got := env.Secret("B"); got != "vault" || env.OptionalSecret(goncini.DecryptionKey) != "" {
+		t.Errorf("with the key in the environment, B = %q, and the key is a secret", got)
 	}
 }
 
@@ -85,7 +153,7 @@ func TestLoadEnvName(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line env_test.ego:70
+//line env_test.ego:104
 		if env.Name != tt.want {
 			t.Errorf("%v with APP_ENV=%q: %s, want %s", tt.files, tt.process, env.Name, tt.want)
 		}
@@ -106,7 +174,7 @@ SPACES = around
 	if err != nil {
 		panic(err)
 	}
-//line env_test.ego:87
+//line env_test.ego:121
 	for name, want := range map[string]string{
 		"PLAIN":    "a value",
 		"EXPORTED": "1",
