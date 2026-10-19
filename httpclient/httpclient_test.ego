@@ -115,6 +115,11 @@ func TestPOSTs(t *testing.T) {
 		if res.StatusCode != 200 || len(a.got) != 2 || a.bodies[1] != `{"name":"new"}` {
 			t.Errorf("with an idempotency key: %d, %d attempts, bodies %q", res.StatusCode, len(a.got), a.bodies)
 		}
+		a = &api{}
+		must httpclient.Send[struct{}](ctx, client(a), http.MethodPost, "/repos", url.Values{"name": {"new & old"}})
+		if a.got[0].Header.Get("Content-Type") != "application/x-www-form-urlencoded" || a.bodies[0] != "name=new+%26+old" {
+			t.Errorf("a form: %q, %q", a.got[0].Header.Get("Content-Type"), a.bodies[0])
+		}
 	})
 }
 

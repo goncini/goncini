@@ -279,33 +279,39 @@ func Get[T any](ctx context.Context, c *Client, path string) (T, error) {
 }
 
 // Send sends a request with the method for path, with body encoded as JSON
-// unless it is nil, and decodes the response's JSON body into a T, unless
-// T is struct{}. A response whose status isn't 2xx is a *StatusError.
+// unless it is nil, or as a URL-encoded form if it is url.Values, and
+// decodes the response's JSON body into a T, unless T is struct{}. A
+// response whose status isn't 2xx is a *StatusError.
 func Send[T any](ctx context.Context, c *Client, method, path string, body any) (T, error) {
 	var out T
 	var r io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
+	contentType := "application/json"
+	switch b := body.(type) {
+	case nil:
+	case url.Values:
+		r, contentType = strings.NewReader(b.Encode()), "application/x-www-form-urlencoded"
+	default:
+		data, err := json.Marshal(b)
 		if err != nil {
 			return *new(T), err
 		}
-//line httpclient.ego:241
-		r = bytes.NewReader(b)
+//line httpclient.ego:247
+		r = bytes.NewReader(data)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, path, r)
 	if err != nil {
 		return *new(T), err
 	}
-//line httpclient.ego:244
+//line httpclient.ego:250
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 	res, err := c.Do(req)
 	if err != nil {
 		return *new(T), err
 	}
-//line httpclient.ego:249
+//line httpclient.ego:255
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		b, _ := io.ReadAll(io.LimitReader(res.Body, 4096))

@@ -2,14 +2,25 @@ package notifier_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json/v2"
+	"encoding/pem"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/goncini/goncini/httpclient"
 	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/mime"
@@ -45,7 +56,8 @@ func setup(t *testing.T) (notifier.Config, *mailer.MemoryTransport, *chat, maile
 
 func TestChannels(t *testing.T) {
 	c, mail, ch, m := setup(t)
-	n := notifier.New(c, notifier.NewChannels(c, m, mail))
+	cs := must notifier.NewChannels(c, m, mail)
+	n := notifier.New(c, cs)
 	ctx := context.Background()
 	bob := notifier.Recipient{Name: "Bob", Email: "bob@example.com"}
 	quiet := notifier.Recipient{Email: "ann@example.com", Channels: []string{"sms"}} // wants no email
@@ -66,20 +78,162 @@ func TestChannels(t *testing.T) {
 }
 
 // TestAsync checks that an Async notifier delivers through Messenger, a
-// message per delivery.
+// message per delivery, and that a delivery that Twilio refused isn't
+// retried.
 func TestAsync(t *testing.T) {
 	c, mail, ch, m := setup(t)
-	cs := notifier.NewChannels(c, m, mail)
+	c.Twilio = map[string]notifier.Twilio{"sms": {AccountSID: "AC1", AuthToken: "secret", From: "+14155550100"}}
+	c.Policy["high"] = append(c.Policy["high"], "sms")
+	cs := must notifier.NewChannels(c, m, mail)
+	twilio := &smsAPI{refuse: "+33600000000"}
+	cs["sms"].(*notifier.TwilioChannel).Client.Transport = httpclient.Handler(twilio)
 	bus := messenger.NewBus(messenger.Config{}, messenger.NewMemoryTransports(messenger.Config{}), []messenger.Handlers{notifier.NewHandler(c, cs)}, slog.New(slog.DiscardHandler))
 	n := notifier.NewAsync(c, cs, bus)
 	ctx := context.Background()
-	must n.Send(ctx, notifier.Notification{Subject: "Removed", Importance: notifier.High}, notifier.Recipient{Email: "bob@example.com"})
-	if len(mail.Sent()) != 0 || len(ch.texts) != 0 {
+	must n.Send(ctx, notifier.Notification{Subject: "Removed", Importance: notifier.High}, notifier.Recipient{Email: "bob@example.com", Phone: "+33600000000"})
+	if len(mail.Sent()) != 0 || len(ch.texts) != 0 || len(twilio.texts) != 0 {
 		t.Fatal("delivered in the request")
 	}
 	w := &messenger.Worker{Bus: bus, Transports: []string{"async"}, Drain: true}
 	must w.Run(ctx)
-	if len(mail.Sent()) != 1 || len(ch.texts) != 1 {
-		t.Errorf("emails %d, chat %d", len(mail.Sent()), len(ch.texts))
+	if len(mail.Sent()) != 1 || len(ch.texts) != 1 || len(twilio.texts) != 1 {
+		t.Errorf("emails %d, chat %d, SMS %d", len(mail.Sent()), len(ch.texts), len(twilio.texts))
+	}
+	failed := must bus.Transports["failed"].(messenger.Browser).List(ctx)
+	if len(failed) != 1 || failed[0].Attempts != 1 || !strings.Contains(failed[0].Error, "21211") {
+		t.Errorf("failed %+v", failed)
+	}
+}
+
+// smsAPI is Twilio's API of messages, which keeps what it is asked to text,
+// and refuses a number.
+type smsAPI struct {
+	refuse string
+	mu     sync.Mutex
+	texts  []url.Values
+	auth   []string
+}
+
+func (a *smsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r.ParseForm()
+	a.mu.Lock()
+	a.texts, a.auth = append(a.texts, r.PostForm), append(a.auth, r.URL.Path+" "+r.Header.Get("Authorization"))
+	a.mu.Unlock()
+	if r.PostForm.Get("To") == a.refuse {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"code":21211,"message":"Invalid 'To' Phone Number"}`))
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte(`{"sid":"SM1"}`))
+}
+
+// TestTwilio checks that the recipients with phones are texted the subject,
+// from the account's number or messaging service.
+func TestTwilio(t *testing.T) {
+	ctx := context.Background()
+	for _, from := range []string{"+14155550100", "MG1"} {
+		c := notifier.Config{Twilio: map[string]notifier.Twilio{"sms": {AccountSID: "AC1", AuthToken: "secret", From: from}}}
+		cs := must notifier.NewChannels(c, mailer.Config{}, &mailer.MemoryTransport{})
+		api := &smsAPI{}
+		cs["sms"].(*notifier.TwilioChannel).Client.Transport = httpclient.Handler(api)
+		n := notifier.New(c, cs)
+		must n.Send(ctx, notifier.Notification{Subject: "Your check is down", Content: "Since 3am.", Channels: []string{"sms"}}, notifier.Recipient{Phone: "+33612345678"}, notifier.Recipient{Email: "no@phone.example"})
+		if len(api.texts) != 1 {
+			t.Fatalf("texted %v", api.texts)
+		}
+		got := api.texts[0]
+		if got.Get("To") != "+33612345678" || got.Get("Body") != "Your check is down" || got.Get("From")+got.Get("MessagingServiceSid") != from {
+			t.Errorf("texted %v", got)
+		}
+		if api.auth[0] != "/2010-04-01/Accounts/AC1/Messages.json Basic QUMxOnNlY3JldA==" {
+			t.Errorf("request %q", api.auth[0])
+		}
+	}
+}
+
+// pushAPI is Firebase's APIs of tokens and messages: it grants a token to
+// the assertions that the account's key signed, refuses it once if told
+// to, and keeps the messages it is sent.
+type pushAPI struct {
+	t       *testing.T
+	key     *rsa.PublicKey
+	mu      sync.Mutex
+	grants  int
+	refuse  bool // the next message's token, once
+	devices []string
+	titles  []string
+}
+
+func (a *pushAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	switch r.URL.Path {
+	case "/token":
+		r.ParseForm()
+		claims := jwt.MapClaims{}
+		_, err := jwt.ParseWithClaims(r.PostForm.Get("assertion"), claims, func(*jwt.Token) (any, error) { return a.key, nil },
+			jwt.WithValidMethods([]string{"RS256"}), jwt.WithAudience("https://oauth2.example/token"), jwt.WithIssuer("push@app.iam.example"))
+		if err != nil || claims["scope"] != "https://www.googleapis.com/auth/firebase.messaging" || r.PostForm.Get("grant_type") != "urn:ietf:params:oauth:grant-type:jwt-bearer" {
+			a.t.Errorf("assertion %v: %v", claims, err)
+		}
+		a.grants++
+		fmt.Fprintf(w, `{"access_token":"token%d","expires_in":3600}`, a.grants)
+	case "/v1/projects/app/messages:send":
+		if a.refuse || r.Header.Get("Authorization") != f"Bearer token{a.grants}" {
+			a.refuse = false
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var m struct {
+			Message struct {
+				Token        string `json:"token"`
+				Notification struct {
+					Title string `json:"title"`
+				} `json:"notification"`
+			} `json:"message"`
+		}
+		json.UnmarshalRead(r.Body, &m)
+		if m.Message.Token == "gone" {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"error":{"code":404,"status":"NOT_FOUND","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"UNREGISTERED"}]}}`))
+			return
+		}
+		a.devices, a.titles = append(a.devices, m.Message.Token), append(a.titles, m.Message.Notification.Title)
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+// TestFirebase checks that each device of the recipients is pushed the
+// notification, with an access token kept until it is refused, and that a
+// device that is gone is an UnregisteredDevice.
+func TestFirebase(t *testing.T) {
+	key := must rsa.GenerateKey(rand.Reader, 2048)
+	der := must x509.MarshalPKCS8PrivateKey(key)
+	credentials := must json.Marshal(map[string]string{
+		"type": "service_account", "project_id": "app", "private_key_id": "k1", "private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})),
+		"client_email": "push@app.iam.example", "token_uri": "https://oauth2.example/token",
+	})
+	c := notifier.Config{Firebase: map[string]notifier.Firebase{"push": {Credentials: string(credentials)}}}
+	cs := must notifier.NewChannels(c, mailer.Config{}, &mailer.MemoryTransport{})
+	api := &pushAPI{t: t, key: &key.PublicKey}
+	cs["push"].(*notifier.FirebaseChannel).Client.Transport = httpclient.Handler(api)
+	n := notifier.New(c, cs)
+	ctx := context.Background()
+	alert := notifier.Notification{Subject: "Your check is down", Channels: []string{"push"}}
+
+	must n.Send(ctx, alert, notifier.Recipient{Devices: []string{"phone", "tablet"}}, notifier.Recipient{Email: "no@devices.example"})
+	api.refuse = true
+	must n.Send(ctx, alert, notifier.Recipient{Devices: []string{"phone"}})
+	if !slices.Equal(api.devices, []string{"phone", "tablet", "phone"}) || api.titles[0] != "Your check is down" || api.grants != 2 {
+		t.Errorf("pushed to %v, %v, with %d tokens", api.devices, api.titles, api.grants)
+	}
+	err := n.Send(ctx, alert, notifier.Recipient{Devices: []string{"gone"}})
+	if e, ok := errors.AsType[notifier.UnregisteredDevice](err); !ok || e.Token != "gone" {
+		t.Errorf("pushing to a device that is gone: %v", err)
+	}
+	if _, err := notifier.NewChannels(notifier.Config{Firebase: map[string]notifier.Firebase{"push": {Credentials: "{}"}}}, mailer.Config{}, &mailer.MemoryTransport{}); err == nil {
+		t.Error("empty credentials made a channel")
 	}
 }

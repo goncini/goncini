@@ -1,0 +1,59 @@
+package notifier
+
+import (
+	"cmp"
+	"context"
+	"encoding/base64"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"github.com/goncini/goncini/httpclient"
+)
+
+// Twilio is an account of Twilio's, which texts from one of its numbers.
+type Twilio struct {
+	// AccountSID is the account's SID, AC….
+	AccountSID string
+	// AuthToken is the account's auth token: a secret.
+	AuthToken string
+	// From is the number to text from, in E.164, or the SID of a messaging
+	// service, MG…, which picks one of its numbers.
+	From string
+}
+
+// TwilioChannel texts notifications to their recipients' phones, through
+// Twilio's API: their subjects, as an SMS should be short, or their
+// contents when they have none.
+type TwilioChannel struct {
+	// Client is the client of the account's API.
+	Client *httpclient.Client
+	From   string
+}
+
+// NewTwilioChannel returns the channel of the account.
+func NewTwilioChannel(t Twilio) *TwilioChannel {
+	return &TwilioChannel{
+		Client: httpclient.New(httpclient.Config{
+			BaseURL: "https://api.twilio.com/2010-04-01/Accounts/" + url.PathEscape(t.AccountSID),
+			Header:  map[string]string{"Authorization": "Basic " + base64.StdEncoding.EncodeToString([]byte(t.AccountSID+":"+t.AuthToken))},
+		}),
+		From: t.From,
+	}
+}
+
+// Deliveries returns r, if it has a phone.
+func (c *TwilioChannel) Deliveries(r Recipient) []Recipient {
+	return if r.Phone == "" { nil } else { []Recipient{r} }
+}
+
+func (c *TwilioChannel) Notify(ctx context.Context, n Notification, r Recipient) error {
+	form := url.Values{"To": {r.Phone}, "Body": {cmp.Or(n.Subject, n.Content)}}
+	if strings.HasPrefix(c.From, "MG") {
+		form.Set("MessagingServiceSid", c.From)
+	} else {
+		form.Set("From", c.From)
+	}
+	_, err := httpclient.Send[struct{}](ctx, c.Client, http.MethodPost, "/Messages.json", form)
+	return err
+}

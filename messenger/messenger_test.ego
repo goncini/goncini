@@ -111,6 +111,28 @@ func TestRetriesAndFailures(t *testing.T) {
 	})
 }
 
+// TestUnrecoverable checks that a message whose handler's error is
+// unrecoverable goes to the failure transport at once.
+func TestUnrecoverable(t *testing.T) {
+	synctest.Test(t, (t *testing.T) => {
+		b, _, failed := newBus()
+		tries := 0
+		messenger.Handle(b, func(ctx context.Context, m welcome) error {
+			tries++
+			return messenger.Unrecoverable(errors.New("there is no such address"))
+		})
+		messenger.Route[welcome](b, "async")
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		must messenger.Dispatch(ctx, b, welcome{"ann"})
+		must worker(b, 0).Run(ctx)
+		list := must failed.List(ctx)
+		if tries != 1 || len(list) != 1 || list[0].Error != "there is no such address" {
+			t.Errorf("tries %d, failed %+v", tries, list)
+		}
+	})
+}
+
 // TestRetryOfAType checks that the messages of a type with a schedule of
 // its own are retried on it.
 func TestRetryOfAType(t *testing.T) {

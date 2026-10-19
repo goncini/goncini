@@ -142,6 +142,14 @@ func TestPOSTs(t *testing.T) {
 		if res.StatusCode != 200 || len(a.got) != 2 || a.bodies[1] != `{"name":"new"}` {
 			t.Errorf("with an idempotency key: %d, %d attempts, bodies %q", res.StatusCode, len(a.got), a.bodies)
 		}
+		a = &api{}
+		if _, err := httpclient.Send[struct{}](ctx, client(a), http.MethodPost, "/repos", url.Values{"name": {"new & old"}}); err != nil {
+			panic(err)
+		}
+//line httpclient_test.ego:120
+		if a.got[0].Header.Get("Content-Type") != "application/x-www-form-urlencoded" || a.bodies[0] != "name=new+%26+old" {
+			t.Errorf("a form: %q, %q", a.got[0].Header.Get("Content-Type"), a.bodies[0])
+		}
 
 	})
 }
@@ -149,7 +157,7 @@ func TestPOSTs(t *testing.T) {
 // failing is a transport whose first round trip fails, as a connection
 // refused.
 //
-//line httpclient_test.ego:123
+//line httpclient_test.ego:128
 type failing struct {
 	http.RoundTripper
 	failed bool
@@ -166,14 +174,14 @@ func (f *failing) RoundTrip(req *http.Request) (*http.Response, error) {
 func TestConnectionFailures(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 
-//line httpclient_test.ego:138
+//line httpclient_test.ego:143
 		a := &api{}
 		c := client(a)
 		c.Transport = &failing{RoundTripper: c.Transport}
 		if _, err := httpclient.Get[repo](context.Background(), c, "/"); err != nil {
 			panic(err)
 		}
-//line httpclient_test.ego:142
+//line httpclient_test.ego:147
 		if len(a.got) != 1 {
 			t.Errorf("%d attempts reached the API", len(a.got))
 		}
@@ -181,23 +189,23 @@ func TestConnectionFailures(t *testing.T) {
 	})
 }
 
-//line httpclient_test.ego:148
+//line httpclient_test.ego:153
 func TestTracePropagates(t *testing.T) {
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	tp := sdktrace.NewTracerProvider()
 	otel.SetTracerProvider(tp)
 	t.Cleanup(func() {
-//line httpclient_test.ego:152
+//line httpclient_test.ego:157
 		tp.Shutdown(context.Background())
 	})
-//line httpclient_test.ego:153
+//line httpclient_test.ego:158
 	ctx, span := tp.Tracer("test").Start(context.Background(), "caller")
 	defer span.End()
 	a := &api{}
 	if _, err := httpclient.Get[repo](ctx, client(a), "/"); err != nil {
 		panic(err)
 	}
-//line httpclient_test.ego:157
+//line httpclient_test.ego:162
 	if tp := a.got[0].Header.Get("Traceparent"); !strings.Contains(tp, span.SpanContext().TraceID().String()) {
 		t.Errorf("traceparent %q", tp)
 	}
@@ -210,7 +218,7 @@ func TestRedirectsAndHosts(t *testing.T) {
 	c := httpclient.New(httpclient.Config{BaseURL: "https://api.example.com", Header: map[string]string{"Authorization": "Bearer secret"}})
 	c.Transport = httpclient.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-//line httpclient_test.ego:168
+//line httpclient_test.ego:173
 		auths = append(auths, r.URL.Host+" "+r.Header.Get("Authorization"))
 		if r.URL.Path == "/old" {
 			http.Redirect(w, r, "/new", http.StatusMovedPermanently)
@@ -219,27 +227,27 @@ func TestRedirectsAndHosts(t *testing.T) {
 		w.Write([]byte(`{"name":"goncini"}`))
 
 	}))
-//line httpclient_test.ego:175
+//line httpclient_test.ego:180
 	r, err := httpclient.Get[repo](context.Background(), c, "/old")
 	if err != nil {
 		panic(err)
 	}
-//line httpclient_test.ego:176
+//line httpclient_test.ego:181
 	if _, err := httpclient.Get[repo](context.Background(), c, "https://elsewhere.example.com/x"); err != nil {
 		panic(err)
 	}
-//line httpclient_test.ego:177
+//line httpclient_test.ego:182
 	u, err := url.Parse("/new")
 	if err != nil {
 		panic(err)
 	}
-//line httpclient_test.ego:178
+//line httpclient_test.ego:183
 	req := &http.Request{Method: http.MethodGet, URL: u} // no Header
 	res, err := c.Do(req)
 	if err != nil {
 		panic(err)
 	}
-//line httpclient_test.ego:180
+//line httpclient_test.ego:185
 	res.Body.Close()
 	want := "api.example.com Bearer secret, api.example.com Bearer secret, elsewhere.example.com , api.example.com Bearer secret"
 	if r.Name != "goncini" || strings.Join(auths, ", ") != want {
@@ -255,7 +263,7 @@ func TestRedirectsAndHosts(t *testing.T) {
 func TestHandlerTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 
-//line httpclient_test.ego:194
+//line httpclient_test.ego:199
 		c := httpclient.New(httpclient.Config{Timeout: time.Second, Retries: -1})
 		c.Transport = httpclient.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(time.Minute) }))
 		_, err := httpclient.Get[repo](context.Background(), c, "https://api.example.com/slow")
@@ -270,12 +278,12 @@ func TestHandlerTimeout(t *testing.T) {
 // TestPublic checks that a client of Public doesn't connect to the
 // loopback.
 //
-//line httpclient_test.ego:206
+//line httpclient_test.ego:211
 func TestPublic(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 	}))
-//line httpclient_test.ego:208
+//line httpclient_test.ego:213
 	defer srv.Close()
 	c := httpclient.New(httpclient.Config{Retries: -1})
 	c.Transport = httpclient.Public()
@@ -283,7 +291,7 @@ func TestPublic(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line httpclient_test.ego:212
+//line httpclient_test.ego:217
 	if _, err := c.Do(req); err == nil || !strings.Contains(err.Error(), "127.0.0.1 isn't a public address") {
 		t.Errorf("connected to the loopback: %v", err)
 	}

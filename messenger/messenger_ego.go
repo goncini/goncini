@@ -401,10 +401,23 @@ type NoHandler struct {
 
 func (e NoHandler) Error() string { return "messenger: no handler of " + e.Type }
 
+// Unrecoverable marks err as an error that trying again won't help, such
+// as an API's refusal of a request: a handler that returns it sends its
+// message to the failure transport at once, rather than retrying it.
+func Unrecoverable(err error) error {
+	return unrecoverable{err}
+}
+
+type unrecoverable struct{ error }
+
+func (e unrecoverable) Unwrap() error { return e.error }
+
 // retry returns when msg, which failed with err, should be tried again,
 // and whether it should.
 func (b *Bus) retry(msg Message, err error) (time.Time, bool) {
-	if _, ok := errors.AsType[NoHandler](err); ok {
+	_, none := errors.AsType[NoHandler](err)
+	_, refused := errors.AsType[unrecoverable](err)
+	if none || refused {
 		return time.Time{}, false // trying again won't help
 	}
 	b.mu.RLock()

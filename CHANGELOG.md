@@ -78,6 +78,25 @@
 - **messenger:** `transporttest.RunBroker` checks the transport of a
   broker that times the delays and the leases itself, by the clock.
   `Config.FailureTransport` returns the failure transport's name.
+- **messenger:** `messenger.Unrecoverable(err)` marks a handler's error as
+  one that trying again won't change: its message goes to the failure
+  transport at once, as Symfony's `UnrecoverableMessageHandlingException`
+  sends it.
+- **notifier:** SMS and push channels. `notifier.Config.Twilio` names SMS
+  channels of Twilio's accounts, which text the subject to a recipient's
+  `Phone`; `notifier.Config.Firebase` names push channels of Firebase's
+  projects, from a service account's key, which push the subject and the
+  content to each of a recipient's `Devices`, through FCM's HTTP v1 API. A
+  device that is no longer registered is a `notifier.UnregisteredDevice`.
+  With `Async`, a delivery that the API refused, with a 4xx other than 408
+  and 429, goes to the failure transport at once.
+  - **Breaking:** `NewChannels` returns an error too, for credentials that
+    don't parse.
+  - A channel that is a `RecipientChannel` says which recipients it
+    reaches, through `Deliveries`; one that isn't, as a chat, gets a
+    notification once. The email channel is one, rather than the channel
+    named `email` being special.
+- **httpclient:** `Send` posts a `url.Values` body as a URL-encoded form.
 
 ## v0.3.0 (2026-10-19)
 

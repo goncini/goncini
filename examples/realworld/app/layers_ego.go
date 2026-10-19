@@ -68,7 +68,10 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("NewTransport: %w", err)
 	}
-	channels := notifier.NewChannels(config7, config8, transport)
+	channels, err := notifier.NewChannels(config7, config8, transport)
+	if err != nil {
+		return nil, fmt.Errorf("NewChannels: %w", err)
+	}
 	config9 := autoConfigMessenger(cfg)
 	transports, err := messenger.NewSQLTransports(db2, config9)
 	if err != nil {
@@ -178,7 +181,10 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config) (*Test, e
 	if err != nil {
 		return nil, fmt.Errorf("NewTransport: %w", err)
 	}
-	channels := notifier.NewChannels(config7, config8, transport)
+	channels, err := notifier.NewChannels(config7, config8, transport)
+	if err != nil {
+		return nil, fmt.Errorf("NewChannels: %w", err)
+	}
 	config9 := autoConfigMessenger(cfg)
 	transports, err := messenger.NewSQLTransports(db2, config9)
 	if err != nil {

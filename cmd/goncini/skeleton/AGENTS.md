@@ -359,7 +359,9 @@ check messenger.Dispatch(ctx, bus, NotifyFollowers{Slug: slug}) ""
 A handler that dispatches messages, or sends webhooks, keeps the bus that
 its `Handlers` method is given: it can't take the bus, which takes the
 handlers. `messenger.Retry[M](b, schedule)` retries a type's messages on a
-schedule of their own.
+schedule of their own; a handler's `messenger.Unrecoverable(err)` sends
+its message to the failure transport at once, for what trying again won't
+change.
 
 Recurring work is a scheduled task, run by `go tool goncini scheduler:run`: with
 a lock store that the app's instances share, such as `lock.SQL`, once per
@@ -424,7 +426,12 @@ changes.
   `GitHub` or `Stripe`. A webhook can arrive twice: its endpoint takes its
   ID, Standard's `webhook-id` header, once.
 - `notifier.Notifier.Send(ctx, notification, recipients…)` tells people
-  on the channels of the notification's importance: email, chat webhooks.
+  on the channels of the notification's importance: email, chat webhooks,
+  and from `notifier.Config`'s `Twilio` and `Firebase`, SMS to a
+  recipient's `Phone` and push notifications to their `Devices`. With
+  `notifier.Async`, a delivery that the API refused, with a 4xx, isn't
+  retried; a device that is gone is a `notifier.UnregisteredDevice`, whose
+  token the app forgets.
 - Problems are translated by a `translation.Translator` from catalogs of
   the app's messages, such as `"must be at least {n}": "doit valoir au
   moins {n}"`. A number chooses a plural's form, by the CLDR rules of the

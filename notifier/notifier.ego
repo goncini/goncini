@@ -1,6 +1,6 @@
 // Package notifier tells people what happened, on the channels that suit
 // it, as Symfony's Notifier does: a notification's importance chooses its
-// channels, email or chat, and each recipient may choose theirs.
+// channels, email, chat, SMS or push, and each recipient may choose theirs.
 //
 //	check n.Send(ctx, notifier.Notification{
 //		Subject:    "Your article was removed",
@@ -8,10 +8,14 @@
 //		Importance: notifier.High,
 //	}, notifier.Recipient{Email: "bob@example.com"}) ""
 //
-// Channels are "email", through a mailer, and chat webhooks named in the
-// config, which get Slack's {"text": …}: Slack, Mattermost, Rocket.Chat,
-// Discord's /slack endpoints, and others take it. With Async, each delivery
-// is a message of its own, retried on its own.
+// Channels are "email", through a mailer, and those named in the config:
+// chat webhooks, which get Slack's {"text": …}, as Slack, Mattermost,
+// Rocket.Chat, Discord's /slack endpoints and others take it; Twilio's SMS,
+// to the recipients' phones; and Firebase Cloud Messaging's push
+// notifications, to their devices. With Async, each delivery is a message
+// of its own, retried on its own, unless the channel's API refused it: a
+// request that fails with a 4xx, other than 408 and 429, goes to the
+// failure transport at once.
 package notifier
 
 import (
@@ -56,6 +60,11 @@ type Notification struct {
 type Recipient struct {
 	Name  string `json:"name,omitempty"`
 	Email string `json:"email,omitempty"`
+	// Phone is the number that SMS channels text, in E.164: +14155550100.
+	Phone string `json:"phone,omitempty"`
+	// Devices are the tokens of the recipient's devices, which push
+	// channels notify, as Firebase's SDKs give them to the app's clients.
+	Devices []string `json:"devices,omitempty"`
 	// Channels, when set, are the channels the recipient wants, among
 	// those the notification goes to.
 	Channels []string `json:"channels,omitempty"`
@@ -66,10 +75,24 @@ type Channel interface {
 	Notify(ctx context.Context, n Notification, r Recipient) error
 }
 
+// RecipientChannel is a channel that tells recipients, each on their own,
+// rather than everyone who reads it, as a chat does.
+type RecipientChannel interface {
+	Channel
+	// Deliveries returns the recipients to deliver to for r, each with one
+	// address: none if r has none of the channel's, and one per device for
+	// push.
+	Deliveries(r Recipient) []Recipient
+}
+
 // Config configures a notifier.
 type Config struct {
 	// Chat are the URLs of the chat webhooks, by channel name: secrets.
 	Chat map[string]string
+	// Twilio are the SMS channels, by name, of Twilio's accounts.
+	Twilio map[string]Twilio
+	// Firebase are the push channels, by name, of Firebase's projects.
+	Firebase map[string]Firebase
 	// Policy are the channels of each importance, by its name: "low",
 	// "medium", "high" and "urgent". An importance it lacks goes to email,
 	// and urgent ones to every channel.
@@ -89,14 +112,24 @@ var Sync = layer.Set(NewChannels, New)
 var Async = layer.Set(NewChannels, NewHandler, NewAsync)
 
 // NewChannels returns the email channel, sending through t from mc.From,
-// and the chat channels of c. A notifier's deliveries are its own
-// messages, when it is Async: the email channel sends at once.
-func NewChannels(c Config, mc mailer.Config, t mailer.Transport) Channels {
+// and the chat, SMS and push channels of c. A notifier's deliveries are
+// its own messages, when it is Async: the email channel sends at once.
+func NewChannels(c Config, mc mailer.Config, t mailer.Transport) (Channels, error) {
 	cs := Channels{"email": &EmailChannel{Mailer: mailer.New(mc, t)}}
 	for name, url := range c.Chat {
 		cs[name] = &ChatChannel{Client: httpclient.New(httpclient.Config{}), URL: url}
 	}
-	return cs
+	for name, account := range c.Twilio {
+		cs[name] = NewTwilioChannel(account)
+	}
+	for name, project := range c.Firebase {
+		ch, err := NewFirebaseChannel(project)
+		if err != nil {
+			return nil, fmt.Errorf("notifier: the channel %q: %w", name, err)
+		}
+		cs[name] = ch
+	}
+	return cs, nil
 }
 
 // Notifier delivers notifications on their channels.
@@ -127,22 +160,25 @@ type Deliver struct {
 // Send delivers n to the recipients, on the channels its importance or
 // its Channels say, and the recipients want. A chat channel gets n once.
 func (nt *Notifier) Send(ctx context.Context, n Notification, recipients ...Recipient) error {
-	channels := nt.channels(n)
 	var errs []error
-	for _, name := range channels {
-		if _, ok := nt.Channels[name]; !ok {
+	for _, name := range nt.channels(n) {
+		c, ok := nt.Channels[name]
+		if !ok {
 			errs = append(errs, fmt.Errorf("notifier: no channel %q", name))
 			continue
 		}
-		if name != "email" {
+		rc, personal := c.(RecipientChannel)
+		if !personal {
 			errs = append(errs, nt.deliver(ctx, Deliver{Channel: name, Notification: n}))
 			continue
 		}
 		for _, r := range recipients {
-			if len(r.Channels) > 0 && !slices.Contains(r.Channels, name) || r.Email == "" {
+			if len(r.Channels) > 0 && !slices.Contains(r.Channels, name) {
 				continue
 			}
-			errs = append(errs, nt.deliver(ctx, Deliver{Channel: name, Notification: n, Recipient: r}))
+			for _, to := range rc.Deliveries(r) {
+				errs = append(errs, nt.deliver(ctx, Deliver{Channel: name, Notification: n, Recipient: to}))
+			}
 		}
 	}
 	return errors.Join(errs...)
@@ -194,15 +230,35 @@ func (h *Handler) Handlers(b *messenger.Bus) {
 		if !ok {
 			return fmt.Errorf("notifier: no channel %q", d.Channel)
 		}
-		return c.Notify(ctx, d.Notification, d.Recipient)
+		err := c.Notify(ctx, d.Notification, d.Recipient)
+		if refused(err) {
+			return messenger.Unrecoverable(err)
+		}
+		return err
 	})
 	messenger.Route[Deliver](b, if h.config.Async != "" { h.config.Async } else { "async" })
+}
+
+// refused reports whether err says that an API refused a delivery, which
+// trying again won't change: a 4xx other than 408 and 429, or a device that
+// is no longer registered.
+func refused(err error) bool {
+	if _, ok := errors.AsType[UnregisteredDevice](err); ok {
+		return true
+	}
+	e, ok := errors.AsType[*httpclient.StatusError](err)
+	return ok && e.Status >= 400 && e.Status < 500 && e.Status != http.StatusRequestTimeout && e.Status != http.StatusTooManyRequests
 }
 
 // EmailChannel emails notifications to their recipients, through a Sync
 // mailer.
 type EmailChannel struct {
 	Mailer *mailer.Mailer
+}
+
+// Deliveries returns r, if it has an email address.
+func (c *EmailChannel) Deliveries(r Recipient) []Recipient {
+	return if r.Email == "" { nil } else { []Recipient{r} }
 }
 
 func (c *EmailChannel) Notify(ctx context.Context, n Notification, r Recipient) error {
