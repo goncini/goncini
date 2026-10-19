@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 (2026-10-19)
+
+Every module is tagged v0.4.0, the new `messenger/amqp`, `messenger/sqs`,
+`mailer/ses` and `htmlsanitizer` modules included. To upgrade an app,
+require `github.com/goncini/goncini v0.4.0` and its adapters at v0.4.0,
+then run `go tool goncini tidy` and `go tool goncini generate`, which
+regenerates the code with effect-go v0.6.1. Two changes break code that
+calls them: `notifier.NewChannels` returns an error, and
+`goncini.NewValidator` returns a `*validator.Validator`.
+
+The backlog that the [assessment](docs/assessment.md) drew from Symfony,
+done: login throttling, uploads, server-sent events and a hub, 406s,
+RabbitMQ and SQS, SMS and push, the profiler's pages, decorators and lazy
+services, Symfony's constraints, SES, Brevo and Mailjet, semaphores and an
+HTML sanitizer.
 
 - **ratelimit:** `Logins` throttles the attempts to sign in, as Symfony's
   login throttling does: 5 a minute per user and address, which a success
