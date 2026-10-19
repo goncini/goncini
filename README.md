@@ -31,7 +31,7 @@ API keys and [OpenID Connect](security/oidc), [`openapi`](openapi),
 [`listing`](listing); [`event`](event), [`messenger`](messenger),
 [`scheduler`](scheduler) and [`lock`](lock), in SQL or [Redis](redis), with
 messages in [RabbitMQ](messenger/amqp) or [SQS](messenger/sqs) too;
-[`cache`](cache), [`httpclient`](httpclient), [`webhook`](webhook), [`mailer`](mailer),
+[`cache`](cache), [`httpclient`](httpclient), [`webhook`](webhook), [`mailer`](mailer), with [SES](mailer/ses),
 [`notifier`](notifier), [`translation`](translation) and
 [`workflow`](workflow); the [`profiler`](profiler) and the `goncini` tool
 are implemented

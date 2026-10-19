@@ -1,0 +1,115 @@
+package ses_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/sesv2"
+	"github.com/aws/aws-sdk-go-v2/service/sesv2/types"
+
+	"github.com/goncini/goncini/mailer"
+	"github.com/goncini/goncini/mailer/ses"
+	"github.com/goncini/goncini/mime"
+)
+
+// sendEmail is what SendEmail's request holds, of what the transport sets.
+type sendEmail struct {
+	FromEmailAddress     string
+	ConfigurationSetName string
+	Destination          struct{ ToAddresses []string }
+	Content              struct{ Raw struct{ Data []byte } }
+}
+
+// TestSend checks that the transport sends the email as it is written, to
+// the envelope's recipients, signed for SES in its region.
+func TestSend(t *testing.T) {
+	var got sendEmail
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc((w http.ResponseWriter, r *http.Request) => {
+		if r.Method != http.MethodPost || r.URL.Path != "/v2/email/outbound-emails" {
+			t.Errorf("%s %s", r.Method, r.URL)
+		}
+		auth = r.Header.Get("Authorization")
+		must json.NewDecoder(r.Body).Decode(&got)
+		if strings.Contains(got.Destination.ToAddresses[0], "refused") {
+			w.Header().Set("X-Amzn-ErrorType", "MessageRejected")
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"message":"Email address is not verified."}`))
+			return
+		}
+		w.Write([]byte(`{"MessageId":"1"}`))
+	}))
+	t.Cleanup(srv.Close)
+	tr := &ses.Transport{
+		Client: sesv2.New(sesv2.Options{
+			Region:       "eu-west-1",
+			BaseEndpoint: aws.String(srv.URL),
+			Credentials:  credentials.NewStaticCredentialsProvider("AKID", "secret", ""),
+		}),
+		ConfigurationSet: "tracking",
+	}
+	c := mailer.Config{From: mime.Address{Name: "Conduit", Email: "hello@conduit.example"}}
+	e := &mime.Email{To: []mime.Address{{Email: "ann@example.com"}}, Bcc: []mime.Address{{Email: "audit@example.com"}}, Subject: "Welcome", Text: "Hi Ann."}
+	must mailer.New(c, tr).Send(context.Background(), e)
+	if got.FromEmailAddress != "hello@conduit.example" || got.ConfigurationSetName != "tracking" || !slices.Equal(got.Destination.ToAddresses, []string{"ann@example.com", "audit@example.com"}) {
+		t.Errorf("sent %+v", got)
+	}
+	if raw := string(got.Content.Raw.Data); !strings.Contains(raw, "Subject: Welcome\r\n") || strings.Contains(raw, "audit@") {
+		t.Errorf("sent the message %q", raw)
+	}
+	if !strings.HasPrefix(auth, "AWS4-HMAC-SHA256 Credential=AKID/") || !strings.Contains(auth, "/eu-west-1/ses/aws4_request") {
+		t.Errorf("signed %q", auth)
+	}
+
+	err := tr.Send(context.Background(), "hello@conduit.example", []string{"refused@example.com"}, []byte("Subject: Hi\r\n\r\nHi."))
+	if _, ok := errors.AsType[*types.MessageRejected](err); !ok || !strings.HasPrefix(err.Error(), "mailer: SES: ") {
+		t.Errorf("a refused email: %v", err)
+	}
+}
+
+func TestDSNs(t *testing.T) {
+	// The test's AWS configuration only, rather than the machine's.
+	t.Setenv("AWS_CONFIG_FILE", t.TempDir()+"/config")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", t.TempDir()+"/credentials")
+	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_DEFAULT_REGION", "")
+	logger := slog.New(slog.DiscardHandler)
+	transport := (dsn string) => ses.NewTransport(mailer.Config{DSN: dsn}, logger)
+
+	if tr, err := transport("log://"); err != nil || f"{tr:T}" != "*mailer.LogTransport" {
+		t.Errorf("log://: %T, %v", tr, err)
+	}
+
+	tr := must transport("ses+api://AKID:s%2Fcret@vpce.example.com?region=eu-west-1&configuration_set=tracking&session_token=tok")
+	s := tr.(*ses.Transport)
+	o := s.Client.Options()
+	creds := must o.Credentials.Retrieve(context.Background())
+	if o.Region != "eu-west-1" || aws.ToString(o.BaseEndpoint) != "https://vpce.example.com" || s.ConfigurationSet != "tracking" {
+		t.Errorf("%s, %s, %q", o.Region, aws.ToString(o.BaseEndpoint), s.ConfigurationSet)
+	}
+	if creds.AccessKeyID != "AKID" || creds.SecretAccessKey != "s/cret" || creds.SessionToken != "tok" {
+		t.Errorf("credentials %+v", creds)
+	}
+
+	t.Setenv("AWS_REGION", "us-east-1")
+	tr = must transport("ses+api://default")
+	if o := tr.(*ses.Transport).Client.Options(); o.Region != "us-east-1" || o.BaseEndpoint != nil {
+		t.Errorf("%s, %v", o.Region, o.BaseEndpoint)
+	}
+
+	t.Setenv("AWS_REGION", "")
+	for _, bad := range []string{"ses+api://default", "ses+api://AKID@default?region=eu-west-1", "ses+api://default/path?region=eu-west-1"} {
+		if _, err := transport(bad); err == nil {
+			t.Errorf("%q: no error", bad)
+		}
+	}
+}

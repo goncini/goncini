@@ -65,7 +65,7 @@ func TestDSNs(t *testing.T) {
 	if smtp.Addr != "mail.example.com:465" || !smtp.TLS || smtp.Password != "p@ss" {
 		t.Errorf("%+v", smtp)
 	}
-	for _, bad := range []string{"smtp://", "carrier-pigeon://x", "smtp://user:p@ss#w/rd@mail.example.com:587", "postmark+api://default", "mailgun+api://key@default", "pigeon+api://key@default"} {
+	for _, bad := range []string{"smtp://", "carrier-pigeon://x", "smtp://user:p@ss#w/rd@mail.example.com:587", "postmark+api://default", "mailgun+api://key@default", "mailjet+api://key@default", "pigeon+api://key@default"} {
 		if _, err := mailer.NewTransport(mailer.Config{DSN: bad}, logger); err == nil {
 			t.Errorf("%q: no error", bad)
 		}
@@ -80,6 +80,7 @@ func TestAPIs(t *testing.T) {
 	e.HTML = `<p>Hi Ann.</p><img src="cid:logo">`
 	e.Parts = []mime.Part{{Name: "logo.png", Data: []byte("png"), ContentID: "logo"}}
 	e.Header = map[string]string{"List-Unsubscribe": "<https://conduit.example/u>"}
+	e.ReplyTo = []mime.Address{{Email: "support@conduit.example"}}
 	for _, c := range []struct {
 		dsn, url, header string
 		want             []string // in the request's body, its JSON written again with sorted keys
@@ -102,6 +103,17 @@ func TestAPIs(t *testing.T) {
 		{"mailgun+api://key:mg.conduit.example@default", "https://api.mailgun.net/v3/mg.conduit.example/messages.mime", "Authorization: Basic YXBpOmtleQ==", []string{
 			`to=ann@example.com`, `to=audit@example.com`, "Subject: Welcome",
 		}},
+		{"brevo+api://xkeysib-1@default", "https://api.brevo.com/v3/smtp/email", "Api-Key: xkeysib-1", []string{
+			`"attachment":[{"content":"cG5n","name":"logo.png"}]`, `"bcc":[{"email":"audit@example.com"}]`,
+			`"headers":{"List-Unsubscribe":"<https://conduit.example/u>"}`, `"htmlContent":"<p>Hi Ann.</p><img src=\"cid:logo\">"`,
+			`"replyTo":{"email":"support@conduit.example"}`, `"sender":{"email":"hello@conduit.example","name":"Conduit"}`,
+			`"textContent":"Hi Ann."`, `"to":[{"email":"ann@example.com","name":"Ann"}]`,
+		}},
+		{"mailjet+api://key:secret@api.us.mailjet.com?sandbox=true", "https://api.us.mailjet.com/v3.1/send", "Authorization: Basic a2V5OnNlY3JldA==", []string{
+			`"Bcc":[{"Email":"audit@example.com"}]`, `"From":{"Email":"hello@conduit.example","Name":"Conduit"}`,
+			`"InlinedAttachments":[{"Base64Content":"cG5n","ContentID":"logo","ContentType":"image/png","Filename":"logo.png"}]`,
+			`"ReplyTo":{"Email":"support@conduit.example"}`, `"TextPart":"Hi Ann."`, `"To":[{"Email":"ann@example.com","Name":"Ann"}]}]`, `"SandboxMode":true`,
+		}},
 		{"resend+api://re_key@proxy.example:8443", "https://proxy.example:8443/emails", "Authorization: Bearer re_key", nil},
 	} {
 		cfg := mailer.Config{DSN: c.dsn, From: mime.Address{Name: "Conduit", Email: "hello@conduit.example"}}
@@ -122,6 +134,10 @@ func TestAPIs(t *testing.T) {
 		case *mailer.ResendTransport:
 			api.Client.Transport = httpclient.Handler(h)
 		case *mailer.MailgunTransport:
+			api.Client.Transport = httpclient.Handler(h)
+		case *mailer.BrevoTransport:
+			api.Client.Transport = httpclient.Handler(h)
+		case *mailer.MailjetTransport:
 			api.Client.Transport = httpclient.Handler(h)
 		}
 		must mailer.New(cfg, tr).Send(context.Background(), e)
@@ -146,6 +162,13 @@ func TestAPIs(t *testing.T) {
 	err := tr.Send(context.Background(), "hello@conduit.example", []string{"ann@example.com"}, raw)
 	if _, ok := errors.AsType[*httpclient.StatusError](err); !ok || !strings.Contains(err.Error(), "mailer: Resend: httpclient: 422 Unprocessable Entity: {\"message\":\"Invalid to field\"}") {
 		t.Errorf("a refused email: %v", err)
+	}
+
+	tr = must mailer.NewTransport(mailer.Config{DSN: "mailjet+api://key:secret@default"}, slog.New(slog.DiscardHandler))
+	e.ReplyTo = append(e.ReplyTo, mime.Address{Email: "sales@conduit.example"})
+	raw = must e.Bytes()
+	if err := tr.Send(context.Background(), "hello@conduit.example", []string{"ann@example.com"}, raw); err == nil || err.Error() != "mailer: Mailjet takes one Reply-To, not 2" {
+		t.Errorf("two Reply-Tos: %v", err)
 	}
 }
 

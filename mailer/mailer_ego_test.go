@@ -84,7 +84,7 @@ func TestDSNs(t *testing.T) {
 	if smtp.Addr != "mail.example.com:465" || !smtp.TLS || smtp.Password != "p@ss" {
 		t.Errorf("%+v", smtp)
 	}
-	for _, bad := range []string{"smtp://", "carrier-pigeon://x", "smtp://user:p@ss#w/rd@mail.example.com:587", "postmark+api://default", "mailgun+api://key@default", "pigeon+api://key@default"} {
+	for _, bad := range []string{"smtp://", "carrier-pigeon://x", "smtp://user:p@ss#w/rd@mail.example.com:587", "postmark+api://default", "mailgun+api://key@default", "mailjet+api://key@default", "pigeon+api://key@default"} {
 		if _, err := mailer.NewTransport(mailer.Config{DSN: bad}, logger); err == nil {
 			t.Errorf("%q: no error", bad)
 		}
@@ -99,6 +99,7 @@ func TestAPIs(t *testing.T) {
 	e.HTML = `<p>Hi Ann.</p><img src="cid:logo">`
 	e.Parts = []mime.Part{{Name: "logo.png", Data: []byte("png"), ContentID: "logo"}}
 	e.Header = map[string]string{"List-Unsubscribe": "<https://conduit.example/u>"}
+	e.ReplyTo = []mime.Address{{Email: "support@conduit.example"}}
 	for _, c := range []struct {
 		dsn, url, header string
 		want             []string // in the request's body, its JSON written again with sorted keys
@@ -121,6 +122,17 @@ func TestAPIs(t *testing.T) {
 		{"mailgun+api://key:mg.conduit.example@default", "https://api.mailgun.net/v3/mg.conduit.example/messages.mime", "Authorization: Basic YXBpOmtleQ==", []string{
 			`to=ann@example.com`, `to=audit@example.com`, "Subject: Welcome",
 		}},
+		{"brevo+api://xkeysib-1@default", "https://api.brevo.com/v3/smtp/email", "Api-Key: xkeysib-1", []string{
+			`"attachment":[{"content":"cG5n","name":"logo.png"}]`, `"bcc":[{"email":"audit@example.com"}]`,
+			`"headers":{"List-Unsubscribe":"<https://conduit.example/u>"}`, `"htmlContent":"<p>Hi Ann.</p><img src=\"cid:logo\">"`,
+			`"replyTo":{"email":"support@conduit.example"}`, `"sender":{"email":"hello@conduit.example","name":"Conduit"}`,
+			`"textContent":"Hi Ann."`, `"to":[{"email":"ann@example.com","name":"Ann"}]`,
+		}},
+		{"mailjet+api://key:secret@api.us.mailjet.com?sandbox=true", "https://api.us.mailjet.com/v3.1/send", "Authorization: Basic a2V5OnNlY3JldA==", []string{
+			`"Bcc":[{"Email":"audit@example.com"}]`, `"From":{"Email":"hello@conduit.example","Name":"Conduit"}`,
+			`"InlinedAttachments":[{"Base64Content":"cG5n","ContentID":"logo","ContentType":"image/png","Filename":"logo.png"}]`,
+			`"ReplyTo":{"Email":"support@conduit.example"}`, `"TextPart":"Hi Ann."`, `"To":[{"Email":"ann@example.com","Name":"Ann"}]}]`, `"SandboxMode":true`,
+		}},
 		{"resend+api://re_key@proxy.example:8443", "https://proxy.example:8443/emails", "Authorization: Bearer re_key", nil},
 	} {
 		cfg := mailer.Config{DSN: c.dsn, From: mime.Address{Name: "Conduit", Email: "hello@conduit.example"}}
@@ -128,19 +140,19 @@ func TestAPIs(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line mailer_test.ego:109
+//line mailer_test.ego:121
 		var got *http.Request
 		var body string
 		h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-//line mailer_test.ego:112
+//line mailer_test.ego:124
 			got = r
 			body = requestBody(t, r)
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"id":"1"}`))
 
 		})
-//line mailer_test.ego:117
+//line mailer_test.ego:129
 		switch api := tr.(type) {
 		case *mailer.PostmarkTransport:
 			api.Client.Transport = httpclient.Handler(h)
@@ -150,11 +162,15 @@ func TestAPIs(t *testing.T) {
 			api.Client.Transport = httpclient.Handler(h)
 		case *mailer.MailgunTransport:
 			api.Client.Transport = httpclient.Handler(h)
+		case *mailer.BrevoTransport:
+			api.Client.Transport = httpclient.Handler(h)
+		case *mailer.MailjetTransport:
+			api.Client.Transport = httpclient.Handler(h)
 		}
 		if err := mailer.New(cfg, tr).Send(context.Background(), e); err != nil {
 			panic(err)
 		}
-//line mailer_test.ego:128
+//line mailer_test.ego:144
 		name, value, _ := strings.Cut(c.header, ": ")
 		if got.Method != http.MethodPost || got.URL.String() != c.url || got.Header.Get(name) != value {
 			t.Errorf("%s: %s %s, %s: %q", c.dsn, got.Method, got.URL, name, got.Header.Get(name))
@@ -170,24 +186,41 @@ func TestAPIs(t *testing.T) {
 	if err2 != nil {
 		panic(err2)
 	}
-//line mailer_test.ego:140
+//line mailer_test.ego:156
 	tr.(*mailer.ResendTransport).Client.Transport = httpclient.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-//line mailer_test.ego:141
+//line mailer_test.ego:157
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		w.Write([]byte(`{"message":"Invalid to field"}`))
 
 	}))
-//line mailer_test.ego:144
+//line mailer_test.ego:160
 	e.From = mime.Address{Email: "hello@conduit.example"}
 	raw, err3 := e.Bytes()
 	if err3 != nil {
 		panic(err3)
 	}
-//line mailer_test.ego:146
+//line mailer_test.ego:162
 	err := tr.Send(context.Background(), "hello@conduit.example", []string{"ann@example.com"}, raw)
 	if _, ok := errors.AsType[*httpclient.StatusError](err); !ok || !strings.Contains(err.Error(), "mailer: Resend: httpclient: 422 Unprocessable Entity: {\"message\":\"Invalid to field\"}") {
 		t.Errorf("a refused email: %v", err)
+	}
+
+	v, err4 := mailer.NewTransport(mailer.Config{DSN: "mailjet+api://key:secret@default"}, slog.New(slog.DiscardHandler))
+	if err4 != nil {
+		panic(err4)
+	}
+	tr = v
+//line mailer_test.ego:168
+	e.ReplyTo = append(e.ReplyTo, mime.Address{Email: "sales@conduit.example"})
+	v2, err5 := e.Bytes()
+	if err5 != nil {
+		panic(err5)
+	}
+	raw = v2
+//line mailer_test.ego:170
+	if err := tr.Send(context.Background(), "hello@conduit.example", []string{"ann@example.com"}, raw); err == nil || err.Error() != "mailer: Mailjet takes one Reply-To, not 2" {
+		t.Errorf("two Reply-Tos: %v", err)
 	}
 }
 
@@ -198,7 +231,7 @@ func requestBody(t *testing.T, r *http.Request) string {
 		if err := r.ParseMultipartForm(1 << 20); err != nil {
 			panic(err)
 		}
-//line mailer_test.ego:157
+//line mailer_test.ego:180
 		var b strings.Builder
 		for _, to := range r.MultipartForm.Value["to"] {
 			b.WriteString("to=" + to + "\n")
@@ -207,12 +240,12 @@ func requestBody(t *testing.T, r *http.Request) string {
 		if err != nil {
 			panic(err)
 		}
-//line mailer_test.ego:162
+//line mailer_test.ego:185
 		raw, err := io.ReadAll(f)
 		if err != nil {
 			panic(err)
 		}
-//line mailer_test.ego:163
+//line mailer_test.ego:186
 		b.Write(raw)
 		return b.String()
 	}
@@ -220,14 +253,14 @@ func requestBody(t *testing.T, r *http.Request) string {
 	if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:168
+//line mailer_test.ego:191
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(v); err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:172
+//line mailer_test.ego:195
 	return b.String()
 }
 
@@ -239,13 +272,13 @@ func TestAsync(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:180
+//line mailer_test.ego:203
 	bus := messenger.NewBus(messenger.Config{}, messenger.NewMemoryTransports(messenger.Config{}), []messenger.Handlers{mailer.NewHandler(c, tr)}, slog.New(slog.DiscardHandler))
 	ctx := context.Background()
 	if err := mailer.NewAsync(c, bus).Send(ctx, welcome()); err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:183
+//line mailer_test.ego:206
 	memory := tr.(*mailer.MemoryTransport)
 	if len(memory.Sent()) != 0 {
 		t.Fatal("sent in the request")
@@ -254,7 +287,7 @@ func TestAsync(t *testing.T) {
 	if err := w.Run(ctx); err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:189
+//line mailer_test.ego:212
 	if sent := memory.Sent(); len(sent) != 1 || sent[0].To[0] != "ann@example.com" {
 		t.Errorf("sent %+v", sent)
 	}
@@ -267,7 +300,7 @@ func rawServer(t *testing.T, stall bool) string {
 	if err != nil {
 		panic(err)
 	}
-//line mailer_test.ego:198
+//line mailer_test.ego:221
 	t.Cleanup(func() { l.Close() })
 	go func() {
 		conn, err := l.Accept()
@@ -315,7 +348,7 @@ func TestSMTPFailures(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line mailer_test.ego:242
+//line mailer_test.ego:265
 		return mailer.New(c, tr).Send(ctx, welcome())
 	}
 	if err := send(rawServer(t, false), context.Background()); err != nil {

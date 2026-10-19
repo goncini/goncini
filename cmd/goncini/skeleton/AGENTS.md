@@ -416,8 +416,11 @@ changes.
   queue with `mailer.Async`; tests read what `mailertest.NewServer(t)`
   receives, with `MAILER_DSN` set to its `DSN()`. Besides `smtp://`, the
   DSN can name a provider's API: `postmark+api://TOKEN@default`,
-  `sendgrid+api://KEY@default`, `mailgun+api://KEY:DOMAIN@default` or
-  `resend+api://KEY@default`.
+  `sendgrid+api://KEY@default`, `mailgun+api://KEY:DOMAIN@default`,
+  `resend+api://KEY@default`, `brevo+api://KEY@default` or
+  `mailjet+api://KEY:SECRET@default`; and Amazon SES's,
+  `ses+api://default?region=eu-west-1`, with the `mailer/ses` module's
+  `ses.Async` or `ses.Sync` in `Services` in place of mailer's.
 - `webhook.Sender.Send(ctx, webhook.Webhook{ID, URL, Secret, Body})`
   sends a webhook through the queue, signed as Standard Webhooks says,
   retried for hours while its receiver fails, to public addresses only:

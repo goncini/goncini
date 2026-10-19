@@ -60,6 +60,16 @@
   that the app's instances share their limits. An update watches the key,
   and tries again when another changed it first: a `Store`'s `Update` may
   call its function more than once.
+- **mailer:** Brevo's and Mailjet's APIs, `brevo+api://KEY@default` and
+  `mailjet+api://KEY:SECRET@default`, with `?sandbox=true` for Mailjet's
+  checks without sending. Both take one Reply-To at most, and refuse an
+  email with more, rather than dropping them. Brevo has no Content-IDs:
+  an inline part is an attachment.
+- **mailer/ses:** a new module that sends the emails through Amazon SES's
+  API, as mailer writes them: `ses+api://default?region=eu-west-1`, with the
+  AWS SDK's credentials, or an IAM user's keys in the DSN, and
+  `?configuration_set=` for a configuration set. `ses.Async` and `ses.Sync`
+  replace mailer's in `Services`, and leave the other DSNs to mailer.
 - **Dependencies:** mimetype v1.4.16, which go-playground's validator
   requires, as v1.4.15 is retracted: it spends quadratic time on crafted
   files.

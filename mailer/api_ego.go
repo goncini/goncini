@@ -73,8 +73,19 @@ func newAPI(u *url.URL) (Transport, error) {
 	case "resend":
 		c := httpclient.New(httpclient.Config{BaseURL: endpoint("https://api.resend.com"), Header: map[string]string{"Authorization": "Bearer " + key}})
 		return &ResendTransport{Client: c}, nil
+	case "brevo":
+		c := httpclient.New(httpclient.Config{BaseURL: endpoint("https://api.brevo.com"), Header: map[string]string{"Api-Key": key}})
+		return &BrevoTransport{Client: c}, nil
+	case "mailjet":
+		secret, _ := u.User.Password()
+		if secret == "" {
+			return nil, errors.New("mailer: the mailjet DSN has no secret key: mailjet+api://KEY:SECRET@default")
+		}
+		auth := base64.StdEncoding.EncodeToString([]byte(key + ":" + secret))
+		c := httpclient.New(httpclient.Config{BaseURL: endpoint("https://api.mailjet.com"), Header: map[string]string{"Authorization": "Basic " + auth}})
+		return &MailjetTransport{Client: c, Sandbox: q.Get("sandbox") == "true"}, nil
 	}
-	return nil, fmt.Errorf("mailer: unknown API %q: use postmark+api, sendgrid+api, mailgun+api or resend+api", u.Scheme)
+	return nil, fmt.Errorf("mailer: unknown API %q: use postmark+api, sendgrid+api, mailgun+api, resend+api, brevo+api or mailjet+api", u.Scheme)
 }
 
 // bcc are the recipients of the envelope, to, that the email's To and Cc
@@ -93,6 +104,17 @@ func bcc(e *mime.Email, to []string) []mime.Address {
 	return out
 }
 
+// replyTo returns the email's Reply-To, for the APIs that take one at most.
+func replyTo(e *mime.Email, provider string) (*mime.Address, error) {
+	switch len(e.ReplyTo) {
+	case 0:
+		return nil, nil
+	case 1:
+		return &e.ReplyTo[0], nil
+	}
+	return nil, fmt.Errorf("mailer: %s takes one Reply-To, not %d", provider, len(e.ReplyTo))
+}
+
 // addresses writes a list of addresses as the APIs take them: "Ann"
 // <ann@example.com>, or ann@example.com without a name.
 func addresses(list []mime.Address) []string {
@@ -102,12 +124,12 @@ func addresses(list []mime.Address) []string {
 		if a.Name == "" {
 			v = a.Email
 		} else {
-//line api.ego:79
+//line api.ego:101
 			v = a.String()
 		}
 		out = append(out, v)
 	}
-//line api.ego:81
+//line api.ego:103
 	return out
 }
 
@@ -151,7 +173,7 @@ func (t *PostmarkTransport) Send(ctx context.Context, from string, to []string, 
 	if err != nil {
 		return err
 	}
-//line api.ego:121
+//line api.ego:143
 	join := func(list []mime.Address) string { return strings.Join(addresses(list), ", ") }
 	body := postmarkEmail{
 		From: join([]mime.Address{e.From}), To: join(e.To), Cc: join(e.Cc), Bcc: join(bcc(e, to)), ReplyTo: join(e.ReplyTo),
@@ -167,7 +189,7 @@ func (t *PostmarkTransport) Send(ctx context.Context, from string, to []string, 
 		} else {
 			id = ""
 		}
-//line api.ego:131
+//line api.ego:153
 		body.Attachments = append(body.Attachments, postmarkFile{p.Name, p.Data, p.ContentType, id})
 	}
 	if _, err := httpclient.Send[struct{}](ctx, t.Client, http.MethodPost, "/email", body); err != nil {
@@ -222,7 +244,7 @@ func (t *SendGridTransport) Send(ctx context.Context, from string, to []string, 
 	if err != nil {
 		return err
 	}
-//line api.ego:182
+//line api.ego:204
 	list := func(addrs []mime.Address) []sendGridAddress {
 		var out []sendGridAddress
 		for _, a := range addrs {
@@ -251,7 +273,7 @@ func (t *SendGridTransport) Send(ctx context.Context, from string, to []string, 
 		} else {
 			disposition = "attachment"
 		}
-//line api.ego:205
+//line api.ego:227
 		body.Attachments = append(body.Attachments, sendGridFile{p.Data, p.ContentType, p.Name, disposition, p.ContentID})
 	}
 	if _, err := httpclient.Send[struct{}](ctx, t.Client, http.MethodPost, "/v3/mail/send", body); err != nil {
@@ -277,25 +299,25 @@ func (t *MailgunTransport) Send(ctx context.Context, from string, to []string, r
 			return err
 		}
 	}
-//line api.ego:228
+//line api.ego:250
 	file, err2 := w.CreateFormFile("message", "message.eml")
 	if err2 != nil {
 		return err2
 	}
-//line api.ego:229
+//line api.ego:251
 	if _, err3 := file.Write(raw); err3 != nil {
 		return err3
 	}
-//line api.ego:230
+//line api.ego:252
 	if err4 := w.Close(); err4 != nil {
 		return err4
 	}
-//line api.ego:231
+//line api.ego:253
 	req, err5 := http.NewRequestWithContext(ctx, http.MethodPost, "/v3/"+url.PathEscape(t.Domain)+"/messages.mime", &b)
 	if err5 != nil {
 		return err5
 	}
-//line api.ego:232
+//line api.ego:254
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	res, err := t.Client.Do(req)
 	if err != nil {
@@ -340,7 +362,7 @@ func (t *ResendTransport) Send(ctx context.Context, from string, to []string, ra
 	if err != nil {
 		return err
 	}
-//line api.ego:273
+//line api.ego:295
 	body := resendEmail{
 		From: addresses([]mime.Address{e.From})[0], To: addresses(e.To), Cc: addresses(e.Cc), Bcc: addresses(bcc(e, to)), ReplyTo: addresses(e.ReplyTo),
 		Subject: e.Subject, Text: e.Text, HTML: e.HTML, Headers: e.Header,
@@ -350,6 +372,151 @@ func (t *ResendTransport) Send(ctx context.Context, from string, to []string, ra
 	}
 	if _, err := httpclient.Send[struct{}](ctx, t.Client, http.MethodPost, "/emails", body); err != nil {
 		return fmt.Errorf("mailer: Resend: %w", err)
+	}
+	return nil
+}
+
+// BrevoTransport sends emails through Brevo's API: brevo+api://KEY@default.
+// Brevo has no Content-IDs: an inline part is an attachment, by its name.
+type BrevoTransport struct {
+	// Client calls the API, with the key. Tests set its Transport.
+	Client *httpclient.Client
+}
+
+type brevoEmail struct {
+	Sender      brevoAddress      `json:"sender"`
+	To          []brevoAddress    `json:"to"`
+	Cc          []brevoAddress    `json:"cc,omitempty"`
+	Bcc         []brevoAddress    `json:"bcc,omitempty"`
+	ReplyTo     *brevoAddress     `json:"replyTo,omitempty"`
+	Subject     string            `json:"subject"`
+	TextContent string            `json:"textContent,omitempty"`
+	HTMLContent string            `json:"htmlContent,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	Attachment  []brevoFile       `json:"attachment,omitempty"`
+}
+
+type brevoAddress struct {
+	Email string `json:"email"`
+	Name  string `json:"name,omitempty"`
+}
+
+type brevoFile struct {
+	Name    string `json:"name"`
+	Content []byte `json:"content"`
+}
+
+func (t *BrevoTransport) Send(ctx context.Context, from string, to []string, raw []byte) error {
+	e, err := mime.Parse(raw)
+	if err != nil {
+		return err
+	}
+//line api.ego:340
+	reply, err := replyTo(e, "Brevo")
+	if err != nil {
+		return err
+	}
+//line api.ego:341
+	list := func(addrs []mime.Address) []brevoAddress {
+		var out []brevoAddress
+		for _, a := range addrs {
+			out = append(out, brevoAddress{a.Email, a.Name})
+		}
+		return out
+	}
+	body := brevoEmail{
+		Sender: brevoAddress{e.From.Email, e.From.Name}, To: list(e.To), Cc: list(e.Cc), Bcc: list(bcc(e, to)),
+		Subject: e.Subject, TextContent: e.Text, HTMLContent: e.HTML, Headers: e.Header,
+	}
+	if reply != nil {
+		body.ReplyTo = &brevoAddress{reply.Email, reply.Name}
+	}
+	for _, p := range e.Parts {
+		body.Attachment = append(body.Attachment, brevoFile{p.Name, p.Data})
+	}
+	if _, err := httpclient.Send[struct{}](ctx, t.Client, http.MethodPost, "/v3/smtp/email", body); err != nil {
+		return fmt.Errorf("mailer: Brevo: %w", err)
+	}
+	return nil
+}
+
+// MailjetTransport sends emails through Mailjet's API, version 3.1:
+// mailjet+api://KEY:SECRET@default, with the API key and its secret key;
+// the host api.us.mailjet.com for its US region, and ?sandbox=true to have
+// Mailjet check the emails without sending them.
+type MailjetTransport struct {
+	// Client calls the API, with the keys. Tests set its Transport.
+	Client *httpclient.Client
+	// Sandbox has Mailjet check the emails without sending them.
+	Sandbox bool
+}
+
+type mailjetRequest struct {
+	Messages    []mailjetEmail `json:"Messages"`
+	SandboxMode bool           `json:"SandboxMode,omitempty"`
+}
+
+type mailjetEmail struct {
+	From               mailjetAddress    `json:"From"`
+	To                 []mailjetAddress  `json:"To"`
+	Cc                 []mailjetAddress  `json:"Cc,omitempty"`
+	Bcc                []mailjetAddress  `json:"Bcc,omitempty"`
+	ReplyTo            *mailjetAddress   `json:"ReplyTo,omitempty"`
+	Subject            string            `json:"Subject"`
+	TextPart           string            `json:"TextPart,omitempty"`
+	HTMLPart           string            `json:"HTMLPart,omitempty"`
+	Headers            map[string]string `json:"Headers,omitempty"`
+	Attachments        []mailjetFile     `json:"Attachments,omitempty"`
+	InlinedAttachments []mailjetFile     `json:"InlinedAttachments,omitempty"`
+}
+
+type mailjetAddress struct {
+	Email string `json:"Email"`
+	Name  string `json:"Name,omitempty"`
+}
+
+type mailjetFile struct {
+	ContentType   string `json:"ContentType"`
+	Filename      string `json:"Filename"`
+	ContentID     string `json:"ContentID,omitempty"`
+	Base64Content []byte `json:"Base64Content"`
+}
+
+func (t *MailjetTransport) Send(ctx context.Context, from string, to []string, raw []byte) error {
+	e, err := mime.Parse(raw)
+	if err != nil {
+		return err
+	}
+//line api.ego:408
+	reply, err := replyTo(e, "Mailjet")
+	if err != nil {
+		return err
+	}
+//line api.ego:409
+	list := func(addrs []mime.Address) []mailjetAddress {
+		var out []mailjetAddress
+		for _, a := range addrs {
+			out = append(out, mailjetAddress{a.Email, a.Name})
+		}
+		return out
+	}
+	m := mailjetEmail{
+		From: mailjetAddress{e.From.Email, e.From.Name}, To: list(e.To), Cc: list(e.Cc), Bcc: list(bcc(e, to)),
+		Subject: e.Subject, TextPart: e.Text, HTMLPart: e.HTML, Headers: e.Header,
+	}
+	if reply != nil {
+		m.ReplyTo = &mailjetAddress{reply.Email, reply.Name}
+	}
+	for _, p := range e.Parts {
+		f := mailjetFile{cmp.Or(p.ContentType, "application/octet-stream"), p.Name, p.ContentID, p.Data}
+		if p.ContentID != "" {
+			m.InlinedAttachments = append(m.InlinedAttachments, f)
+		} else {
+			m.Attachments = append(m.Attachments, f)
+		}
+	}
+	if _, err := httpclient.Send[struct{}](ctx, t.Client, http.MethodPost, "/v3.1/send", mailjetRequest{[]mailjetEmail{m}, t.Sandbox}); err != nil {
+		return fmt.Errorf("mailer: Mailjet: %w", err)
 	}
 	return nil
 }

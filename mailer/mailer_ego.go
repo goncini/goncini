@@ -14,12 +14,16 @@
 //	sendgrid+api://KEY@default      SendGrid's API; ?region=eu for an EU subuser
 //	mailgun+api://KEY:DOMAIN@default  Mailgun's API; ?region=eu for its EU region
 //	resend+api://KEY@default        Resend's API
+//	brevo+api://KEY@default         Brevo's API
+//	mailjet+api://KEY:SECRET@default  Mailjet's API; ?sandbox=true to check the emails without sending them
 //	log://                          logs the emails: for development
 //	memory://                       keeps them: for tests
 //	null://                         drops them
 //
 // An API's host is default for the provider's endpoint, or another, over
-// HTTPS, such as a proxy's. Its key is percent-encoded, as passwords are.
+// HTTPS, such as a proxy's, or a region's, such as api.us.mailjet.com. Its
+// key is percent-encoded, as passwords are. The module
+// github.com/goncini/goncini/mailer/ses adds Amazon SES's API, ses+api.
 //
 // Sync and Async are the sets of providers to wire: Async sends emails as
 // SendEmail messages, which a worker sends.
@@ -48,7 +52,7 @@ import (
 
 // Config configures a mailer.
 //
-//line mailer.ego:48
+//line mailer.ego:52
 type Config struct {
 	// DSN chooses the transport; empty means log://. It holds a password:
 	// read it with env.Secret.
@@ -108,7 +112,7 @@ func (m *Mailer) Send(ctx context.Context, e *mime.Email) error {
 	if err != nil {
 		return err
 	}
-//line mailer.ego:104
+//line mailer.ego:108
 	if m.bus != nil {
 		return messenger.Dispatch(ctx, m.bus, SendEmail{From: e.From.Email, To: e.Recipients(), Raw: raw})
 	}
@@ -181,7 +185,7 @@ func newSMTP(u *url.URL) (*SMTPTransport, error) {
 			port = "587"
 		}
 	}
-//line mailer.ego:172
+//line mailer.ego:176
 	if u.Hostname() == "" {
 		return nil, errors.New("mailer: the SMTP DSN has no host")
 	}
@@ -211,7 +215,7 @@ func (t *SMTPTransport) send(ctx context.Context, from string, to []string, raw 
 	if err2 != nil {
 		return err2
 	}
-//line mailer.ego:198
+//line mailer.ego:202
 	conn.SetDeadline(time.Now().Add(cmp.Or(t.Timeout, 30*time.Second)))
 	if deadline, ok := ctx.Deadline(); ok && deadline.Before(time.Now().Add(cmp.Or(t.Timeout, 30*time.Second))) {
 		conn.SetDeadline(deadline)
@@ -231,36 +235,36 @@ func (t *SMTPTransport) send(ctx context.Context, from string, to []string, raw 
 			return err3
 		}
 	}
-//line mailer.ego:215
+//line mailer.ego:219
 	if t.Username != "" {
 		if err4 := c.Auth(smtp.PlainAuth("", t.Username, t.Password, host)); err4 != nil {
 			return err4
 		}
 	}
-//line mailer.ego:218
+//line mailer.ego:222
 	if err5 := c.Mail(from); err5 != nil {
 		return err5
 	}
-//line mailer.ego:219
+//line mailer.ego:223
 	for _, rcpt := range to {
 		if err6 := c.Rcpt(rcpt); err6 != nil {
 			return err6
 		}
 	}
-//line mailer.ego:222
+//line mailer.ego:226
 	w, err7 := c.Data()
 	if err7 != nil {
 		return err7
 	}
-//line mailer.ego:223
+//line mailer.ego:227
 	if _, err8 := w.Write(raw); err8 != nil {
 		return err8
 	}
-//line mailer.ego:224
+//line mailer.ego:228
 	if err9 := w.Close(); err9 != nil {
 		return err9
 	}
-//line mailer.ego:225
+//line mailer.ego:229
 	c.Quit() // the server accepted the email: a failure to say goodbye isn't the email's
 	return nil
 }
@@ -274,11 +278,11 @@ func (t *LogTransport) Send(ctx context.Context, from string, to []string, raw [
 	head, _, _ := strings.Cut(string(raw), "\r\n\r\n")
 	v := t.Logger
 	if v == nil {
-//line mailer.ego:236
+//line mailer.ego:240
 		v = slog.Default()
 	}
 	(v).InfoContext(ctx, "an email, not sent", slog.String("from", from), slog.Any("to", to), slog.String("header", head))
-//line mailer.ego:237
+//line mailer.ego:241
 	return nil
 }
 

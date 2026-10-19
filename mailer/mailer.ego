@@ -12,12 +12,16 @@
 //	sendgrid+api://KEY@default      SendGrid's API; ?region=eu for an EU subuser
 //	mailgun+api://KEY:DOMAIN@default  Mailgun's API; ?region=eu for its EU region
 //	resend+api://KEY@default        Resend's API
+//	brevo+api://KEY@default         Brevo's API
+//	mailjet+api://KEY:SECRET@default  Mailjet's API; ?sandbox=true to check the emails without sending them
 //	log://                          logs the emails: for development
 //	memory://                       keeps them: for tests
 //	null://                         drops them
 //
 // An API's host is default for the provider's endpoint, or another, over
-// HTTPS, such as a proxy's. Its key is percent-encoded, as passwords are.
+// HTTPS, such as a proxy's, or a region's, such as api.us.mailjet.com. Its
+// key is percent-encoded, as passwords are. The module
+// github.com/goncini/goncini/mailer/ses adds Amazon SES's API, ses+api.
 //
 // Sync and Async are the sets of providers to wire: Async sends emails as
 // SendEmail messages, which a worker sends.
