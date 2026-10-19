@@ -191,6 +191,12 @@ type UpdateInput struct {
   channel stops once `ctx` is done. A client that reconnects sends
   `Last-Event-ID`, which the input takes as a header. In tests, the
   response comes once the stream ends, and `.Events()` reads it.
+- A hub fans events out to the clients that stream them, on every
+  instance, as Mercure does: `hub.Subscribe[T](ctx, h, in.LastEventID,
+  topic)` is a stream's channel, with the events the client missed first,
+  and `h.Publish(ctx, topic, v)` sends to it, once the change is committed,
+  as from a message's handler. `hub.Memory` in `Services` is a hub of one
+  instance; the redis module's `redis.Hub` reaches them all.
 - An input with no values is `struct{}`.
 
 A request is checked in this order, each step answering for itself: the

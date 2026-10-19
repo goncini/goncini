@@ -29,6 +29,14 @@
   `httpkernel.Stopping(ctx)` tells other responses that last.
   `MediaTypeDescriber` lets a `Responder` give its media type to the
   OpenAPI document.
+- **hub:** a new package that fans events out to the clients that stream
+  them, as Symfony's Mercure does. `hub.Subscribe[T]` returns a stream's
+  channel of a topic's events, and `Hub.Publish` publishes to it. Each
+  instance keeps the last 100 events of each topic, so that a client that
+  reconnects with a `Last-Event-ID` gets what it missed. A client that
+  falls behind is let go, and reconnects. `hub.Memory` provides a hub of
+  one instance; the redis module's `redis.Hub` carries the events to every
+  instance over pub/sub. Heartbeat streams its checks' flips with it.
 - **openapi:** a form is described as `multipart/form-data`, with its
   files as binary strings, and as `application/x-www-form-urlencoded` too
   when it has no files. The 413's example gives the endpoint's limit, or

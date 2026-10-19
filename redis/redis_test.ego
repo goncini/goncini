@@ -2,12 +2,14 @@ package redis_test
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/goncini/goncini/hub"
 	"github.com/goncini/goncini/lock"
 	"github.com/goncini/goncini/lock/locktest"
 	"github.com/goncini/goncini/messenger"
@@ -88,8 +90,42 @@ func TestRateLimitStore(t *testing.T) {
 	}
 }
 
-// TestMemory checks that memory:// keeps the messages, locks and limits in
-// memory.
+// TestHub checks that an event published on one instance reaches the
+// subscribers of the others, and its own once.
+func TestHub(t *testing.T) {
+	c, prefix := client(t)
+	ctx := t.Context()
+	newHub := func() *hub.Hub {
+		h, stop, _ := hub.New(hub.Config{}, redis.NewHubTransport(c, redis.Config{Prefix: prefix}), slog.New(slog.DiscardHandler))
+		t.Cleanup(() => { stop() })
+		return h
+	}
+	one, two := newHub(), newHub()
+	for {
+		subs := must c.PubSubNumSub(ctx, prefix+"hub").Result()
+		if subs[prefix+"hub"] == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mine := hub.Subscribe[string](ctx, one, "", "notes")
+	theirs := hub.Subscribe[string](ctx, two, "", "notes")
+	must one.Publish(ctx, "notes", "hello")
+	e := <-theirs
+	if e.Data != "hello" {
+		t.Errorf("the other instance got %+v", e)
+	}
+	if e = <-mine; e.Data != "hello" {
+		t.Errorf("this instance got %+v", e)
+	}
+	must one.Publish(ctx, "notes", "again")
+	if e = <-mine; e.Data != "again" {
+		t.Errorf("this instance got %+v, not the next event", e)
+	}
+}
+
+// TestMemory checks that memory:// keeps the messages, locks, limits and
+// hub's events in memory.
 func TestMemory(t *testing.T) {
 	c, closeClient := must redis.NewClient(redis.Config{URL: "memory://"})
 	defer closeClient()
@@ -103,5 +139,8 @@ func TestMemory(t *testing.T) {
 	}
 	if _, ok := redis.NewRateLimitStore(c, redis.Config{}).(*ratelimit.MemoryStore); !ok {
 		t.Error("the rate limits aren't in memory")
+	}
+	if _, ok := redis.NewHubTransport(c, redis.Config{}).(hub.LocalTransport); !ok {
+		t.Error("the hub's events leave the instance")
 	}
 }

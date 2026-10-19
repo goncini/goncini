@@ -17,6 +17,7 @@ import (
 	"github.com/goncini/goncini/examples/heartbeat/config"
 	"github.com/goncini/goncini/examples/heartbeat/home"
 	"github.com/goncini/goncini/examples/heartbeat/projects"
+	"github.com/goncini/goncini/hub"
 	"github.com/goncini/goncini/lock"
 	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
@@ -44,34 +45,42 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("checks.NewWorkflows: %w", err)
 	}
-	config3 := autoDefaultMessengerConfig()
-	transports, err := messenger.NewSQLTransports(db2, config3)
-	if err != nil {
-		return nil, fmt.Errorf("NewSQLTransports: %w", err)
-	}
-	config4 := autoConfigWebhooks(cfg)
-	v := clock()
-	deliverer := webhook.NewDeliverer(config4, v)
-	store3 := channels.NewStore(sql2)
-	config5 := autoConfigMailer(cfg)
+	config3 := autoDefaultHubConfig()
+	transport := hub.NewLocalTransport()
 	log := autoConfigLog(cfg)
 	handler := goncini.NewLogHandler(log)
 	logger := goncini.NewLogger(handler)
-	transport, err := mailer.NewTransport(config5, logger)
+	hub2, cleanup2, err := hub.New(config3, transport, logger)
+	if err != nil {
+		return nil, fmt.Errorf("New: %w", err)
+	}
+	s.Defer(func(context.Context) error { return cleanup2() })
+	announcer := checks.NewAnnouncer(hub2)
+	config4 := autoDefaultMessengerConfig()
+	transports, err := messenger.NewSQLTransports(db2, config4)
+	if err != nil {
+		return nil, fmt.Errorf("NewSQLTransports: %w", err)
+	}
+	config5 := autoConfigWebhooks(cfg)
+	v := clock()
+	deliverer := webhook.NewDeliverer(config5, v)
+	store3 := channels.NewStore(sql2)
+	config6 := autoConfigMailer(cfg)
+	transport2, err := mailer.NewTransport(config6, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewTransport: %w", err)
 	}
-	mailer2 := mailer.New(config5, transport)
+	mailer2 := mailer.New(config6, transport2)
 	alertHandler := channels.NewAlertHandler(store3, mailer2, v)
-	v2 := autoHandlers(deliverer, alertHandler)
-	bus := messenger.NewBus(config3, transports, v2, logger)
+	v2 := autoHandlers(deliverer, announcer, alertHandler)
+	bus := messenger.NewBus(config4, transports, v2, logger)
 	subscriber := channels.NewSubscriber(bus)
-	v3 := autoSubscribers(subscriber)
+	v3 := autoSubscribers(announcer, subscriber)
 	dispatcher := goncini.NewDispatcher(v3)
-	config6 := autoDefaultCacheConfig()
+	config7 := autoDefaultCacheConfig()
 	memoryStore := cache.NewMemoryStore()
-	cache2 := cache.New(config6, memoryStore)
-	checks2 := checks.NewChecks(store2, sql2, registry, dispatcher, cache2, v)
+	cache2 := cache.New(config7, memoryStore)
+	checks2 := checks.NewChecks(store2, sql2, registry, dispatcher, cache2, hub2, v)
 	pings := checks.NewPings(checks2, v)
 	projects2 := projects.NewProjects()
 	channels2 := channels.NewChannels(store3, v)
@@ -86,37 +95,37 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
 	server := goncini.NewServer(http, kernel, logger)
-	config7 := autoConfigProfiler(cfg)
-	profiler2 := profiler.New(config7, logger)
+	config8 := autoConfigProfiler(cfg)
+	profiler2 := profiler.New(config8, logger)
 	requests := profiler.NewCommand(profiler2)
 	createCommand := projects.NewCreateCommand(store, v)
 	migrator2, err := migrator(db2)
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	config8 := autoDefaultSchedulerConfig()
+	config9 := autoDefaultSchedulerConfig()
 	sqlStore, err := lock.NewSQLStore(db2)
 	if err != nil {
 		return nil, fmt.Errorf("NewSQLStore: %w", err)
 	}
 	v7 := autoTasks(checks2, alertHandler)
-	scheduler2 := scheduler.New(config8, sqlStore, v7, logger)
+	scheduler2 := scheduler.New(config9, sqlStore, v7, logger)
 	v8 := autoCommands(requests, createCommand, migrator2, bus, scheduler2, registry)
 	v9 := autoChecks(db2)
 	v10 := autoServices()
-	config9 := autoDefaultOpenapiConfig()
+	config10 := autoDefaultOpenapiConfig()
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config9, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config10, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
 	v11 := autoBackground(bus, scheduler2)
 	v12 := autoSpanProcessors(profiler2)
-	tracing, cleanup2, err := goncini.NewTracing(v12)
+	tracing, cleanup3, err := goncini.NewTracing(v12)
 	if err != nil {
 		return nil, fmt.Errorf("NewTracing: %w", err)
 	}
-	s.Defer(cleanup2)
+	s.Defer(cleanup3)
 	app := goncini.NewApp(kernel, server, router, v8, v9, v10, logger, document, dispatcher, v11, tracing)
 	return app, nil
 }

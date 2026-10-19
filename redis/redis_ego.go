@@ -2,8 +2,8 @@
 
 // Package redis keeps goncini's messages, locks and rate limits in Redis,
 // which the instances of an app share: a bus whose queues are in Redis, a
-// lock store, as the scheduler's, and a store of rate limits, as
-// ratelimit.Logins's.
+// lock store, as the scheduler's, a store of rate limits, as
+// ratelimit.Logins's, and the transport of a hub's events, over pub/sub.
 //
 //	var Services = layer.Set(redis.Messenger, redis.Lock, redis.RateLimit, scheduler.New, …)
 //
@@ -30,6 +30,7 @@ import (
 	"github.com/effect-go/effect-go/layer"
 	goredis "github.com/redis/go-redis/v9"
 
+	"github.com/goncini/goncini/hub"
 	"github.com/goncini/goncini/lock"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/ratelimit"
@@ -37,7 +38,7 @@ import (
 
 // Config says which Redis to use.
 //
-//line redis.ego:37
+//line redis.ego:38
 type Config struct {
 	// URL is the Redis server's, as go-redis's ParseURL takes it, or
 	// memory:// for tests.
@@ -60,7 +61,7 @@ func (c Config) prefix() string {
 // Messenger is the providers of a bus whose transports are queues in
 // Redis, one per messenger.Config.Queues and the failure transport's.
 //
-//line redis.ego:52
+//line redis.ego:53
 var Messenger = layer.Set(NewClient, NewTransports, messenger.NewBus)
 
 // Lock is the providers of a lock store in Redis.
@@ -68,6 +69,10 @@ var Lock = layer.Set(NewClient, NewLockStore)
 
 // RateLimit is the providers of a store of rate limits in Redis.
 var RateLimit = layer.Set(NewClient, NewRateLimitStore)
+
+// Hub is the providers of a hub whose events reach every instance through
+// Redis.
+var Hub = layer.Set(NewClient, NewHubTransport, hub.New)
 
 // Client is the client that the transports and the lock store share: a
 // type of its own, so that it isn't rediscache's, whose Redis may be
@@ -91,7 +96,7 @@ func NewClient(c Config) (*Client, func() error, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-//line redis.ego:79
+//line redis.ego:84
 	client := goredis.NewClient(opts)
 	return &Client{UniversalClient: client}, client.Close, nil
 }

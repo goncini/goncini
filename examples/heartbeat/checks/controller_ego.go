@@ -11,6 +11,7 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/hub"
 	"github.com/goncini/goncini/listing"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
@@ -25,18 +26,19 @@ import (
 // Checks serves the checks of the authenticated project, and moves them
 // through their lifecycle.
 //
-//line controller.ego:23
+//line controller.ego:24
 type Checks struct {
 	store     *Store
 	tx        db.Transactor
 	lifecycle *workflow.Workflow
 	events    *event.Dispatcher
 	cache     *cache.Cache // the badges, tagged with their project
+	hub       *hub.Hub     // the flips, by project
 	now       func() time.Time
 }
 
-func NewChecks(store *Store, tx db.Transactor, workflows workflow.Registry, events *event.Dispatcher, c *cache.Cache, now func() time.Time) *Checks {
-	return &Checks{store: store, tx: tx, lifecycle: workflows.Get(Lifecycle.Name), events: events, cache: c, now: now}
+func NewChecks(store *Store, tx db.Transactor, workflows workflow.Registry, events *event.Dispatcher, c *cache.Cache, h *hub.Hub, now func() time.Time) *Checks {
+	return &Checks{store: store, tx: tx, lifecycle: workflows.Get(Lifecycle.Name), events: events, cache: c, hub: h, now: now}
 }
 
 // Routes registers the endpoints, which need a project, but the badges.
@@ -44,6 +46,7 @@ func (c *Checks) Routes(r *routing.Router) {
 	api := r.With(security.Required)
 	api.Get("/checks", httpkernel.Endpoint(c.List)).Name("check_list")
 	api.Post("/checks", httpkernel.Endpoint(c.Create)).Name("check_create")
+	api.Get("/checks/events", httpkernel.Endpoint(c.Events)).Name("check_events")
 	api.Get("/checks/{id}", httpkernel.Endpoint(c.Show)).Name("check_show").Require("id", routing.UUID)
 	api.Patch("/checks/{id}", httpkernel.Endpoint(c.Update)).Name("check_update").Require("id", routing.UUID)
 	api.Delete("/checks/{id}", httpkernel.Endpoint(c.Delete)).Name("check_delete").Require("id", routing.UUID)
@@ -62,7 +65,7 @@ type ListInput struct {
 func (c *Checks) List(ctx context.Context, in ListInput) (_ listing.Page[Check], err error) {
 	ctx, span := trace.Start(ctx, "checks.Checks.List")
 	defer trace.End(span, &err)
-//line controller.ego:57
+//line controller.ego:60
 	list, count, err := c.store.List(ctx, projects.Current(ctx).ID, in.Status, in.Limit, in.Offset)
 	if err != nil {
 		if _, ok := errors.AsType[CheckError](err); ok {
@@ -70,10 +73,22 @@ func (c *Checks) List(ctx context.Context, in ListInput) (_ listing.Page[Check],
 		}
 		return listing.Page[Check]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:58
+//line controller.ego:61
 	return listing.Page[Check]{Items: list, Total: count, Window: in.Window}, nil
 }
 
+type EventsInput struct {
+	LastEventID string `header:"Last-Event-ID"` // the last flip that the client had, when it reconnects
+}
+
+// Events streams the project's flips as they happen.
+func (c *Checks) Events(ctx context.Context, in EventsInput) (_ httpkernel.Stream[Flip], err error) {
+	ctx, span := trace.Start(ctx, "checks.Checks.Events")
+	defer trace.End(span, &err)
+	return httpkernel.Stream[Flip]{Events: hub.Subscribe[Flip](ctx, c.hub, in.LastEventID, flipsOf(projects.Current(ctx).ID))}, nil
+}
+
+//line controller.ego:73
 type IDInput struct {
 	ID uid.UUID `path:"id"`
 }
@@ -87,11 +102,11 @@ func (c *Checks) Show(ctx context.Context, in IDInput) (_ Check, err error) {
 
 // get returns the project's check with the ID.
 //
-//line controller.ego:71
+//line controller.ego:83
 func (c *Checks) get(ctx context.Context, id uid.UUID) (_ Check, err error) {
 	ctx, span := trace.Start(ctx, "checks.Checks.get")
 	defer trace.End(span, &err)
-//line controller.ego:72
+//line controller.ego:84
 	chk, ok, err := c.store.Get(ctx, projects.Current(ctx).ID, id)
 	if err != nil {
 		if _, ok := errors.AsType[CheckError](err); ok {
@@ -99,7 +114,7 @@ func (c *Checks) get(ctx context.Context, id uid.UUID) (_ Check, err error) {
 		}
 		return Check{}, Unavailable{Cause: err}
 	}
-//line controller.ego:73
+//line controller.ego:85
 	if !ok {
 		return Check{}, NotFound{ID: id}
 	}
@@ -118,7 +133,7 @@ type CreateInput struct {
 func (c *Checks) Create(ctx context.Context, in CreateInput) (_ httpkernel.Created[Check], err error) {
 	ctx, span := trace.Start(ctx, "checks.Checks.Create")
 	defer trace.End(span, &err)
-//line controller.ego:89
+//line controller.ego:101
 	chk := Check{
 		ID:        uid.NewV4(), // random: it authenticates the pings
 		ProjectID: projects.Current(ctx).ID,
@@ -134,14 +149,14 @@ func (c *Checks) Create(ctx context.Context, in CreateInput) (_ httpkernel.Creat
 		}
 		return httpkernel.Created[Check]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:99
+//line controller.ego:111
 	if err := c.cache.Invalidate(ctx, badgeTag(chk.ProjectID)); err != nil {
 		if _, ok := errors.AsType[CheckError](err); ok {
 			return httpkernel.Created[Check]{}, err
 		}
 		return httpkernel.Created[Check]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:100
+//line controller.ego:112
 	return httpkernel.Created[Check]{Body: chk}, nil
 }
 
@@ -177,25 +192,25 @@ func (in *UpdateInput) Validate() error {
 func (c *Checks) Update(ctx context.Context, in UpdateInput) (_ Check, err error) {
 	ctx, span := trace.Start(ctx, "checks.Checks.Update")
 	defer trace.End(span, &err)
-//line controller.ego:133
+//line controller.ego:145
 	chk, err := c.get(ctx, in.ID)
 	if err != nil {
 		return Check{}, err
 	}
-//line controller.ego:134
+//line controller.ego:146
 	b := in.Body
 	if b.Name.Set {
 		chk.Name = b.Name.Value
 	}
-//line controller.ego:136
+//line controller.ego:148
 	if b.Period.Set {
 		chk.Period = b.Period.Value
 	}
-//line controller.ego:137
+//line controller.ego:149
 	if b.Grace.Set {
 		chk.Grace = b.Grace.Value
 	}
-//line controller.ego:138
+//line controller.ego:150
 	chk.DueAt = chk.due(chk.Status)
 	if err := c.store.Update(ctx, chk); err != nil {
 		if _, ok := errors.AsType[CheckError](err); ok {
@@ -203,7 +218,7 @@ func (c *Checks) Update(ctx context.Context, in UpdateInput) (_ Check, err error
 		}
 		return Check{}, Unavailable{Cause: err}
 	}
-//line controller.ego:140
+//line controller.ego:152
 	return chk, nil
 }
 
@@ -211,7 +226,7 @@ func (c *Checks) Update(ctx context.Context, in UpdateInput) (_ Check, err error
 func (c *Checks) Delete(ctx context.Context, in IDInput) (_ httpkernel.NoContent, err error) {
 	ctx, span := trace.Start(ctx, "checks.Checks.Delete")
 	defer trace.End(span, &err)
-//line controller.ego:145
+//line controller.ego:157
 	project := projects.Current(ctx).ID
 	deleted, err := c.store.Delete(ctx, project, in.ID)
 	if err != nil {
@@ -220,7 +235,7 @@ func (c *Checks) Delete(ctx context.Context, in IDInput) (_ httpkernel.NoContent
 		}
 		return httpkernel.NoContent{}, Unavailable{Cause: err}
 	}
-//line controller.ego:147
+//line controller.ego:159
 	if !deleted {
 		return httpkernel.NoContent{}, NotFound{ID: in.ID}
 	}
@@ -230,7 +245,7 @@ func (c *Checks) Delete(ctx context.Context, in IDInput) (_ httpkernel.NoContent
 		}
 		return httpkernel.NoContent{}, Unavailable{Cause: err}
 	}
-//line controller.ego:151
+//line controller.ego:163
 	return httpkernel.NoContent{}, nil
 }
 
@@ -243,7 +258,7 @@ func (c *Checks) Pause(ctx context.Context, in IDInput) (_ Check, err error) {
 
 // Resume expects a paused check's pings again: it is new until the next.
 //
-//line controller.ego:160
+//line controller.ego:172
 func (c *Checks) Resume(ctx context.Context, in IDInput) (_ Check, err error) {
 	ctx, span := trace.Start(ctx, "checks.Checks.Resume")
 	defer trace.End(span, &err)
@@ -252,28 +267,28 @@ func (c *Checks) Resume(ctx context.Context, in IDInput) (_ Check, err error) {
 
 // transition moves the project's check with the ID by the transition.
 //
-//line controller.ego:165
+//line controller.ego:177
 func (c *Checks) transition(ctx context.Context, id uid.UUID, transition string) (_ Check, err error) {
 	ctx, span := trace.Start(ctx, "checks.Checks.transition")
 	defer trace.End(span, &err)
-//line controller.ego:166
+//line controller.ego:178
 	chk, err := c.get(ctx, id)
 	if err != nil {
 		return Check{}, err
 	}
-//line controller.ego:167
+//line controller.ego:179
 	moved, err := c.move(ctx, chk, transition)
 	if err != nil {
 		return Check{}, err
 	}
-//line controller.ego:168
+//line controller.ego:180
 	if err := c.changed(ctx, chk.Status, moved); err != nil {
 		if _, ok := errors.AsType[CheckError](err); ok {
 			return Check{}, err
 		}
 		return Check{}, Unavailable{Cause: err}
 	}
-//line controller.ego:169
+//line controller.ego:181
 	return moved, nil
 }
 
@@ -285,7 +300,7 @@ func (c *Checks) transition(ctx context.Context, id uid.UUID, transition string)
 func (c *Checks) move(ctx context.Context, chk Check, transition string) (_ Check, err error) {
 	ctx, span := trace.Start(ctx, "checks.Checks.move")
 	defer trace.End(span, &err)
-//line controller.ego:178
+//line controller.ego:190
 	from := chk.Status
 	if err := c.tx.InTx(ctx, func(ctx context.Context) error {
 		to, err := c.lifecycle.Apply(ctx, &chk, from, transition, func(ctx context.Context, to string) error {
@@ -293,7 +308,7 @@ func (c *Checks) move(ctx context.Context, chk Check, transition string) (_ Chec
 			if err != nil {
 				return err
 			}
-//line controller.ego:182
+//line controller.ego:194
 			if !moved {
 				return workflow.NotAllowed{Workflow: Lifecycle.Name, Transition: transition, State: from}
 			}
@@ -305,7 +320,7 @@ func (c *Checks) move(ctx context.Context, chk Check, transition string) (_ Chec
 		if err != nil {
 			return err
 		}
-//line controller.ego:191
+//line controller.ego:203
 		chk.Status, chk.DueAt = to, chk.due(to)
 		if !flips(from, to) {
 			return nil
@@ -317,7 +332,7 @@ func (c *Checks) move(ctx context.Context, chk Check, transition string) (_ Chec
 		}
 		return Check{}, Unavailable{Cause: err}
 	}
-//line controller.ego:197
+//line controller.ego:209
 	return chk, nil
 }
 
@@ -347,12 +362,12 @@ type PingsBody struct {
 func (c *Checks) Pings(ctx context.Context, in PingsInput) (_ PingsBody, err error) {
 	ctx, span := trace.Start(ctx, "checks.Checks.Pings")
 	defer trace.End(span, &err)
-//line controller.ego:224
+//line controller.ego:236
 	chk, err := c.get(ctx, in.ID)
 	if err != nil {
 		return PingsBody{}, err
 	}
-//line controller.ego:225
+//line controller.ego:237
 	list, err := c.store.Pings(ctx, chk.ID, in.After.Key, in.Limit)
 	if err != nil {
 		if _, ok := errors.AsType[CheckError](err); ok {
@@ -360,7 +375,7 @@ func (c *Checks) Pings(ctx context.Context, in PingsInput) (_ PingsBody, err err
 		}
 		return PingsBody{}, Unavailable{Cause: err}
 	}
-//line controller.ego:226
+//line controller.ego:238
 	body := PingsBody{Items: list}
 	if len(list) == in.Limit {
 		body.Next = listing.After(list[len(list)-1].ID)

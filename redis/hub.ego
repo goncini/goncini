@@ -1,0 +1,56 @@
+package redis
+
+import (
+	"context"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+
+	goredis "github.com/redis/go-redis/v9"
+
+	"github.com/goncini/goncini/hub"
+)
+
+// HubTransport carries a hub's updates between the app's instances over
+// Redis's pub/sub, on one channel. An instance that isn't subscribed when
+// an update is published, as while it reconnects, misses it.
+type HubTransport struct {
+	client  goredis.UniversalClient
+	channel string
+}
+
+// NewHubTransport returns the hub's transport over Redis, or a local one
+// for memory://.
+func NewHubTransport(client *Client, c Config) hub.Transport {
+	if client.UniversalClient == nil {
+		return hub.NewLocalTransport()
+	}
+	return &HubTransport{client: client, channel: c.prefix() + "hub"}
+}
+
+func (t *HubTransport) Publish(ctx context.Context, u hub.Update) error {
+	b := check json.Marshal(u) ""
+	return t.client.Publish(ctx, t.channel, b).Err()
+}
+
+func (t *HubTransport) Listen(ctx context.Context, f func(hub.Update)) error {
+	ps := t.client.Subscribe(ctx, t.channel)
+	defer ps.Close()
+	check ps.Receive(ctx) "" // the subscription's confirmation, or its error
+	updates := ps.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case m, ok := <-updates:
+			if !ok {
+				return errors.New("redis: the hub's subscription closed")
+			}
+			var u hub.Update
+			if err := json.Unmarshal([]byte(m.Payload), &u); err != nil {
+				return fmt.Errorf("redis: a hub update: %w", err)
+			}
+			f(u)
+		}
+	}
+}

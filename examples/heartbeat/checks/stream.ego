@@ -1,0 +1,51 @@
+package checks
+
+import (
+	"context"
+	"time"
+
+	"github.com/goncini/goncini/event"
+	"github.com/goncini/goncini/hub"
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/uid"
+)
+
+// Flip is a check's flip, as the clients that stream them get it, and the
+// message that publishes it to them.
+type Flip struct {
+	ID      uid.UUID  `json:"id"`
+	Project uid.UUID  `json:"project"`
+	Check   uid.UUID  `json:"check"`
+	Name    string    `json:"name"`   // the check's
+	From    string    `json:"from"`   // the status it had
+	Status  string    `json:"status"` // up or down
+	At      time.Time `json:"at"`
+}
+
+// flipsOf is the topic of a project's flips.
+func flipsOf(project uid.UUID) string { return "flips:" + project.String() }
+
+// Announcer publishes the flips to the clients that stream them, once they
+// are saved: the flip's transaction queues a Flip, whose handler
+// publishes it.
+type Announcer struct {
+	hub *hub.Hub
+	bus *messenger.Bus // the one it handles the flips of
+}
+
+func NewAnnouncer(h *hub.Hub) *Announcer {
+	return &Announcer{hub: h}
+}
+
+func (a *Announcer) Subscribe(d *event.Dispatcher) {
+	event.On(d, func(ctx context.Context, e *Flipped) error {
+		return messenger.Dispatch(ctx, a.bus, Flip{ID: e.ID, Project: e.Check.ProjectID, Check: e.Check.ID, Name: e.Check.Name, From: e.From, Status: e.Check.Status, At: e.At})
+	})
+}
+
+// Handlers registers the handler, and routes the flips to the async queue.
+func (a *Announcer) Handlers(b *messenger.Bus) {
+	a.bus = b
+	messenger.Handle(b, (ctx context.Context, f Flip) => a.hub.Publish(ctx, flipsOf(f.Project), f))
+	messenger.Route[Flip](b, "async")
+}

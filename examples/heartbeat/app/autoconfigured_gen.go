@@ -18,6 +18,7 @@ import (
 	"github.com/goncini/goncini/examples/heartbeat/home"
 	"github.com/goncini/goncini/examples/heartbeat/projects"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/hub"
 	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/openapi"
@@ -30,7 +31,7 @@ import (
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigMailer, autoConfigProfiler, autoConfigWebhooks, autoDefaultOpenapiConfig, autoDefaultCacheConfig, autoDefaultMessengerConfig, autoDefaultSchedulerConfig)
+var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigMailer, autoConfigProfiler, autoConfigWebhooks, autoDefaultOpenapiConfig, autoDefaultCacheConfig, autoDefaultMessengerConfig, autoDefaultSchedulerConfig, autoDefaultHubConfig)
 
 // autoProblems are the error mappers that the app's packages declare.
 func autoProblems() []httpkernel.ErrorMapper {
@@ -53,13 +54,13 @@ func autoVoters() []security.Voter {
 }
 
 // autoSubscribers are the services that subscribe to events.
-func autoSubscribers(p1 *channels.Subscriber) []event.Subscriber {
-	return []event.Subscriber{p1}
+func autoSubscribers(p1 *checks.Announcer, p2 *channels.Subscriber) []event.Subscriber {
+	return []event.Subscriber{p1, p2}
 }
 
 // autoHandlers are the services that handle messages.
-func autoHandlers(p1 *webhook.Deliverer, p2 *channels.AlertHandler) []messenger.Handlers {
-	return []messenger.Handlers{p1, p2}
+func autoHandlers(p1 *webhook.Deliverer, p2 *checks.Announcer, p3 *channels.AlertHandler) []messenger.Handlers {
+	return []messenger.Handlers{p1, p2, p3}
 }
 
 // autoTasks are the services that schedule tasks.
@@ -89,6 +90,13 @@ func autoServices() []goncini.Service {
 		{Type: "*home.Home", Provider: "home.NewHome", Needs: []string{}},
 		{Type: "*checks.Store", Provider: "checks.NewStore", Needs: []string{"*db.SQL"}},
 		{Type: "workflow.Registry", Provider: "checks.NewWorkflows", Needs: []string{}},
+		{Type: "hub.Config", Provider: "autoDefaultHubConfig", Needs: []string{}},
+		{Type: "hub.Transport", Provider: "hub.NewLocalTransport", Needs: []string{}},
+		{Type: "goncini.Log", Provider: "autoConfigLog", Needs: []string{"config.Config"}},
+		{Type: "slog.Handler", Provider: "goncini.NewLogHandler", Needs: []string{"goncini.Log"}},
+		{Type: "*slog.Logger", Provider: "goncini.NewLogger", Needs: []string{"slog.Handler"}},
+		{Type: "*hub.Hub", Provider: "hub.New", Needs: []string{"hub.Config", "hub.Transport", "*slog.Logger"}},
+		{Type: "*checks.Announcer", Provider: "checks.NewAnnouncer", Needs: []string{"*hub.Hub"}},
 		{Type: "messenger.Config", Provider: "autoDefaultMessengerConfig", Needs: []string{}},
 		{Type: "messenger.Transports", Provider: "messenger.NewSQLTransports", Needs: []string{"*sql.DB", "messenger.Config"}},
 		{Type: "webhook.Config", Provider: "autoConfigWebhooks", Needs: []string{"config.Config"}},
@@ -96,21 +104,18 @@ func autoServices() []goncini.Service {
 		{Type: "*webhook.Deliverer", Provider: "webhook.NewDeliverer", Needs: []string{"webhook.Config", "func() time.Time"}},
 		{Type: "*channels.Store", Provider: "channels.NewStore", Needs: []string{"*db.SQL"}},
 		{Type: "mailer.Config", Provider: "autoConfigMailer", Needs: []string{"config.Config"}},
-		{Type: "goncini.Log", Provider: "autoConfigLog", Needs: []string{"config.Config"}},
-		{Type: "slog.Handler", Provider: "goncini.NewLogHandler", Needs: []string{"goncini.Log"}},
-		{Type: "*slog.Logger", Provider: "goncini.NewLogger", Needs: []string{"slog.Handler"}},
 		{Type: "mailer.Transport", Provider: "mailer.NewTransport", Needs: []string{"mailer.Config", "*slog.Logger"}},
 		{Type: "*mailer.Mailer", Provider: "mailer.New", Needs: []string{"mailer.Config", "mailer.Transport"}},
 		{Type: "*channels.AlertHandler", Provider: "channels.NewAlertHandler", Needs: []string{"*channels.Store", "*mailer.Mailer", "func() time.Time"}},
-		{Type: "[]messenger.Handlers", Provider: "autoHandlers", Needs: []string{"*webhook.Deliverer", "*channels.AlertHandler"}},
+		{Type: "[]messenger.Handlers", Provider: "autoHandlers", Needs: []string{"*webhook.Deliverer", "*checks.Announcer", "*channels.AlertHandler"}},
 		{Type: "*messenger.Bus", Provider: "messenger.NewBus", Needs: []string{"messenger.Config", "messenger.Transports", "[]messenger.Handlers", "*slog.Logger"}},
 		{Type: "*channels.Subscriber", Provider: "channels.NewSubscriber", Needs: []string{"*messenger.Bus"}},
-		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{"*channels.Subscriber"}},
+		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{"*checks.Announcer", "*channels.Subscriber"}},
 		{Type: "*event.Dispatcher", Provider: "goncini.NewDispatcher", Needs: []string{"[]event.Subscriber"}},
 		{Type: "cache.Config", Provider: "autoDefaultCacheConfig", Needs: []string{}},
 		{Type: "*cache.MemoryStore", Provider: "cache.NewMemoryStore", Needs: []string{}},
 		{Type: "*cache.Cache", Provider: "cache.New", Needs: []string{"cache.Config", "*cache.MemoryStore"}},
-		{Type: "*checks.Checks", Provider: "checks.NewChecks", Needs: []string{"*checks.Store", "*db.SQL", "workflow.Registry", "*event.Dispatcher", "*cache.Cache", "func() time.Time"}},
+		{Type: "*checks.Checks", Provider: "checks.NewChecks", Needs: []string{"*checks.Store", "*db.SQL", "workflow.Registry", "*event.Dispatcher", "*cache.Cache", "*hub.Hub", "func() time.Time"}},
 		{Type: "*checks.Pings", Provider: "checks.NewPings", Needs: []string{"*checks.Checks", "func() time.Time"}},
 		{Type: "*projects.Projects", Provider: "projects.NewProjects", Needs: []string{}},
 		{Type: "*channels.Channels", Provider: "channels.NewChannels", Needs: []string{"*channels.Store", "func() time.Time"}},
@@ -156,6 +161,7 @@ func autoOpenAPI() openapi.Annotations {
 			"github.com/goncini/goncini/examples/heartbeat/checks.(*Checks).Badge":      {Summary: "Returns the badge of a project's checks: public, as a project's ID is no secret, and cached until a check changes status.", Errors: []error{checks.Unavailable{}}},
 			"github.com/goncini/goncini/examples/heartbeat/checks.(*Checks).Create":     {Summary: "Adds a check, which is new until its first ping.", Errors: []error{checks.Unavailable{}, security.Unauthenticated{}}},
 			"github.com/goncini/goncini/examples/heartbeat/checks.(*Checks).Delete":     {Summary: "Removes a check, and its pings.", Errors: []error{checks.NotFound{}, checks.Unavailable{}, security.Unauthenticated{}}},
+			"github.com/goncini/goncini/examples/heartbeat/checks.(*Checks).Events":     {Summary: "Streams the project's flips as they happen.", Errors: []error{security.Unauthenticated{}}},
 			"github.com/goncini/goncini/examples/heartbeat/checks.(*Checks).List":       {Summary: "Returns a page of the project's checks, the newest first.", Errors: []error{checks.Unavailable{}, security.Unauthenticated{}}},
 			"github.com/goncini/goncini/examples/heartbeat/checks.(*Checks).Pause":      {Summary: "Stops expecting a check's pings, until it is resumed or pinged.", Errors: []error{checks.NotFound{}, checks.Refused{}, checks.Unavailable{}, security.AccessDenied{}, security.Unauthenticated{}, workflow.NotAllowed{}, workflow.UnknownTransition{}}},
 			"github.com/goncini/goncini/examples/heartbeat/checks.(*Checks).Pings":      {Summary: "Returns a page of a check's pings, the newest first.", Errors: []error{checks.NotFound{}, checks.Unavailable{}, security.Unauthenticated{}}},
@@ -173,6 +179,8 @@ func autoOpenAPI() openapi.Annotations {
 			reflect.TypeFor[checks.Badge]():         {Description: "Badge is the status of a project's checks, as shields.io's endpoint\nbadges read it: https://img.shields.io/endpoint?url=<the badge's URL>.", Fields: map[string]string{"Message": "up, or how many checks are down"}},
 			reflect.TypeFor[checks.Check]():         {Description: "Check is a check, as the API serves it.", Fields: map[string]string{"ID": "and its ping URL's: /ping/{id}", "Period": "the seconds between pings", "Grace": "the seconds a ping may be late by", "Status": "new, up, down or paused", "StartedAt": "when the job's run started, if it runs", "DueAt": "when it goes down without a ping, if it is up"}},
 			reflect.TypeFor[checks.CreateInput]():   {Fields: map[string]string{"Body.Period": "the seconds between pings: a minute to a year", "Body.Grace": "the seconds a ping may be late by"}},
+			reflect.TypeFor[checks.EventsInput]():   {Fields: map[string]string{"LastEventID": "the last flip that the client had, when it reconnects"}},
+			reflect.TypeFor[checks.Flip]():          {Description: "Flip is a check's flip, as the clients that stream them get it, and the\nmessage that publishes it to them.", Fields: map[string]string{"Name": "the check's", "From": "the status it had", "Status": "up or down"}},
 			reflect.TypeFor[checks.ListInput]():     {Fields: map[string]string{"Status": "only the checks with this status"}},
 			reflect.TypeFor[checks.Ping]():          {Description: "Ping is a ping of a check by its job.", Fields: map[string]string{"Kind": "success, start or fail", "Body": "the job's output, its first 10 KB", "Duration": "the seconds since the run's start, if a start ping began it"}},
 			reflect.TypeFor[checks.PingInput]():     {Fields: map[string]string{"Body": "the job's output, of which the first 10 KB are kept"}},
@@ -213,3 +221,6 @@ func autoDefaultMessengerConfig() messenger.Config { return messenger.Config{} }
 
 // autoDefaultSchedulerConfig is the default of scheduler.Config, which the config doesn't have.
 func autoDefaultSchedulerConfig() scheduler.Config { return scheduler.Config{} }
+
+// autoDefaultHubConfig is the default of hub.Config, which the config doesn't have.
+func autoDefaultHubConfig() hub.Config { return hub.Config{} }

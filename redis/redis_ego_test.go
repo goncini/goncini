@@ -4,12 +4,14 @@ package redis_test
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/goncini/goncini/hub"
 	"github.com/goncini/goncini/lock"
 	"github.com/goncini/goncini/lock/locktest"
 	"github.com/goncini/goncini/messenger"
@@ -23,7 +25,7 @@ import (
 // the test's own, whose keys go when it ends; or skips the test without
 // one.
 //
-//line redis_test.ego:23
+//line redis_test.ego:25
 func client(t *testing.T) (*redis.Client, string) {
 	url := os.Getenv("REDIS_TEST_URL")
 	if url == "" {
@@ -33,31 +35,31 @@ func client(t *testing.T) (*redis.Client, string) {
 	if err != nil {
 		panic(err)
 	}
-//line redis_test.ego:29
+//line redis_test.ego:31
 	if err := c.PingContext(context.Background()); err != nil {
 		panic(err)
 	}
-//line redis_test.ego:30
+//line redis_test.ego:32
 	prefix := "test:" + uid.NewV4().String() + ":"
 	t.Cleanup(func() {
 
-//line redis_test.ego:32
+//line redis_test.ego:34
 		ctx := context.Background()
 		keys, err := c.Keys(ctx, prefix+"*").Result()
 		if err != nil {
 			panic(err)
 		}
-//line redis_test.ego:34
+//line redis_test.ego:36
 		if len(keys) > 0 {
 			if err := c.Del(ctx, keys...).Err(); err != nil {
 				panic(err)
 			}
 		}
-//line redis_test.ego:37
+//line redis_test.ego:39
 		closeClient()
 
 	})
-//line redis_test.ego:39
+//line redis_test.ego:41
 	return c, prefix
 }
 
@@ -88,7 +90,7 @@ func TestRateLimitStore(t *testing.T) {
 	for range 20 {
 		wg.Go(func() {
 
-//line redis_test.ego:68
+//line redis_test.ego:70
 			res, err := l.Take(ctx, "k", 1)
 			if err != nil {
 				t.Error(err)
@@ -98,7 +100,7 @@ func TestRateLimitStore(t *testing.T) {
 
 		})
 	}
-//line redis_test.ego:76
+//line redis_test.ego:78
 	wg.Wait()
 	if n := allowed.Load(); n != 10 {
 		t.Errorf("%d takes allowed, not 10", n)
@@ -106,12 +108,12 @@ func TestRateLimitStore(t *testing.T) {
 	if err := l.Reset(ctx, "k"); err != nil {
 		panic(err)
 	}
-//line redis_test.ego:81
+//line redis_test.ego:83
 	res, err := l.Take(ctx, "k", 1)
 	if err != nil {
 		panic(err)
 	}
-//line redis_test.ego:82
+//line redis_test.ego:84
 	if !res.Allowed || res.Remaining != 9 {
 		t.Errorf("after Reset: %+v", res)
 	}
@@ -119,25 +121,73 @@ func TestRateLimitStore(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line redis_test.ego:86
+//line redis_test.ego:88
 	if ttl <= 0 || ttl > time.Minute {
 		t.Errorf("the state expires in %v", ttl)
 	}
 }
 
-// TestMemory checks that memory:// keeps the messages, locks and limits in
-// memory.
+// TestHub checks that an event published on one instance reaches the
+// subscribers of the others, and its own once.
+func TestHub(t *testing.T) {
+	c, prefix := client(t)
+	ctx := t.Context()
+	newHub := func() *hub.Hub {
+		h, stop, _ := hub.New(hub.Config{}, redis.NewHubTransport(c, redis.Config{Prefix: prefix}), slog.New(slog.DiscardHandler))
+		t.Cleanup(func() {
+//line redis_test.ego:100
+			stop()
+		})
+//line redis_test.ego:101
+		return h
+	}
+	one, two := newHub(), newHub()
+	for {
+		subs, err := c.PubSubNumSub(ctx, prefix+"hub").Result()
+		if err != nil {
+			panic(err)
+		}
+//line redis_test.ego:106
+		if subs[prefix+"hub"] == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	mine := hub.Subscribe[string](ctx, one, "", "notes")
+	theirs := hub.Subscribe[string](ctx, two, "", "notes")
+	if err := one.Publish(ctx, "notes", "hello"); err != nil {
+		panic(err)
+	}
+//line redis_test.ego:114
+	e := <-theirs
+	if e.Data != "hello" {
+		t.Errorf("the other instance got %+v", e)
+	}
+	if e = <-mine; e.Data != "hello" {
+		t.Errorf("this instance got %+v", e)
+	}
+	if err := one.Publish(ctx, "notes", "again"); err != nil {
+		panic(err)
+	}
+//line redis_test.ego:122
+	if e = <-mine; e.Data != "again" {
+		t.Errorf("this instance got %+v, not the next event", e)
+	}
+}
+
+// TestMemory checks that memory:// keeps the messages, locks, limits and
+// hub's events in memory.
 func TestMemory(t *testing.T) {
 	c, closeClient, err := redis.NewClient(redis.Config{URL: "memory://"})
 	if err != nil {
 		panic(err)
 	}
-//line redis_test.ego:95
+//line redis_test.ego:131
 	defer closeClient()
 	if err := c.PingContext(context.Background()); err != nil {
 		panic(err)
 	}
-//line redis_test.ego:97
+//line redis_test.ego:133
 	ts := redis.NewTransports(c, redis.Config{}, messenger.Config{})
 	if _, ok := ts["async"].(*messenger.MemoryTransport); !ok || len(ts) != 2 {
 		t.Errorf("transports %v", ts)
@@ -147,5 +197,8 @@ func TestMemory(t *testing.T) {
 	}
 	if _, ok := redis.NewRateLimitStore(c, redis.Config{}).(*ratelimit.MemoryStore); !ok {
 		t.Error("the rate limits aren't in memory")
+	}
+	if _, ok := redis.NewHubTransport(c, redis.Config{}).(hub.LocalTransport); !ok {
+		t.Error("the hub's events leave the instance")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/hub"
 	"github.com/goncini/goncini/listing"
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
@@ -26,11 +27,12 @@ type Checks struct {
 	lifecycle *workflow.Workflow
 	events    *event.Dispatcher
 	cache     *cache.Cache // the badges, tagged with their project
+	hub       *hub.Hub     // the flips, by project
 	now       func() time.Time
 }
 
-func NewChecks(store *Store, tx db.Transactor, workflows workflow.Registry, events *event.Dispatcher, c *cache.Cache, now func() time.Time) *Checks {
-	return &Checks{store: store, tx: tx, lifecycle: workflows.Get(Lifecycle.Name), events: events, cache: c, now: now}
+func NewChecks(store *Store, tx db.Transactor, workflows workflow.Registry, events *event.Dispatcher, c *cache.Cache, h *hub.Hub, now func() time.Time) *Checks {
+	return &Checks{store: store, tx: tx, lifecycle: workflows.Get(Lifecycle.Name), events: events, cache: c, hub: h, now: now}
 }
 
 // Routes registers the endpoints, which need a project, but the badges.
@@ -38,6 +40,7 @@ func (c *Checks) Routes(r *routing.Router) {
 	api := r.With(security.Required)
 	api.Get("/checks", httpkernel.Endpoint(c.List)).Name("check_list")
 	api.Post("/checks", httpkernel.Endpoint(c.Create)).Name("check_create")
+	api.Get("/checks/events", httpkernel.Endpoint(c.Events)).Name("check_events")
 	api.Get("/checks/{id}", httpkernel.Endpoint(c.Show)).Name("check_show").Require("id", routing.UUID)
 	api.Patch("/checks/{id}", httpkernel.Endpoint(c.Update)).Name("check_update").Require("id", routing.UUID)
 	api.Delete("/checks/{id}", httpkernel.Endpoint(c.Delete)).Name("check_delete").Require("id", routing.UUID)
@@ -56,6 +59,15 @@ type ListInput struct {
 effect (c *Checks) List(in ListInput) (listing.Page[Check], CheckError) {
 	list, count := check c.store.List(projects.Current(ctx).ID, in.Status, in.Limit, in.Offset) as Unavailable
 	return listing.Page[Check]{Items: list, Total: count, Window: in.Window}, nil
+}
+
+type EventsInput struct {
+	LastEventID string `header:"Last-Event-ID"` // the last flip that the client had, when it reconnects
+}
+
+// Events streams the project's flips as they happen.
+effect (c *Checks) Events(in EventsInput) (httpkernel.Stream[Flip], CheckError) {
+	return httpkernel.Stream[Flip]{Events: hub.Subscribe[Flip](ctx, c.hub, in.LastEventID, flipsOf(projects.Current(ctx).ID))}, nil
 }
 
 type IDInput struct {
