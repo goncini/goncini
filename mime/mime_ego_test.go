@@ -10,8 +10,10 @@ import (
 	"mime/multipart"
 	"mime/quotedprintable"
 	"net/mail"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goncini/goncini/mime"
 )
@@ -19,14 +21,14 @@ import (
 // parts reads the leaves of a multipart body: content type, then decoded
 // content.
 //
-//line mime_test.ego:19
+//line mime_test.ego:21
 func parts(t *testing.T, contentType string, body io.Reader, out map[string]string) {
 	t.Helper()
 	media, params, err := stdmime.ParseMediaType(contentType)
 	if err != nil {
 		panic(err)
 	}
-//line mime_test.ego:22
+//line mime_test.ego:24
 	if !strings.HasPrefix(media, "multipart/") {
 		t.Fatalf("not multipart: %s", media)
 	}
@@ -52,7 +54,7 @@ func parts(t *testing.T, contentType string, body io.Reader, out map[string]stri
 				panic(err2)
 			}
 			data = v
-//line mime_test.ego:43
+//line mime_test.ego:45
 		case "base64":
 			v2, err3 := io.ReadAll(base64.NewDecoder(base64.StdEncoding, p))
 			if err3 != nil {
@@ -60,12 +62,12 @@ func parts(t *testing.T, contentType string, body io.Reader, out map[string]stri
 			}
 			data = v2
 		}
-//line mime_test.ego:46
+//line mime_test.ego:48
 		media, _, err4 := stdmime.ParseMediaType(ct)
 		if err4 != nil {
 			panic(err4)
 		}
-//line mime_test.ego:47
+//line mime_test.ego:49
 		out[media] = string(data)
 	}
 }
@@ -88,23 +90,23 @@ func TestEmail(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line mime_test.ego:66
+//line mime_test.ego:68
 	msg, err := mail.ReadMessage(bytes.NewReader(raw))
 	if err != nil {
 		panic(err)
 	}
-//line mime_test.ego:67
+//line mime_test.ego:69
 	dec := new(stdmime.WordDecoder)
 	subject, err := dec.DecodeHeader(msg.Header.Get("Subject"))
 	if err != nil {
 		panic(err)
 	}
-//line mime_test.ego:69
+//line mime_test.ego:71
 	to, err := msg.Header.AddressList("To")
 	if err != nil {
 		panic(err)
 	}
-//line mime_test.ego:70
+//line mime_test.ego:72
 	if subject != "Bienvenue, Zoé" || to[0].Name != "Zoé" || msg.Header.Get("Bcc") != "" || msg.Header.Get("List-Unsubscribe") == "" || msg.Header.Get("Message-Id") == "" {
 		t.Errorf("header %v", msg.Header)
 	}
@@ -158,7 +160,7 @@ func TestLongAndPlain(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line mime_test.ego:120
+//line mime_test.ego:122
 	raw := string(b)
 	for _, line := range strings.Split(raw, "\r\n") {
 		if len(line) > 78 {
@@ -169,17 +171,17 @@ func TestLongAndPlain(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line mime_test.ego:127
+//line mime_test.ego:129
 	subject, err := new(stdmime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
 	if err != nil {
 		panic(err)
 	}
-//line mime_test.ego:128
+//line mime_test.ego:130
 	addresses, err := msg.Header.AddressList("To")
 	if err != nil {
 		panic(err)
 	}
-//line mime_test.ego:129
+//line mime_test.ego:131
 	got := map[string]string{}
 	parts(t, msg.Header.Get("Content-Type"), msg.Body, got)
 	if subject != e.Subject || len(addresses) != 60 || got["text/plain"] != "x" || got["text/csv"] != "a,b" || got["image/png"] != "png" {
@@ -187,5 +189,56 @@ func TestLongAndPlain(t *testing.T) {
 	}
 	if !strings.Contains(raw, `Content-Type: text/csv; charset=utf-8; name=notes.csv`) {
 		t.Errorf("no type for notes.csv:\n%s", raw)
+	}
+}
+
+// TestParse checks that Parse reads what Bytes writes, but Bcc, which the
+// message doesn't hold.
+func TestParse(t *testing.T) {
+	e := &mime.Email{
+		From:    mime.Address{Name: "Conduit Équipe", Email: "hello@conduit.example"},
+		To:      []mime.Address{{Name: "Zoé", Email: "zoe@example.com"}, {Email: "ann@example.com"}},
+		Cc:      []mime.Address{{Email: "bob@example.com"}},
+		Bcc:     []mime.Address{{Email: "audit@conduit.example"}},
+		ReplyTo: []mime.Address{{Name: "Support", Email: "support@conduit.example"}},
+		Subject: "Bienvenue, Zoé: a subject long enough to be folded over two lines of the header",
+		Text:    "Welcome to Conduit.\nA line long enough to be wrapped by quoted-printable, which wraps lines over seventy-six characters.",
+		HTML:    `<p>Welcome</p><img src="cid:logo">`,
+		Parts: []mime.Part{
+			{Name: "logo.png", Data: []byte("\x89PNG..."), ContentID: "logo"},
+			{Name: "terms.pdf", ContentType: "application/pdf", Data: bytes.Repeat([]byte("%PDF"), 50)},
+		},
+		Header: map[string]string{"List-Unsubscribe": "<https://conduit.example/unsubscribe>", "X-Campaign": "été"},
+		Date:   time.Date(2026, 10, 19, 9, 30, 0, 0, time.UTC),
+	}
+	raw, err := e.Bytes()
+	if err != nil {
+		panic(err)
+	}
+//line mime_test.ego:161
+	got, err := mime.Parse(raw)
+	if err != nil {
+		panic(err)
+	}
+//line mime_test.ego:162
+	want := *e
+	want.Bcc = nil
+	want.Parts = []mime.Part{{Name: "logo.png", ContentType: "image/png", Data: e.Parts[0].Data, ContentID: "logo"}, e.Parts[1]}
+	if !got.Date.Equal(want.Date) {
+		t.Errorf("date %v", got.Date)
+	}
+	got.Date = want.Date
+	if !reflect.DeepEqual(*got, want) {
+		t.Errorf("parsed\n%+v\nwant\n%+v", *got, want)
+	}
+
+	// A message of one part, of no type: a text.
+	plain, err := mime.Parse([]byte("From: ann@example.com\r\nTo: bob@example.com\r\nSubject: hi\r\n\r\nhello\r\n"))
+	if err != nil {
+		panic(err)
+	}
+//line mime_test.ego:175
+	if plain.Text != "hello\n" || plain.From.Email != "ann@example.com" || len(plain.Parts) != 0 || plain.Header != nil {
+		t.Errorf("plain %+v", plain)
 	}
 }

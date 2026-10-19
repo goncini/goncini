@@ -3,7 +3,7 @@
 // Package mime writes emails, as Symfony's Mime component does: an Email
 // has its addresses, a subject, a text and an HTML version, attachments and
 // inline images, and Bytes writes it as an RFC 5322 message, MIME parts
-// and encoded headers included.
+// and encoded headers included, which Parse reads back.
 //
 //	e := &mime.Email{
 //		From:    mime.Address{Name: "Conduit", Email: "hello@conduit.example"},

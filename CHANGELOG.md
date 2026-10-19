@@ -53,6 +53,14 @@ new` and the makers.
   authenticated the request, which a verifier records with
   `security.SetClaims`, as oidc's does: `Load` reads them to create the
   user of a first request.
+- **mailer:** API transports, for providers' HTTP APIs, as Symfony's
+  bridges are: `postmark+api://TOKEN@default` (`?message_stream=`),
+  `sendgrid+api://KEY@default` and `mailgun+api://KEY:DOMAIN@default`
+  (`?region=eu`), and `resend+api://KEY@default`; a host other than
+  `default` replaces the provider's. They call through `httpclient`, with
+  its spans. Mailgun takes the message as it is written; the others take
+  its fields, which **mime**'s new `Parse` reads back from the message,
+  the inverse of `Bytes`, and its Bcc from the envelope.
 - **translation:** plurals, as ICU writes them: `{n, plural, one {#
   character} other {# characters}}`, with CLDR's categories, chosen by the
   rules of the translation's language from x/text, and `=N` forms. A

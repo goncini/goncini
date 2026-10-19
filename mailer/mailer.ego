@@ -8,9 +8,16 @@
 //
 //	smtp://user:password@host:587   SMTP, with STARTTLS when the server offers it
 //	smtps://user:password@host:465  SMTP over TLS
+//	postmark+api://TOKEN@default    Postmark's API; ?message_stream=… for a stream other than outbound
+//	sendgrid+api://KEY@default      SendGrid's API; ?region=eu for an EU subuser
+//	mailgun+api://KEY:DOMAIN@default  Mailgun's API; ?region=eu for its EU region
+//	resend+api://KEY@default        Resend's API
 //	log://                          logs the emails: for development
 //	memory://                       keeps them: for tests
 //	null://                         drops them
+//
+// An API's host is default for the provider's endpoint, or another, over
+// HTTPS, such as a proxy's. Its key is percent-encoded, as passwords are.
 //
 // Sync and Async are the sets of providers to wire: Async sends emails as
 // SendEmail messages, which a worker sends.
@@ -125,6 +132,9 @@ func NewTransport(c Config, logger *slog.Logger) (Transport, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mailer: invalid DSN: %w", err)
 	}
+	if strings.HasSuffix(u.Scheme, "+api") {
+		return newAPI(u)
+	}
 	switch u.Scheme {
 	case "smtp", "smtps":
 		return newSMTP(u)
@@ -135,7 +145,7 @@ func NewTransport(c Config, logger *slog.Logger) (Transport, error) {
 	case "null":
 		return NullTransport{}, nil
 	}
-	return nil, fmt.Errorf("mailer: unknown transport %q: use smtp, smtps, log, memory or null", u.Scheme)
+	return nil, fmt.Errorf("mailer: unknown transport %q: use smtp, smtps, an API such as postmark+api, log, memory or null", u.Scheme)
 }
 
 // SMTPTransport sends emails to an SMTP server.

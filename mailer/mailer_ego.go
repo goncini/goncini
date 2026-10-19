@@ -10,9 +10,16 @@
 //
 //	smtp://user:password@host:587   SMTP, with STARTTLS when the server offers it
 //	smtps://user:password@host:465  SMTP over TLS
+//	postmark+api://TOKEN@default    Postmark's API; ?message_stream=… for a stream other than outbound
+//	sendgrid+api://KEY@default      SendGrid's API; ?region=eu for an EU subuser
+//	mailgun+api://KEY:DOMAIN@default  Mailgun's API; ?region=eu for its EU region
+//	resend+api://KEY@default        Resend's API
 //	log://                          logs the emails: for development
 //	memory://                       keeps them: for tests
 //	null://                         drops them
+//
+// An API's host is default for the provider's endpoint, or another, over
+// HTTPS, such as a proxy's. Its key is percent-encoded, as passwords are.
 //
 // Sync and Async are the sets of providers to wire: Async sends emails as
 // SendEmail messages, which a worker sends.
@@ -41,7 +48,7 @@ import (
 
 // Config configures a mailer.
 //
-//line mailer.ego:41
+//line mailer.ego:48
 type Config struct {
 	// DSN chooses the transport; empty means log://. It holds a password:
 	// read it with env.Secret.
@@ -101,7 +108,7 @@ func (m *Mailer) Send(ctx context.Context, e *mime.Email) error {
 	if err != nil {
 		return err
 	}
-//line mailer.ego:97
+//line mailer.ego:104
 	if m.bus != nil {
 		return messenger.Dispatch(ctx, m.bus, SendEmail{From: e.From.Email, To: e.Recipients(), Raw: raw})
 	}
@@ -133,6 +140,9 @@ func NewTransport(c Config, logger *slog.Logger) (Transport, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mailer: invalid DSN: %w", err)
 	}
+	if strings.HasSuffix(u.Scheme, "+api") {
+		return newAPI(u)
+	}
 	switch u.Scheme {
 	case "smtp", "smtps":
 		return newSMTP(u)
@@ -143,7 +153,7 @@ func NewTransport(c Config, logger *slog.Logger) (Transport, error) {
 	case "null":
 		return NullTransport{}, nil
 	}
-	return nil, fmt.Errorf("mailer: unknown transport %q: use smtp, smtps, log, memory or null", u.Scheme)
+	return nil, fmt.Errorf("mailer: unknown transport %q: use smtp, smtps, an API such as postmark+api, log, memory or null", u.Scheme)
 }
 
 // SMTPTransport sends emails to an SMTP server.
@@ -171,7 +181,7 @@ func newSMTP(u *url.URL) (*SMTPTransport, error) {
 			port = "587"
 		}
 	}
-//line mailer.ego:162
+//line mailer.ego:172
 	if u.Hostname() == "" {
 		return nil, errors.New("mailer: the SMTP DSN has no host")
 	}
@@ -201,7 +211,7 @@ func (t *SMTPTransport) send(ctx context.Context, from string, to []string, raw 
 	if err2 != nil {
 		return err2
 	}
-//line mailer.ego:188
+//line mailer.ego:198
 	conn.SetDeadline(time.Now().Add(cmp.Or(t.Timeout, 30*time.Second)))
 	if deadline, ok := ctx.Deadline(); ok && deadline.Before(time.Now().Add(cmp.Or(t.Timeout, 30*time.Second))) {
 		conn.SetDeadline(deadline)
@@ -221,36 +231,36 @@ func (t *SMTPTransport) send(ctx context.Context, from string, to []string, raw 
 			return err3
 		}
 	}
-//line mailer.ego:205
+//line mailer.ego:215
 	if t.Username != "" {
 		if err4 := c.Auth(smtp.PlainAuth("", t.Username, t.Password, host)); err4 != nil {
 			return err4
 		}
 	}
-//line mailer.ego:208
+//line mailer.ego:218
 	if err5 := c.Mail(from); err5 != nil {
 		return err5
 	}
-//line mailer.ego:209
+//line mailer.ego:219
 	for _, rcpt := range to {
 		if err6 := c.Rcpt(rcpt); err6 != nil {
 			return err6
 		}
 	}
-//line mailer.ego:212
+//line mailer.ego:222
 	w, err7 := c.Data()
 	if err7 != nil {
 		return err7
 	}
-//line mailer.ego:213
+//line mailer.ego:223
 	if _, err8 := w.Write(raw); err8 != nil {
 		return err8
 	}
-//line mailer.ego:214
+//line mailer.ego:224
 	if err9 := w.Close(); err9 != nil {
 		return err9
 	}
-//line mailer.ego:215
+//line mailer.ego:225
 	c.Quit() // the server accepted the email: a failure to say goodbye isn't the email's
 	return nil
 }
@@ -264,11 +274,11 @@ func (t *LogTransport) Send(ctx context.Context, from string, to []string, raw [
 	head, _, _ := strings.Cut(string(raw), "\r\n\r\n")
 	v := t.Logger
 	if v == nil {
-//line mailer.ego:226
+//line mailer.ego:236
 		v = slog.Default()
 	}
 	(v).InfoContext(ctx, "an email, not sent", slog.String("from", from), slog.Any("to", to), slog.String("header", head))
-//line mailer.ego:227
+//line mailer.ego:237
 	return nil
 }
 

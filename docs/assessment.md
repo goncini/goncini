@@ -309,6 +309,8 @@ through Messenger with retries; then a secrets vault, a Dockerfile from
 
 > **Status (2026-10-19), step 5:** translations have plurals. Decisions taken on the user's behalf: ICU's plural syntax, as Symfony's ICU messages have it, but in catalogs only, since messages stay their own IDs, which the app writes as it formats them; a message's plural matches any of its forms, so that a translation of "{n, plural, one {# item} other {# items}}" serves "1 item" and "3 items" alike; CLDR's rules from x/text, already a dependency, rather than tables of goncini's own; no `select` or nested arguments beyond plurals, which no message needs yet.
 
+> **Status (2026-10-19), step 5:** the mailer has API transports for Postmark, SendGrid, Mailgun and Resend. Step 5 is done, and with it the order of work of 2026-10-18. Decisions taken on the user's behalf: the transports parse the message that `Bytes` wrote back into an `Email`, with `mime.Parse`, rather than taking the `Email`, so that `Transport` and the queued `SendEmail` messages stay as they are, and a worker sends what was dispatched; a Bcc is what the envelope has that To and Cc don't; Symfony's DSNs, with `default` for the provider's endpoint; four providers, among the most used, while SES and the others work over `smtp://`; no retries by the transport, as a send isn't idempotent: Messenger retries the async ones.
+
 ## 5. Risks
 
 - **Tooling, once `goncini generate` comes.** Generation runs twice around `ego generate`, and stale generated files are the classic failure. If it's clumsy, ask effect-go for a hook between lowering and layer wiring; its maintainer session has offered to fix what a framework genuinely needs.

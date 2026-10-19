@@ -1,0 +1,117 @@
+package mime
+
+import (
+	"bytes"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"io"
+	stdmime "mime"
+	"mime/multipart"
+	"mime/quotedprintable"
+	"net/mail"
+	"net/textproto"
+	"strings"
+)
+
+// Parse reads an RFC 5322 message, such as Bytes writes, as an Email: for
+// the transports that send emails through an API that takes their fields,
+// rather than the message. It has the message's addresses, but Bcc, which
+// a message doesn't hold; its first text and HTML versions, with \n line
+// endings; its files and inline images as Parts; and its headers but those
+// of the addresses, the MIME structure and Message-ID, decoded. Texts are
+// taken as UTF-8, as Bytes writes them.
+func Parse(raw []byte) (*Email, error) {
+	msg := check mail.ReadMessage(bytes.NewReader(raw)) ""
+	e := &Email{}
+	from := check addresses(msg.Header, "From") ""
+	if len(from) > 0 {
+		e.From = from[0]
+	}
+	e.To = check addresses(msg.Header, "To") ""
+	e.Cc = check addresses(msg.Header, "Cc") ""
+	e.ReplyTo = check addresses(msg.Header, "Reply-To") ""
+	var dec stdmime.WordDecoder
+	e.Subject = dec.DecodeHeader(msg.Header.Get("Subject")) else msg.Header.Get("Subject")
+	e.Date, _ = msg.Header.Date()
+	for name, values := range msg.Header {
+		if structural[name] || len(values) == 0 {
+			continue
+		}
+		if e.Header == nil {
+			e.Header = map[string]string{}
+		}
+		e.Header[name] = dec.DecodeHeader(values[0]) else values[0]
+	}
+	check e.walk(textproto.MIMEHeader(msg.Header), msg.Body) ""
+	return e, nil
+}
+
+// structural are the headers that Email has fields for, or that Bytes
+// writes itself.
+var structural = map[string]bool{
+	"From": true, "To": true, "Cc": true, "Bcc": true, "Reply-To": true, "Subject": true, "Date": true,
+	"Message-Id": true, "Mime-Version": true, "Content-Type": true, "Content-Transfer-Encoding": true,
+}
+
+// addresses returns the addresses of the header name, if there is one.
+func addresses(h mail.Header, name string) ([]Address, error) {
+	list, err := h.AddressList(name)
+	if errors.Is(err, mail.ErrHeaderNotPresent) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("mime: the %s header: %w", name, err)
+	}
+	var out []Address
+	for _, a := range list {
+		out = append(out, Address{Name: a.Name, Email: a.Address})
+	}
+	return out, nil
+}
+
+// walk adds the part with the header h and the body to e: its text, its
+// HTML, a file, or, a multipart, each of its parts.
+func (e *Email) walk(h textproto.MIMEHeader, body io.Reader) error {
+	mediaType, params, err := stdmime.ParseMediaType(h.Get("Content-Type"))
+	if err != nil {
+		mediaType, params = "text/plain", map[string]string{}
+	}
+	if strings.HasPrefix(mediaType, "multipart/") {
+		r := multipart.NewReader(body, params["boundary"])
+		for {
+			p, err := r.NextRawPart()
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			check err ""
+			check e.walk(p.Header, p) ""
+		}
+	}
+	data := check io.ReadAll(decoded(h.Get("Content-Transfer-Encoding"), body)) ""
+	disposition, dparams, _ := stdmime.ParseMediaType(h.Get("Content-Disposition"))
+	id := strings.Trim(h.Get("Content-ID"), "<>")
+	text := (mediaType == "text/plain" || mediaType == "text/html") && disposition != "attachment" && id == ""
+	switch {
+	case text && mediaType == "text/plain" && e.Text == "":
+		e.Text = strings.ReplaceAll(string(data), "\r\n", "\n")
+	case text && mediaType == "text/html" && e.HTML == "":
+		e.HTML = strings.ReplaceAll(string(data), "\r\n", "\n")
+	default:
+		delete(params, "name")
+		name := dparams["filename"] ?? params["name"]
+		e.Parts = append(e.Parts, Part{Name: name, ContentType: stdmime.FormatMediaType(mediaType, params), Data: data, ContentID: id})
+	}
+	return nil
+}
+
+// decoded reads body, decoding its Content-Transfer-Encoding.
+func decoded(encoding string, body io.Reader) io.Reader {
+	switch strings.ToLower(strings.TrimSpace(encoding)) {
+	case "base64":
+		return base64.NewDecoder(base64.StdEncoding, body)
+	case "quoted-printable":
+		return quotedprintable.NewReader(body)
+	}
+	return body
+}

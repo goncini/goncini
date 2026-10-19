@@ -8,8 +8,10 @@ import (
 	"mime/multipart"
 	"mime/quotedprintable"
 	"net/mail"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/goncini/goncini/mime"
 )
@@ -133,5 +135,44 @@ func TestLongAndPlain(t *testing.T) {
 	}
 	if !strings.Contains(raw, `Content-Type: text/csv; charset=utf-8; name=notes.csv`) {
 		t.Errorf("no type for notes.csv:\n%s", raw)
+	}
+}
+
+// TestParse checks that Parse reads what Bytes writes, but Bcc, which the
+// message doesn't hold.
+func TestParse(t *testing.T) {
+	e := &mime.Email{
+		From:    mime.Address{Name: "Conduit Équipe", Email: "hello@conduit.example"},
+		To:      []mime.Address{{Name: "Zoé", Email: "zoe@example.com"}, {Email: "ann@example.com"}},
+		Cc:      []mime.Address{{Email: "bob@example.com"}},
+		Bcc:     []mime.Address{{Email: "audit@conduit.example"}},
+		ReplyTo: []mime.Address{{Name: "Support", Email: "support@conduit.example"}},
+		Subject: "Bienvenue, Zoé: a subject long enough to be folded over two lines of the header",
+		Text:    "Welcome to Conduit.\nA line long enough to be wrapped by quoted-printable, which wraps lines over seventy-six characters.",
+		HTML:    `<p>Welcome</p><img src="cid:logo">`,
+		Parts: []mime.Part{
+			{Name: "logo.png", Data: []byte("\x89PNG..."), ContentID: "logo"},
+			{Name: "terms.pdf", ContentType: "application/pdf", Data: bytes.Repeat([]byte("%PDF"), 50)},
+		},
+		Header: map[string]string{"List-Unsubscribe": "<https://conduit.example/unsubscribe>", "X-Campaign": "été"},
+		Date:   time.Date(2026, 10, 19, 9, 30, 0, 0, time.UTC),
+	}
+	raw := must e.Bytes()
+	got := must mime.Parse(raw)
+	want := *e
+	want.Bcc = nil
+	want.Parts = []mime.Part{{Name: "logo.png", ContentType: "image/png", Data: e.Parts[0].Data, ContentID: "logo"}, e.Parts[1]}
+	if !got.Date.Equal(want.Date) {
+		t.Errorf("date %v", got.Date)
+	}
+	got.Date = want.Date
+	if !reflect.DeepEqual(*got, want) {
+		t.Errorf("parsed\n%+v\nwant\n%+v", *got, want)
+	}
+
+	// A message of one part, of no type: a text.
+	plain := must mime.Parse([]byte("From: ann@example.com\r\nTo: bob@example.com\r\nSubject: hi\r\n\r\nhello\r\n"))
+	if plain.Text != "hello\n" || plain.From.Email != "ann@example.com" || len(plain.Parts) != 0 || plain.Header != nil {
+		t.Errorf("plain %+v", plain)
 	}
 }

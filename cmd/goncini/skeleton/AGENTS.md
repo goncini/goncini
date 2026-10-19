@@ -373,7 +373,10 @@ changes.
 
 - `mailer.Mailer.Send(ctx, &mime.Email{…})` sends an email, through the
   queue with `mailer.Async`; tests read what `mailertest.NewServer(t)`
-  receives, with `MAILER_DSN` set to its `DSN()`.
+  receives, with `MAILER_DSN` set to its `DSN()`. Besides `smtp://`, the
+  DSN can name a provider's API: `postmark+api://TOKEN@default`,
+  `sendgrid+api://KEY@default`, `mailgun+api://KEY:DOMAIN@default` or
+  `resend+api://KEY@default`.
 - `webhook.Sender.Send(ctx, webhook.Webhook{ID, URL, Secret, Body})`
   sends a webhook through the queue, signed as Standard Webhooks says,
   retried for hours while its receiver fails, to public addresses only:
