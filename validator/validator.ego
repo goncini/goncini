@@ -216,6 +216,9 @@ func detailOf(f playground.FieldError) string {
 		reflect.Slice, reflect.Array, reflect.Map => "items"
 		_                                         => ""
 	}
+	if p == "1" {
+		size = strings.TrimSuffix(size, "s") // 1 character
+	}
 	return match f.Tag() {
 		"required", "required_if", "required_unless", "required_with", "required_without" => "is required"
 		"min", "gte"                                                                      => if size != "" { f"must have at least {p} {size}" } else { f"must be at least {p}" }

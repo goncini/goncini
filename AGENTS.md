@@ -390,7 +390,10 @@ changes.
   on the channels of the notification's importance: email, chat webhooks.
 - Problems are translated by a `translation.Translator` from catalogs of
   the app's messages, such as `"must be at least {n}": "doit valoir au
-  moins {n}"`.
+  moins {n}"`. A number chooses a plural's form, by the CLDR rules of the
+  translation's language: `"{n, plural, one {# item} other {# items}}
+  left": "{n, plural, one {# élément restant} other {# éléments
+  restants}}"`, where `#` is `n`; `=0 {…}` is a form for 0.
 - A state machine is a `workflow.Definition`; `Apply` moves a subject,
   checking the transition's guard, a security attribute, and saves its new
   state with the function it is given.

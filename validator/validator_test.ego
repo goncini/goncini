@@ -22,6 +22,7 @@ type createInput struct {
 		Author  author            `json:"author"`
 		Links   map[string]string `json:"links" validate:"dive,url"`
 		Weird   string            `json:"a/b~c" validate:"oneof=x y"`
+		Code    string            `json:"code" validate:"len=1"`
 		Ignored string            `json:"-" validate:"len=3"`
 	}
 	Limit   int    `query:"limit" validate:"min=1,max=100"`
@@ -36,6 +37,7 @@ func TestValidate(t *testing.T) {
 	in.Body.Author.Email = "nope"
 	in.Body.Links = map[string]string{"home": "not a url"}
 	in.Body.Weird = "z"
+	in.Body.Code = "ab"
 	in.Body.Ignored = "ab"
 	in.Slug = "a-b"
 	in.Version = "3"
@@ -52,6 +54,7 @@ func TestValidate(t *testing.T) {
 		{Pointer: "#/author/email", Detail: "must be an email address"},
 		{Pointer: "#/links/home", Detail: "must be a URL"},
 		{Pointer: "#/a~1b~0c", Detail: "must be one of x, y"},
+		{Pointer: "#/code", Detail: "must have exactly 1 character"},
 		{Detail: "Ignored must have exactly 3 characters"},
 		{Parameter: "limit", Detail: "must be at least 1"},
 		{Parameter: "slug", Detail: "must have letters and digits only"},
@@ -66,6 +69,7 @@ func TestValidate(t *testing.T) {
 	in.Body.Author.Name = "Ann"
 	in.Body.Ignored = "abc"
 	in.Body.Weird = "x"
+	in.Body.Code = "c"
 	in.Body.Tags = []string{"go", "db", "sql"}
 	if _, ok := errors.AsType[httpkernel.Problem](validator.New().Validate(context.Background(), in)); !ok {
 		t.Error("3 tags passed")

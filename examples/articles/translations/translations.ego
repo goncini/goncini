@@ -31,7 +31,8 @@ var French = translation.Catalog{
 	"is required":                      "est obligatoire",
 	"must be at least {n}":             "doit valoir au moins {n}",
 	"must be at most {n}":              "doit valoir au plus {n}",
-	"must have at most {n} {things}":   "doit avoir au plus {n} {things}",
+	"must have at most {n, plural, one {# character} other {# characters}}": "doit avoir au plus {n, plural, one {# caractère} other {# caractères}}",
+	"must have at most {n, plural, one {# item} other {# items}}":           "doit avoir au plus {n, plural, one {# élément} other {# éléments}}",
 	"must be an integer":               "doit être un entier",
 	"{method} isn't allowed on {path}": "{method} n'est pas autorisé sur {path}",
 }

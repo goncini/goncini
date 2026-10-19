@@ -1,0 +1,197 @@
+package translation
+
+import (
+	"errors"
+	"fmt"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+
+	"golang.org/x/text/feature/plural"
+	"golang.org/x/text/language"
+)
+
+// segment is a part of a message: text, a {placeholder}, or a plural.
+type segment struct {
+	text  string // when name is empty
+	name  string // the placeholder's, or the plural's
+	forms []form // the plural's
+}
+
+// form is a form of a plural: its selector, a CLDR category such as one,
+// or =N, and its message, where # is the plural's value.
+type form struct {
+	selector string
+	segments []segment
+}
+
+var (
+	placeholderAt = regexp.MustCompile(`^\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+	pluralAt      = regexp.MustCompile(`^\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*plural\s*,`)
+	formAt        = regexp.MustCompile(`^\s*(=\d+|zero|one|two|few|many|other)\s*\{`)
+)
+
+// parse returns the segments of msg. A plural that doesn't close, or
+// lacks its other form, is an error; other braces are text.
+func parse(msg string) ([]segment, error) {
+	p := &parser{s: msg}
+	return p.message("")
+}
+
+type parser struct {
+	s string
+	i int // the offset of what is left to parse
+}
+
+// message parses up to the end, or, in a form of the plural name, up to
+// the } that closes the form, which it leaves.
+func (p *parser) message(name string) ([]segment, error) {
+	var segs []segment
+	var text strings.Builder
+	flush := func() {
+		if text.Len() > 0 {
+			segs = append(segs, segment{text: text.String()})
+			text.Reset()
+		}
+	}
+	for p.i < len(p.s) {
+		rest := p.s[p.i:]
+		if name != "" && rest[0] == '}' {
+			flush()
+			return segs, nil
+		}
+		if name != "" && rest[0] == '#' {
+			flush()
+			segs = append(segs, segment{name: name})
+			p.i++
+			continue
+		}
+		if m := placeholderAt.FindStringSubmatch(rest); m != nil {
+			flush()
+			segs = append(segs, segment{name: m[1]})
+			p.i += len(m[0])
+			continue
+		}
+		if m := pluralAt.FindStringSubmatch(rest); m != nil {
+			p.i += len(m[0])
+			forms := check p.forms(m[1]) ""
+			flush()
+			segs = append(segs, segment{name: m[1], forms: forms})
+			continue
+		}
+		text.WriteByte(rest[0])
+		p.i++
+	}
+	if name != "" {
+		return nil, fmt.Errorf("a form of the plural {%s} doesn't close", name)
+	}
+	flush()
+	return segs, nil
+}
+
+// forms parses the forms of the plural name, and the } that closes it.
+func (p *parser) forms(name string) ([]form, error) {
+	var forms []form
+	for {
+		rest := p.s[p.i:]
+		if after := strings.TrimLeft(rest, " \t\n"); strings.HasPrefix(after, "}") {
+			p.i += len(rest) - len(after) + 1
+			break
+		}
+		m := formAt.FindStringSubmatch(rest)
+		if m == nil {
+			return nil, fmt.Errorf("the plural {%s} needs forms, such as one {…} other {…}, and a } that closes it", name)
+		}
+		p.i += len(m[0])
+		segs := check p.message(name) ""
+		p.i++ // the form's }
+		forms = append(forms, form{selector: m[1], segments: segs})
+	}
+	if !slices.ContainsFunc(forms, f => f.selector == "other") {
+		return nil, fmt.Errorf("the plural {%s} has no other form", name)
+	}
+	return forms, nil
+}
+
+// render writes segs in lang, with the values of their placeholders; a
+// placeholder without one shows as written.
+func render(b *strings.Builder, segs []segment, lang language.Tag, values map[string]string) {
+	for _, s := range segs {
+		switch {
+		case s.name == "":
+			b.WriteString(s.text)
+		case s.forms == nil:
+			b.WriteString(values[s.name] ?? "{" + s.name + "}")
+		default:
+			render(b, choose(s.forms, lang, values[s.name]), lang, values)
+		}
+	}
+}
+
+// choose returns the form of the value n in lang: the one whose selector
+// is =n, or else n's category, or else other.
+func choose(forms []form, lang language.Tag, n string) []segment {
+	value, err := strconv.ParseFloat(n, 64)
+	for _, f := range forms {
+		if exact, ok := strings.CutPrefix(f.selector, "="); ok && err == nil {
+			if v, err := strconv.ParseFloat(exact, 64); err == nil && v == value {
+				return f.segments
+			}
+		}
+	}
+	c := category(lang, n)
+	other := forms[0].segments
+	for _, f := range forms {
+		if f.selector == c {
+			return f.segments
+		}
+		if f.selector == "other" {
+			other = f.segments
+		}
+	}
+	return other
+}
+
+// category is the CLDR plural category of the number n, written in
+// decimal, in lang: other if it isn't a number.
+func category(lang language.Tag, n string) string {
+	i, v, w, f, t, err := operands(n)
+	if err != nil {
+		return "other"
+	}
+	return match plural.Cardinal.MatchPlural(lang, i, v, w, f, t) {
+		plural.Zero => "zero"
+		plural.One  => "one"
+		plural.Two  => "two"
+		plural.Few  => "few"
+		plural.Many => "many"
+		_           => "other"
+	}
+}
+
+// operands returns the CLDR plural operands of the number n, such as -1.50:
+// its integer digits, its count of fraction digits with trailing zeros and
+// without, and those digits with trailing zeros and without, modulo
+// 10,000,000, as MatchPlural takes them.
+func operands(n string) (i, v, w, f, t int, err error) {
+	n = strings.TrimPrefix(n, "-")
+	whole, frac, _ := strings.Cut(n, ".")
+	digits := (s string) => s != "" && !strings.ContainsFunc(s, r => r < '0' || r > '9')
+	if !digits(whole) || frac != "" && !digits(frac) || strings.HasSuffix(n, ".") {
+		return 0, 0, 0, 0, 0, errors.New("not a number")
+	}
+	mod := func(s string) int {
+		x, _ := strconv.Atoi(s[max(0, len(s)-7):]) // the digits modulo 10,000,000
+		return x
+	}
+	i = mod(whole)
+	trimmed := strings.TrimRight(frac, "0")
+	if frac != "" {
+		f = mod(frac)
+	}
+	if trimmed != "" {
+		t = mod(trimmed)
+	}
+	return i, len(frac), len(trimmed), f, t, nil
+}

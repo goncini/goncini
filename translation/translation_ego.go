@@ -15,6 +15,18 @@
 // one shows as written. A message with {placeholders} translates every
 // message it matches, the values carried over: "must be at least 1" is
 // "doit valoir au moins 1".
+//
+// A number chooses the form of a plural, as in ICU's messages:
+//
+//	"must have at most {n, plural, one {# character} other {# characters}}":
+//		"doit avoir au plus {n, plural, one {# caractère} other {# caractères}}",
+//
+// where # is n. A plural's forms are CLDR's categories, zero, one, two, few,
+// many and other, which every plural has, and =N, for n's value N. In a
+// message, a plural matches any of its forms: "must have at most 1
+// character" and "must have at most 0 characters"; in a translation, its
+// language's rules choose the form: 0 is French's one, "0 caractère".
+// translation:lint reports the plurals that don't parse.
 package translation
 
 import (
@@ -30,6 +42,8 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/text/language"
+
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/event"
 	"github.com/goncini/goncini/httpkernel"
@@ -37,7 +51,7 @@ import (
 
 // Catalog maps messages to their translations in a language.
 //
-//line translation.ego:37
+//line translation.ego:51
 type Catalog map[string]string
 
 // Config configures a translator.
@@ -51,26 +65,42 @@ type Catalogs map[string]Catalog
 
 // Translator translates messages.
 type Translator struct {
-	Default  string
-	Catalogs Catalogs
-	patterns map[string][]pattern // by language: the messages with placeholders
+	Default   string
+	Catalogs  Catalogs
+	patterns  map[string][]pattern // by language: the messages with placeholders
+	malformed []string             // the catalogs' plurals that don't parse, for Lint
 }
 
 // pattern is a message with placeholders, as a regular expression that
 // captures their values, and its translation.
 type pattern struct {
 	re          *regexp.Regexp
-	names       []string
-	translation string
-	literal     int // the length of its text but placeholders
+	groups      []group
+	translation []segment
+	lang        language.Tag // the translation's, for its plurals
+	literal     int          // the length of its text but placeholders
 }
 
-// New returns the translator of the catalogs.
+// group is what a group of a pattern's regular expression captures: a
+// placeholder's value, or, empty, that the form =N of a plural matched,
+// which stands for its value N.
+type group struct {
+	name  string
+	value string
+}
+
+// New returns the translator of the catalogs. A message or a translation
+// whose plural doesn't parse translates only as written, and Lint reports
+// it.
 func New(c Config, catalogs Catalogs) *Translator {
 	t := &Translator{Default: cmp.Or(c.Default, "en"), Catalogs: catalogs, patterns: map[string][]pattern{}}
-	for lang, cat := range catalogs {
+	for _, lang := range slices.Sorted(maps.Keys(catalogs)) {
+		cat := catalogs[lang]
 		for _, msg := range slices.Sorted(maps.Keys(cat)) {
-			if p, ok := compile(msg, cat[msg]); ok {
+			p, ok, err := compile(lang, msg, cat[msg])
+			if err != nil {
+				t.malformed = append(t.malformed, fmt.Sprintf("%s %q: %v", lang, msg, err))
+			} else if ok {
 				t.patterns[lang] = append(t.patterns[lang], p)
 			}
 		}
@@ -80,27 +110,76 @@ func New(c Config, catalogs Catalogs) *Translator {
 	return t
 }
 
-var placeholder = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
-
-// compile makes the pattern of a message with placeholders.
-func compile(msg, translation string) (pattern, bool) {
-	locs := placeholder.FindAllStringIndex(msg, -1)
-	if len(locs) == 0 {
-		return pattern{}, false
+// compile makes the pattern of a message with placeholders, and reports
+// whether it has any.
+func compile(lang, msg, translation string) (pattern, bool, error) {
+	segs, err := parse(msg)
+	if err != nil {
+		return pattern{}, false, err
+	}
+//line translation.ego:113
+	tr, err := parse(translation)
+	if err != nil {
+		return pattern{}, false, err
+	} // its translation, malformed even without placeholders
+//line translation.ego:114
+	if !slices.ContainsFunc(segs, func(s segment) bool { return s.name != "" }) {
+		return pattern{}, false, nil
 	}
 	var b strings.Builder
-	var names []string
-	last := 0
+	var groups []group
 	b.WriteString("^")
-	for _, l := range locs {
-		b.WriteString(regexp.QuoteMeta(msg[last:l[0]]))
-		b.WriteString("(.+?)")
-		names = append(names, msg[l[0]:l[1]])
-		last = l[1]
+	expression(&b, &groups, segs)
+	b.WriteString("$")
+	return pattern{regexp.MustCompile(b.String()), groups, tr, language.Make(lang), literal(segs)}, true, nil
+}
+
+// expression writes the regular expression of segs, which matches each of
+// their plurals' forms, and the groups that it captures.
+func expression(b *strings.Builder, groups *[]group, segs []segment) {
+	for _, s := range segs {
+		switch {
+		case s.name == "":
+			b.WriteString(regexp.QuoteMeta(s.text))
+		case s.forms == nil:
+			b.WriteString("(.+?)")
+			*groups = append(*groups, group{name: s.name})
+		default:
+			b.WriteString("(?:")
+			for i, f := range s.forms {
+				if i > 0 {
+					b.WriteString("|")
+				}
+				if n, exact := strings.CutPrefix(f.selector, "="); exact {
+					b.WriteString("()") // matches nothing, when the form does
+					*groups = append(*groups, group{value: n, name: s.name})
+				}
+				expression(b, groups, f.segments)
+			}
+			b.WriteString(")")
+		}
 	}
-	b.WriteString(regexp.QuoteMeta(msg[last:]) + "$")
-	literal := len(placeholder.ReplaceAllString(msg, ""))
-	return pattern{regexp.MustCompile(b.String()), names, translation, literal}, true
+}
+
+// literal is the length of the text of segs, with their plurals' shortest
+// form.
+func literal(segs []segment) int {
+	n := 0
+	for _, s := range segs {
+		shortest := 0
+		for i, f := range s.forms {
+			if i == 0 {
+//line translation.ego:159
+				shortest = literal(f.segments)
+			} else {
+//line translation.ego:159
+				shortest = min(shortest, literal(f.segments))
+			}
+		}
+//line translation.ego:161
+		n += len(s.text) + shortest
+	}
+	return n
 }
 
 // Translate returns msg in the language lang: its translation in lang's
@@ -112,22 +191,21 @@ func (t *Translator) Translate(lang, msg string) string {
 			return tr
 		}
 		for _, p := range t.patterns[l] {
-			if m := p.re.FindStringSubmatch(msg); m != nil {
-				values := map[string]string{}
-				for i, name := range p.names {
-					values[name] = m[i+1]
-				}
-				return placeholder.ReplaceAllStringFunc(p.translation, func(name string) string {
-					v, ok := values[name]
-					if !ok {
-						v = name
-					}
-					return v
-				})
+			m := p.re.FindStringSubmatchIndex(msg)
+			if m == nil {
+				continue
 			}
+			values := map[string]string{}
+			for i, g := range p.groups {
+				if start := m[2*i+2]; start >= 0 {
+					values[g.name] = cmp.Or(g.value, msg[start:m[2*i+3]])
+				}
+			}
+			var b strings.Builder
+			render(&b, p.translation, p.lang, values)
+			return b.String()
 		}
 	}
-//line translation.ego:120
 	return msg
 }
 
@@ -174,7 +252,7 @@ func (t *Translator) Subscribe(d *event.Dispatcher) {
 		if p.Header == nil {
 			p.Header = http.Header{}
 		}
-//line translation.ego:163
+//line translation.ego:233
 		p.Header.Add("Vary", "Accept-Language")
 		lang := t.Language(e.Request)
 		if lang == t.Default {
@@ -192,8 +270,9 @@ func (t *Translator) Subscribe(d *event.Dispatcher) {
 	})
 }
 
-// Lint writes, for each catalog, the messages that another catalog
-// translates and it doesn't, and reports whether there were any.
+// Lint writes the catalogs' plurals that don't parse, and, for each
+// catalog, the messages that another catalog translates and it doesn't,
+// and reports whether there were any.
 func (t *Translator) Lint(out io.Writer) bool {
 	all := map[string]bool{}
 	for _, cat := range t.Catalogs {
@@ -202,6 +281,10 @@ func (t *Translator) Lint(out io.Writer) bool {
 		}
 	}
 	missing := false
+	for _, m := range t.malformed {
+		fmt.Fprintf(out, "%s\n", m)
+		missing = true
+	}
 	for _, lang := range slices.Sorted(maps.Keys(t.Catalogs)) {
 		var lacks []string
 		for msg := range all {
@@ -222,9 +305,9 @@ func (t *Translator) Lint(out io.Writer) bool {
 // messages each catalog lacks, and fails if there are any.
 func Commands(t *Translator) []console.Command {
 	return []console.Command{
-		console.New("translation:lint", "Lists the messages that each catalog lacks", func(ctx context.Context, out io.Writer, args []string) error {
+		console.New("translation:lint", "Lists the messages that each catalog lacks, and the plurals that don't parse", func(ctx context.Context, out io.Writer, args []string) error {
 			if t.Lint(out) {
-				return errors.New("translation: some catalogs lack messages")
+				return errors.New("translation: some catalogs lack messages, or have plurals that don't parse")
 			}
 			fmt.Fprintln(out, "Every catalog has every message.")
 			return nil

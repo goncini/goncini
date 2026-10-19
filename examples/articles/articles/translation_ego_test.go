@@ -21,6 +21,7 @@ func TestFrench(t *testing.T) {
 	fr.Post("/articles", `{"title":" ","body":""}`).Problem(422).
 		Violation("#/title", "ne peut pas être vide").
 		Violation("#/body", "ne peut pas être vide")
+	fr.Post("/articles", `{"title":"t","body":"b","tags":["a","b","c","d","e","f"]}`).Problem(422).Violation("#/tags", "doit avoir au plus 5 éléments")
 	fr.Get("/articles?limit=0").Problem(422).Violation("limit", "doit valoir au moins 1")
 	c.Get("/articles/nope").Status(404).Contains(`"title":"Not Found"`) // no Accept-Language
 	c.WithHeader("Accept-Language", "ja").Get("/articles/nope").Contains(`"detail":"no article nope"`)

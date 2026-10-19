@@ -53,6 +53,13 @@ new` and the makers.
   authenticated the request, which a verifier records with
   `security.SetClaims`, as oidc's does: `Load` reads them to create the
   user of a first request.
+- **translation:** plurals, as ICU writes them: `{n, plural, one {#
+  character} other {# characters}}`, with CLDR's categories, chosen by the
+  rules of the translation's language from x/text, and `=N` forms. A
+  message's plural matches any of its forms. `translation:lint` reports the
+  plurals that don't parse. The validator says "must have at most 1
+  character", not "1 characters", and the articles example's French
+  catalog has its plurals.
 - **goncini new** writes a `Dockerfile` and a `.dockerignore`: a static
   binary on distroless, run as nonroot, with the prod vault and no `.env`
   file, which serves, and runs the app's commands, such as `db:migrate`.

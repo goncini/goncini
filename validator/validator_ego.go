@@ -245,6 +245,9 @@ func detailOf(f playground.FieldError) string {
 		size = ""
 	}
 //line validator.ego:219
+	if p == "1" {
+		size = strings.TrimSuffix(size, "s") // 1 character
+	}
 	var v string
 	switch f.Tag() {
 	case "required", "required_if", "required_unless", "required_with", "required_without":
@@ -284,7 +287,7 @@ func detailOf(f playground.FieldError) string {
 	case "ne":
 		v = fmt.Sprintf("must not be %s", p)
 	case "oneof":
-//line validator.ego:228
+//line validator.ego:231
 		v = fmt.Sprintf("must be one of %s", strings.ReplaceAll(p, " ", ", "))
 	case "email":
 		v = "must be an email address"
@@ -311,12 +314,12 @@ func detailOf(f playground.FieldError) string {
 	case "unique":
 		v = "must have no duplicates"
 	default:
-//line validator.ego:241
+//line validator.ego:244
 		if p != "" {
-//line validator.ego:241
+//line validator.ego:244
 			v = fmt.Sprintf("must satisfy %s=%s", f.Tag(), p)
 		} else {
-//line validator.ego:241
+//line validator.ego:244
 			v = fmt.Sprintf("must satisfy %s", f.Tag())
 		}
 	}

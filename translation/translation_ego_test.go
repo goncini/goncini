@@ -17,11 +17,10 @@ import (
 //line translation_test.ego:15
 var catalogs = translation.Catalogs{
 	"fr": {
-		"Not Found":                      "Introuvable",
-		"Unprocessable Entity":           "Entité non traitable",
-		"can't be blank":                 "ne peut pas être vide",
-		"must be at least {n}":           "doit valoir au moins {n}",
-		"must have at most {n} {things}": "doit avoir au plus {n} {things}",
+		"Not Found":            "Introuvable",
+		"Unprocessable Entity": "Entité non traitable",
+		"can't be blank":       "ne peut pas être vide",
+		"must be at least {n}": "doit valoir au moins {n}",
 	},
 	"fr-CA": {"Not Found": "Pas trouvé"},
 	"de":    {"Not Found": "Nicht gefunden"},
@@ -34,7 +33,6 @@ func TestTranslate(t *testing.T) {
 		{"fr-CA", "Not Found", "Pas trouvé"},
 		{"fr-CA", "can't be blank", "ne peut pas être vide"}, // from fr
 		{"fr", "must be at least 3", "doit valoir au moins 3"},
-		{"fr", "must have at most 5 items", "doit avoir au plus 5 items"},
 		{"fr", "must be a URL", "must be a URL"}, // untranslated
 		{"es", "Not Found", "Not Found"},
 	} {
@@ -58,6 +56,35 @@ func TestTranslate(t *testing.T) {
 	}
 }
 
+// TestPlurals checks that a message's plural matches each of its forms,
+// and that its value chooses the form of the translation's language.
+func TestPlurals(t *testing.T) {
+	tr := translation.New(translation.Config{}, translation.Catalogs{
+		"fr": {
+			"must have at most {n, plural, one {# character} other {# characters}}":      "doit avoir au plus {n, plural, one {# caractère} other {# caractères}}",
+			"{n, plural, =0 {no checks are} one {# check is} other {# checks are}} down": "{n, plural, =0 {aucun contrôle n'est en panne} one {# contrôle est en panne} other {# contrôles sont en panne}}",
+		},
+		"pl": {"{n, plural, one {# file} other {# files}}": "{n, plural, one {# plik} few {# pliki} many {# plików} other {# pliku}}"},
+	})
+	for _, c := range []struct{ lang, msg, want string }{
+		{"fr", "must have at most 1 character", "doit avoir au plus 1 caractère"},
+		{"fr", "must have at most 5 characters", "doit avoir au plus 5 caractères"},
+		{"fr", "must have at most 0 characters", "doit avoir au plus 0 caractère"}, // French's one has 0
+		{"fr", "no checks are down", "aucun contrôle n'est en panne"},              // =0 stands for n
+		{"fr", "1 check is down", "1 contrôle est en panne"},
+		{"fr", "12 checks are down", "12 contrôles sont en panne"},
+		{"pl", "2 files", "2 pliki"},
+		{"pl", "5 files", "5 plików"},
+		{"pl", "22 files", "22 pliki"},
+		{"pl", "1.5 files", "1.5 pliku"},
+		{"pl", "many files", "many pliku"}, // not a number: other
+	} {
+		if got := tr.Translate(c.lang, c.msg); got != c.want {
+			t.Errorf("%s %q: %q, want %q", c.lang, c.msg, got, c.want)
+		}
+	}
+}
+
 func TestLanguages(t *testing.T) {
 	tr := translation.New(translation.Config{}, catalogs)
 	if got := strings.Join(tr.Languages(), " "); got != "en de fr fr-CA" {
@@ -70,13 +97,13 @@ func TestProblems(t *testing.T) {
 	k := &httpkernel.Kernel{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-//line translation_test.ego:69
+//line translation_test.ego:96
 			httpkernel.WriteError(w, r, httpkernel.Invalid(httpkernel.Violation{Pointer: "#/title", Detail: "can't be blank"}, httpkernel.Violation{Parameter: "limit", Detail: "must be at least 1"}))
 
 		}),
 		Events: event.New(tr),
 	}
-//line translation_test.ego:73
+//line translation_test.ego:100
 	for lang, want := range map[string]string{
 		"fr-FR,fr;q=0.9": `"title":"Entité non traitable"`,
 		"de":             `"title":"Unprocessable Entity"`,
@@ -104,5 +131,14 @@ func TestLint(t *testing.T) {
 	cmds := translation.Commands(translation.New(translation.Config{}, translation.Catalogs{"fr": {"a": "b"}}))
 	if err := cmds[0].Run(context.Background(), &out, nil); err != nil {
 		t.Error(err)
+	}
+	// A plural that doesn't parse translates only as written.
+	tr = translation.New(translation.Config{}, translation.Catalogs{"fr": {
+		"{n, plural, one {# day}} left":                 "{n, plural, one {# jour}} restant",
+		"{n, plural, one {# hour} other {# hours} left": "{n} heures restantes",
+	}})
+	out.Reset()
+	if !tr.Lint(&out) || !strings.Contains(out.String(), `fr "{n, plural, one {# day}} left": the plural {n} has no other form`) || !strings.Contains(out.String(), "and a } that closes it") || tr.Translate("fr", "1 day left") != "1 day left" {
+		t.Errorf("lint:\n%s", out.String())
 	}
 }
