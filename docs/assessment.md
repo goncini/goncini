@@ -397,6 +397,8 @@ to its maintainers' session the same day, once it ran.
 
    goncini names the type instead, in `notifier/push.ego`.
 
+> **Status (2026-10-19):** effect-go fixed the lambdas over struct types on its main branch, commit badf505, unreleased, and its user approved the other two, which it is building in `layer` as asked: `layer.Decorate(f)`, a marker like `layer.Close`, whose provider's one parameter of its result's type is the service it wraps, whichever provider gives it, and whose decorators wrap in the order they are listed; and `layer.Lazy[T]`, a value whose `Get` builds what only lazy services need, once, even when called at once, and tries again after a failure. goncini adopts them, and step 8, once a release has them.
+
 ## 5. Risks
 
 - **Tooling, once `goncini generate` comes.** Generation runs twice around `ego generate`, and stale generated files are the classic failure. If it's clumsy, ask effect-go for a hook between lowering and layer wiring; its maintainer session has offered to fix what a framework genuinely needs.
