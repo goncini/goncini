@@ -312,6 +312,11 @@ func (n *Notifications) Handlers(b *messenger.Bus) {
 check messenger.Dispatch(ctx, bus, NotifyFollowers{Slug: slug}) ""
 ```
 
+A handler that dispatches messages, or sends webhooks, keeps the bus that
+its `Handlers` method is given: it can't take the bus, which takes the
+handlers. `messenger.Retry[M](b, schedule)` retries a type's messages on a
+schedule of their own.
+
 Recurring work is a scheduled task, run by `go tool goncini scheduler:run`: with
 a lock store that the app's instances share, such as `lock.SQL`, once per
 tick across them, and never twice at once; without, in each instance. The
@@ -334,9 +339,10 @@ changed and dispatch its messages in one transaction.
 A test runs the worker for the messages it expects:
 `webtest.Run(t, a, "messenger:consume", "-drain")`, which stops once no
 message is available: those whose delay or retry isn't due stay queued.
-In a `testing/synctest` bubble, `time.Sleep` makes them due, unless the
-app talks over a real socket meanwhile, as to `mailertest`'s server: the
-bubble's time doesn't move then, and the test waits in real time.
+In a `testing/synctest` bubble, `time.Sleep` makes them due. The servers
+that the app talks to, `mailertest`'s, `webhooktest`'s and `oidctest`'s,
+are made before `synctest.Test`, outside the bubble, whose time doesn't
+move while one of its goroutines waits on a server in it.
 
 ## Caching
 
@@ -358,6 +364,18 @@ changes.
 - `mailer.Mailer.Send(ctx, &mime.Email{…})` sends an email, through the
   queue with `mailer.Async`; tests read what `mailertest.NewServer(t)`
   receives, with `MAILER_DSN` set to its `DSN()`.
+- `webhook.Sender.Send(ctx, webhook.Webhook{ID, URL, Secret, Body})`
+  sends a webhook through the queue, signed as Standard Webhooks says,
+  retried for hours while its receiver fails, to public addresses only:
+  `webhook.Config.Private` lets it reach the local machine, in dev and
+  tests. `webhook.NewSecret()` makes a receiver's secret, and
+  `webhook.Layer` in `Services` provides the sender.
+  `webhooktest.NewReceiver(t)` is a receiver for tests, which checks the
+  signatures, fails as it is told, and lists its `Deliveries()`.
+- `r.With(webhook.Verify(webhook.Stripe(secret)))` checks the signatures of
+  the webhooks that a route receives, or answers 401: `webhook.Standard`,
+  `GitHub` or `Stripe`. A webhook can arrive twice: its endpoint takes its
+  ID, Standard's `webhook-id` header, once.
 - `notifier.Notifier.Send(ctx, notification, recipients…)` tells people
   on the channels of the notification's importance: email, chat webhooks.
 - Problems are translated by a `translation.Translator` from catalogs of

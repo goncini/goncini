@@ -13,15 +13,16 @@ import (
 // The kinds of channels.
 const (
 	Email   = "email"
-	Webhook = "webhook" // a POST of the Alert, as JSON
+	Webhook = "webhook" // a POST of the Alert, as JSON, signed as Standard Webhooks says
 )
 
 // Channel is where a project's alerts go.
 type Channel struct {
 	ID        uid.UUID  `json:"id"`
 	ProjectID uid.UUID  `json:"-"`
-	Kind      string    `json:"kind"`   // email or webhook
-	Target    string    `json:"target"` // the email address, or the webhook's URL
+	Kind      string    `json:"kind"`             // email or webhook
+	Target    string    `json:"target"`           // the email address, or the webhook's URL
+	Secret    string    `json:"secret,omitempty"` // a webhook's, which signs it, for its receiver to check
 	CreatedAt time.Time `json:"createdAt"`
 }
 

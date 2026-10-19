@@ -10,17 +10,19 @@ import (
 	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/mime"
 	"github.com/goncini/goncini/profiler"
+	"github.com/goncini/goncini/webhook"
 )
 
 // Config is the API's config, one section per part of the app.
 //
-//line config.ego:14
+//line config.ego:15
 type Config struct {
 	HTTP     goncini.HTTP
 	Log      goncini.Log
 	DB       db.Config
 	Mailer   mailer.Config
 	Profiler profiler.Config
+	Webhooks webhook.Config
 }
 
 // Load returns the config of env: what every environment shares, then what

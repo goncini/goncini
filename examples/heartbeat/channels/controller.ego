@@ -10,6 +10,7 @@ import (
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
 	"github.com/goncini/goncini/uid"
+	"github.com/goncini/goncini/webhook"
 
 	"github.com/goncini/goncini/examples/heartbeat/projects"
 )
@@ -79,9 +80,13 @@ func (in *CreateInput) Validate() error {
 	return nil
 }
 
-// Create adds a channel, which the project's next flips alert.
+// Create adds a channel, which the project's next flips alert. A webhook
+// channel gets a secret, which signs its webhooks.
 effect (c *Channels) Create(in CreateInput) (httpkernel.Created[Channel], ChannelError) {
 	ch := Channel{ID: uid.NewV7(), ProjectID: projects.Current(ctx).ID, Kind: in.Body.Kind, Target: in.Body.Target, CreatedAt: c.now().UTC()}
+	if ch.Kind == Webhook {
+		ch.Secret = webhook.NewSecret()
+	}
 	check c.store.Add(ch) as Unavailable
 	return httpkernel.Created[Channel]{Body: ch}, nil
 }

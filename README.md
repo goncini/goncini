@@ -30,7 +30,7 @@ API keys and [OpenID Connect](security/oidc), [`openapi`](openapi),
 [`cors`](cors), [`ratelimit`](ratelimit), [`uid`](uid) and
 [`listing`](listing); [`event`](event), [`messenger`](messenger),
 [`scheduler`](scheduler) and [`lock`](lock), in SQL or [Redis](redis);
-[`cache`](cache), [`httpclient`](httpclient), [`mailer`](mailer),
+[`cache`](cache), [`httpclient`](httpclient), [`webhook`](webhook), [`mailer`](mailer),
 [`notifier`](notifier), [`translation`](translation) and
 [`workflow`](workflow); the [`profiler`](profiler) and the `goncini` tool
 are implemented

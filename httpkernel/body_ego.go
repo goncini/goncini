@@ -201,6 +201,13 @@ func (d BodyDecoder) Decode(w http.ResponseWriter, r *http.Request, v any) error
 	return valueError(json.Unmarshal(b, v, json.RejectUnknownMembers(d.RejectUnknown)))
 }
 
+// ReadBody reads the body of r, up to the BodyLimit of the kernel serving
+// it: for middleware that needs the body as it was sent, such as a
+// webhook's signature check, which then hands the endpoint a copy.
+func ReadBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	return readBody(w, r, kernelOf(r.Context()).bodyLimit())
+}
+
 // readBody reads the body of r, of at most limit bytes, or
 // DefaultBodyLimit when limit isn't positive. A body too large also makes
 // the response close the connection, since the rest of it is left unread.
@@ -284,22 +291,22 @@ func bodyProblem(err error) Problem {
 	if err == nil {
 		v = Problem{}
 	} else if e, ok := errors.AsType[BodyMediaType](err); ok {
-//line body.ego:162
+//line body.ego:169
 		v = Problem{Status: http.StatusUnsupportedMediaType, Detail: e.Error()}
 	} else if e, ok := errors.AsType[BodyTooLarge](err); ok {
-//line body.ego:163
+//line body.ego:170
 		v = Problem{Status: http.StatusRequestEntityTooLarge, Detail: e.Error()}
 	} else if e, ok := errors.AsType[BodyEmpty](err); ok {
-//line body.ego:164
+//line body.ego:171
 		v = Problem{Status: http.StatusBadRequest, Detail: e.Error()}
 	} else if e, ok := errors.AsType[BodyMalformed](err); ok {
-//line body.ego:165
+//line body.ego:172
 		v = Problem{Status: http.StatusBadRequest, Detail: fmt.Sprintf("%s: %s", e.Error(), syntaxReason(e.Cause))}
 	} else if e, ok := errors.AsType[BodyInvalid](err); ok {
-//line body.ego:166
+//line body.ego:173
 		v = invalidBody(e)
 	} else if e, ok := errors.AsType[BodyUnreadable](err); ok {
-//line body.ego:167
+//line body.ego:174
 		v = Problem{Status: http.StatusBadRequest, Detail: e.Error()}
 	} else if _, ok := errors.AsType[BodyUnsupportedType](err); ok {
 		v = Problem{Status: http.StatusInternalServerError}
@@ -312,7 +319,7 @@ func bodyProblem(err error) Problem {
 // invalidBody is the 422 for a value that doesn't fit its field, with a
 // violation pointing at it.
 //
-//line body.ego:174
+//line body.ego:181
 func invalidBody(e BodyInvalid) Problem {
 	return Problem{
 		Status: http.StatusUnprocessableEntity,

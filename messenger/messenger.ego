@@ -113,6 +113,7 @@ type Bus struct {
 	mu       sync.RWMutex
 	handlers map[reflect.Type][]func(context.Context, any) error
 	routes   map[reflect.Type]string
+	retries  map[string]schedule.Schedule // by type name, those that aren't Retry
 	names    map[reflect.Type]string
 	types    map[string]reflect.Type
 }
@@ -254,6 +255,20 @@ func Route[M any](b *Bus, transport string) {
 	b.routes[t] = transport
 }
 
+// Retry is the schedule of the retries of the messages of type M, instead
+// of the bus's Retry: longer for a webhook, whose receiver may be down for
+// hours.
+func Retry[M any](b *Bus, s schedule.Schedule) {
+	t := reflect.TypeFor[M]()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.register(t)
+	if b.retries == nil {
+		b.retries = map[string]schedule.Schedule{}
+	}
+	b.retries[b.names[t]] = s
+}
+
 // register names t, for transports: as Go writes it, with its package's
 // path.
 func (b *Bus) register(t reflect.Type) {
@@ -344,7 +359,13 @@ func (b *Bus) retry(msg Message, err error) (time.Time, bool) {
 	if _, ok := errors.AsType[NoHandler](err); ok {
 		return time.Time{}, false // trying again won't help
 	}
-	wait, ok := b.Retry.Next(msg.Attempts, err)
+	b.mu.RLock()
+	s, own := b.retries[msg.Type]
+	b.mu.RUnlock()
+	if !own {
+		s = b.Retry
+	}
+	wait, ok := s.Next(msg.Attempts, err)
 	return b.now().Add(wait), ok
 }
 

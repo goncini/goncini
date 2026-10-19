@@ -14,7 +14,6 @@ import (
 	"github.com/goncini/goncini/cache"
 	"github.com/goncini/goncini/db"
 	"github.com/goncini/goncini/db/goosedb"
-	"github.com/goncini/goncini/httpclient"
 	"github.com/goncini/goncini/lock"
 	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
@@ -22,6 +21,7 @@ import (
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/scheduler"
 	"github.com/goncini/goncini/security"
+	"github.com/goncini/goncini/webhook"
 
 	"github.com/goncini/goncini/examples/heartbeat/channels"
 	"github.com/goncini/goncini/examples/heartbeat/checks"
@@ -37,7 +37,7 @@ import (
 //line services.ego:32
 var Services = layer.Set(
 	db.Open, db.NewSQL, migrator, clock, profiler.Layer,
-	cache.Memory, httpclient.New, mailer.Sync, messenger.SQL, lock.SQL, scheduler.New,
+	cache.Memory, mailer.Sync, messenger.SQL, lock.SQL, scheduler.New, webhook.Layer,
 	home.NewHome,
 	projects.NewStore, projects.NewFirewall, projects.NewProjects, projects.NewCreateCommand,
 	checks.NewStore, checks.NewWorkflows, checks.NewChecks, checks.NewPings,

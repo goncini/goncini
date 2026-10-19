@@ -5,6 +5,10 @@
 //	t.Setenv("MAILER_DSN", smtp.DSN())
 //	… // the app sends an email
 //	msg := smtp.Messages()[0]
+//
+// The mailer closes its connection after each email: an app in a
+// testing/synctest bubble, whose time moves only while no goroutine waits
+// on the network, can sleep, if the server is made outside the bubble.
 package mailertest
 
 import (

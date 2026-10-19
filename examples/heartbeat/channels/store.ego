@@ -17,7 +17,7 @@ func NewStore(s *db.SQL) *Store {
 }
 
 // columns are what scan reads.
-const columns = "SELECT id, project_id, kind, target, created_at FROM channels"
+const columns = "SELECT id, project_id, kind, target, secret, created_at FROM channels"
 
 // List returns at most limit of the project's channels from offset, the
 // newest first, and how many there are in all.
@@ -41,8 +41,8 @@ effect (s *Store) Get(project, id uid.UUID) (Channel, bool, error) {
 
 // Add adds a channel.
 effect (s *Store) Add(ch Channel) error {
-	check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO channels (id, project_id, kind, target, created_at) VALUES (?, ?, ?, ?, ?)",
-		ch.ID, ch.ProjectID, ch.Kind, ch.Target, ch.CreatedAt.UnixMicro())
+	check s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO channels (id, project_id, kind, target, secret, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		ch.ID, ch.ProjectID, ch.Kind, ch.Target, ch.Secret, ch.CreatedAt.UnixMicro())
 	return nil
 }
 
@@ -78,7 +78,7 @@ effect (s *Store) PruneDeliveries(before time.Time) error {
 func scan(row db.Scanner) (Channel, error) {
 	var ch Channel
 	var created int64
-	check row.Scan(&ch.ID, &ch.ProjectID, &ch.Kind, &ch.Target, &created) ""
+	check row.Scan(&ch.ID, &ch.ProjectID, &ch.Kind, &ch.Target, &ch.Secret, &created) ""
 	ch.CreatedAt = time.UnixMicro(created).UTC()
 	return ch, nil
 }

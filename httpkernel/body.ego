@@ -78,6 +78,13 @@ func (d BodyDecoder) Decode(w http.ResponseWriter, r *http.Request, v any) BodyE
 	return valueError(json.Unmarshal(b, v, json.RejectUnknownMembers(d.RejectUnknown)))
 }
 
+// ReadBody reads the body of r, up to the BodyLimit of the kernel serving
+// it: for middleware that needs the body as it was sent, such as a
+// webhook's signature check, which then hands the endpoint a copy.
+func ReadBody(w http.ResponseWriter, r *http.Request) ([]byte, BodyError) {
+	return readBody(w, r, kernelOf(r.Context()).bodyLimit())
+}
+
 // readBody reads the body of r, of at most limit bytes, or
 // DefaultBodyLimit when limit isn't positive. A body too large also makes
 // the response close the connection, since the rest of it is left unread.

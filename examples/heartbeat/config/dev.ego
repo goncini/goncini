@@ -6,4 +6,5 @@ func dev(c *Config) {
 	c.HTTP.Debug = true
 	c.Log.Level = slog.LevelDebug
 	c.Profiler.Enabled = true // /_profiler, and go tool goncini debug:requests
+	c.Webhooks.Private = true // receivers on the local machine
 }

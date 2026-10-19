@@ -25,7 +25,7 @@ func NewStore(s *db.SQL) *Store {
 }
 
 // columns are what scan reads.
-const columns = "SELECT id, project_id, kind, target, created_at FROM channels"
+const columns = "SELECT id, project_id, kind, target, secret, created_at FROM channels"
 
 // List returns at most limit of the project's channels from offset, the
 // newest first, and how many there are in all.
@@ -71,8 +71,8 @@ func (s *Store) Add(ctx context.Context, ch Channel) (err error) {
 	ctx, span := trace.Start(ctx, "channels.Store.Add")
 	defer trace.End(span, &err)
 //line store.ego:44
-	if _, err := s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO channels (id, project_id, kind, target, created_at) VALUES (?, ?, ?, ?, ?)",
-		ch.ID, ch.ProjectID, ch.Kind, ch.Target, ch.CreatedAt.UnixMicro()); err != nil {
+	if _, err := s.sql.Conn(ctx).ExecContext(ctx, "INSERT INTO channels (id, project_id, kind, target, secret, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		ch.ID, ch.ProjectID, ch.Kind, ch.Target, ch.Secret, ch.CreatedAt.UnixMicro()); err != nil {
 		return fmt.Errorf("Conn.ExecContext: %w", err)
 	}
 //line store.ego:46
@@ -141,7 +141,7 @@ func (s *Store) PruneDeliveries(ctx context.Context, before time.Time) (err erro
 func scan(row db.Scanner) (Channel, error) {
 	var ch Channel
 	var created int64
-	if err := row.Scan(&ch.ID, &ch.ProjectID, &ch.Kind, &ch.Target, &created); err != nil {
+	if err := row.Scan(&ch.ID, &ch.ProjectID, &ch.Kind, &ch.Target, &ch.Secret, &created); err != nil {
 		return Channel{}, err
 	}
 //line store.ego:82

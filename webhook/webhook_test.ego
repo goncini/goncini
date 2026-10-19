@@ -1,0 +1,146 @@
+package webhook_test
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"log/slog"
+	"net/http"
+	"strings"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/goncini/goncini/httpkernel"
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/routing"
+	"github.com/goncini/goncini/webhook"
+	"github.com/goncini/goncini/webhook/webhooktest"
+	"github.com/goncini/goncini/webtest"
+)
+
+// TestStandard checks Standard's signatures against the specification's
+// example, and that a webhook whose secret, body or time isn't the
+// signature's is refused.
+func TestStandard(t *testing.T) {
+	secret := "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
+	body := []byte(`{"test": 2432232314}`)
+	at := time.Unix(1614265330, 0)
+	h := http.Header{}
+	must webhook.Sign(h, secret, "msg_p5jXN8AQM9LWM0D4loKWxJek", at, body)
+	if got := h.Get("webhook-signature"); got != "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=" {
+		t.Errorf("signature %s", got)
+	}
+	other := webhook.NewSecret()
+	for name, err := range map[string]error{
+		"signed":                 webhook.Standard(secret).Verify(h, body, at.Add(time.Minute)),
+		"with the old secret":    webhook.Standard(other, secret).Verify(h, body, at),
+		"with another secret":    webhook.Standard(other).Verify(h, body, at),
+		"another body":           webhook.Standard(secret).Verify(h, []byte(`{"test": 1}`), at),
+		"too late":               webhook.Standard(secret).Verify(h, body, at.Add(6*time.Minute)),
+		"too early":              webhook.Standard(secret).Verify(h, body, at.Add(-6*time.Minute)),
+		"without its signatures": webhook.Standard(secret).Verify(http.Header{}, body, at),
+	} {
+		if ok := err == nil; ok != (name == "signed" || name == "with the old secret") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// TestGitHub checks GitHub's scheme against its documentation's example.
+func TestGitHub(t *testing.T) {
+	s := webhook.GitHub("It's a Secret to Everybody")
+	h := http.Header{"X-Hub-Signature-256": {"sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17"}}
+	if err := s.Verify(h, []byte("Hello, World!"), time.Now()); err != nil {
+		t.Error(err)
+	}
+	if err := s.Verify(h, []byte("Hello, World?"), time.Now()); err == nil {
+		t.Error("another body is verified")
+	}
+	empty := http.Header{"X-Hub-Signature-256": {"sha256=" + hex.EncodeToString(hmac.New(sha256.New, nil).Sum(nil))}}
+	if err := webhook.GitHub("").Verify(empty, nil, time.Now()); err == nil {
+		t.Error("a scheme without a secret verifies a webhook signed with an empty key")
+	}
+}
+
+// TestStripe checks Stripe's scheme: a signature among others, of the
+// timestamp and body, within the tolerance.
+func TestStripe(t *testing.T) {
+	secret, body, now := "whsec_test", []byte(`{"id":"evt_1"}`), time.Now()
+	ts := now.Add(-time.Minute).Unix()
+	m := hmac.New(sha256.New, []byte(secret))
+	m.Write([]byte(f"{ts}.{string(body)}"))
+	h := http.Header{"Stripe-Signature": {f"t={ts},v1=00ff,v1={hex.EncodeToString(m.Sum(nil))},v0=abc"}}
+	if err := webhook.Stripe(secret).Verify(h, body, now); err != nil {
+		t.Error(err)
+	}
+	if err := webhook.Stripe(secret).Verify(h, body, now.Add(10*time.Minute)); err == nil {
+		t.Error("an old webhook is verified")
+	}
+	if err := webhook.Stripe("whsec_other").Verify(h, body, now); err == nil {
+		t.Error("another secret verifies it")
+	}
+}
+
+// TestVerify checks that Verify hands the endpoint a webhook with a good
+// signature, its body bound as usual, and answers 401 to the others.
+func TestVerify(t *testing.T) {
+	secret := webhook.NewSecret()
+	type event struct {
+		Body struct {
+			Type string `json:"type" validate:"required"`
+		}
+	}
+	receive := httpkernel.Endpoint(func(ctx context.Context, in event) (string, error) { return in.Body.Type, nil })
+	r := routing.New()
+	r.With(webhook.Verify(webhook.Standard(secret))).Post("/hooks", receive)
+	c := webtest.NewClient(t, &httpkernel.Kernel{Handler: r, Logger: slog.New(slog.DiscardHandler)})
+	body := `{"type":"check.down"}`
+	h := http.Header{}
+	must webhook.Sign(h, secret, "msg_1", time.Now(), []byte(body))
+	signed := c
+	for name, values := range h {
+		signed = signed.WithHeader(name, values[0])
+	}
+	signed.Post("/hooks", body).Status(200).Contains(`"check.down"`)
+	signed.Post("/hooks", `{"type":"check.up"}`).Problem(401).HasDetail("invalid webhook: its signature is wrong")
+	c.Post("/hooks", body).Problem(401)
+}
+
+// TestSend checks that a webhook is delivered, signed, through the queue,
+// and retried with the same ID while its receiver fails, on the
+// deliveries' schedule; and that one to a private address isn't sent.
+func TestSend(t *testing.T) {
+	hooks := webhooktest.NewReceiver(t) // outside the bubble, whose time it lets move
+	synctest.Test(t, (t *testing.T) => {
+		ctx := context.Background()
+		async, failed := &messenger.MemoryTransport{}, &messenger.MemoryTransport{}
+		d := webhook.NewDeliverer(webhook.Config{Private: true}, time.Now)
+		bus := messenger.NewBus(messenger.Config{}, messenger.Transports{"async": async, "failed": failed}, []messenger.Handlers{d}, slog.New(slog.DiscardHandler))
+		sender := webhook.NewSender(bus)
+		hooks.Fail(502, 503)
+		must sender.Send(ctx, webhook.Webhook{ID: "evt_1", URL: hooks.URL(), Secret: hooks.Secret(), Body: map[string]string{"type": "check.down"}})
+		start := time.Now()
+		w := &messenger.Worker{Bus: bus, Transports: []string{"async"}, Limit: 3, Lease: time.Minute, StopTimeout: time.Minute, Logger: bus.Logger}
+		must w.Run(ctx)
+		took := time.Since(start)
+		got := hooks.Deliveries()
+		if len(got) != 3 || got[0].Status != 502 || got[2].Status != 204 || got[2].ID != "evt_1" || got[1].ID != "evt_1" || string(got[2].Body) != `{"type":"check.down"}` {
+			t.Errorf("deliveries %+v", got)
+		}
+		if took < 90*time.Second || took > 95*time.Second { // 30 seconds, then 60, and the worker's polls
+			t.Errorf("delivered in %v", took)
+		}
+
+		public := webhook.NewDeliverer(webhook.Config{Retries: -1}, time.Now)
+		bus = messenger.NewBus(messenger.Config{}, messenger.Transports{"async": async, "failed": failed}, []messenger.Handlers{public}, slog.New(slog.DiscardHandler))
+		must webhook.NewSender(bus).Send(ctx, webhook.Webhook{URL: hooks.URL(), Secret: hooks.Secret(), Body: 1})
+		w.Bus, w.Limit = bus, 1
+		must w.Run(ctx)
+		list := must failed.List(ctx)
+		if len(list) != 1 || !strings.Contains(list[0].Error, "isn't a public address") || len(hooks.Deliveries()) != 3 {
+			t.Errorf("failed %+v", list)
+		}
+	})
+}

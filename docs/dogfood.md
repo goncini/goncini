@@ -36,7 +36,7 @@ as a decision.
 | 7 | A `validate` tag on an `httpkernel.Optional` field panicked in go-playground: a 500 | The tags check the member's value, when it is present |
 | 8 | A test couldn't run a scheduled task: `scheduler:run` runs until stopped | `scheduler:trigger <task>` runs it now, once, with now as its tick |
 | 9 | `make:message` put goncini's `messenger` import in the app's group, in an app whose module goncini's owner owns too | An added import joins the first group that shares the most of its path |
-| 10 | A `testing/synctest` bubble's time doesn't move while the app talks to `mailertest`'s or `httptest`'s servers: the alerts test, which waits for a retry, hung | Kept: that test runs in real time, as AGENTS.md now says. The webhooks step brings a receiver for tests that needs no socket |
+| 10 | A `testing/synctest` bubble's time doesn't move while the app talks to `mailertest`'s or `httptest`'s servers: the alerts test, which waits for a retry, hung | Fixed with the webhooks step: the test servers, `mailertest`'s, `webhooktest`'s and `oidctest`'s, are made outside the bubble, and close their connections after each response or email, so that its time moves while they're up. The alerts test runs in fake time, its retries' minutes in a second |
 | 11 | `make:command projects:create` refused a package that didn't exist yet | Kept: a maker doesn't make a package of a typo, and a command works on what its package has |
 
 ## Decisions in the app

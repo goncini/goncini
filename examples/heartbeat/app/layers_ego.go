@@ -17,12 +17,12 @@ import (
 	"github.com/goncini/goncini/examples/heartbeat/config"
 	"github.com/goncini/goncini/examples/heartbeat/home"
 	"github.com/goncini/goncini/examples/heartbeat/projects"
-	"github.com/goncini/goncini/httpclient"
 	"github.com/goncini/goncini/lock"
 	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/profiler"
 	"github.com/goncini/goncini/scheduler"
+	"github.com/goncini/goncini/webhook"
 )
 
 // Build builds the app for cfg: goncini's services, the app's own, and
@@ -49,21 +49,21 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("NewSQLTransports: %w", err)
 	}
+	config4 := autoConfigWebhooks(cfg)
+	v := clock()
+	deliverer := webhook.NewDeliverer(config4, v)
 	store3 := channels.NewStore(sql2)
-	config4 := autoConfigMailer(cfg)
+	config5 := autoConfigMailer(cfg)
 	log := autoConfigLog(cfg)
 	handler := goncini.NewLogHandler(log)
 	logger := goncini.NewLogger(handler)
-	transport, err := mailer.NewTransport(config4, logger)
+	transport, err := mailer.NewTransport(config5, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewTransport: %w", err)
 	}
-	mailer2 := mailer.New(config4, transport)
-	config5 := autoDefaultHttpclientConfig()
-	client := httpclient.New(config5)
-	v := clock()
-	alertHandler := channels.NewAlertHandler(store3, mailer2, client, v)
-	v2 := autoHandlers(alertHandler)
+	mailer2 := mailer.New(config5, transport)
+	alertHandler := channels.NewAlertHandler(store3, mailer2, v)
+	v2 := autoHandlers(deliverer, alertHandler)
 	bus := messenger.NewBus(config3, transports, v2, logger)
 	subscriber := channels.NewSubscriber(bus)
 	v3 := autoSubscribers(subscriber)

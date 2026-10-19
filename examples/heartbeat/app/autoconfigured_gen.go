@@ -17,7 +17,6 @@ import (
 	"github.com/goncini/goncini/examples/heartbeat/config"
 	"github.com/goncini/goncini/examples/heartbeat/home"
 	"github.com/goncini/goncini/examples/heartbeat/projects"
-	"github.com/goncini/goncini/httpclient"
 	"github.com/goncini/goncini/httpkernel"
 	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
@@ -25,12 +24,13 @@ import (
 	"github.com/goncini/goncini/profiler"
 	"github.com/goncini/goncini/scheduler"
 	"github.com/goncini/goncini/security"
+	"github.com/goncini/goncini/webhook"
 	"github.com/goncini/goncini/workflow"
 )
 
 // Autoconfigured hands goncini the app's services of each kind it uses,
 // found by their types, and each part of goncini its config section.
-var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigMailer, autoConfigProfiler, autoDefaultOpenapiConfig, autoDefaultCacheConfig, autoDefaultHttpclientConfig, autoDefaultMessengerConfig, autoDefaultSchedulerConfig)
+var Autoconfigured = layer.Set(autoProblems, autoCommands, autoChecks, autoVoters, autoSubscribers, autoHandlers, autoTasks, autoBackground, autoSpanProcessors, autoServices, autoOpenAPI, autoConfigHTTP, autoConfigLog, autoConfigDB, autoConfigMailer, autoConfigProfiler, autoConfigWebhooks, autoDefaultOpenapiConfig, autoDefaultCacheConfig, autoDefaultMessengerConfig, autoDefaultSchedulerConfig)
 
 // autoProblems are the error mappers that the app's packages declare.
 func autoProblems() []httpkernel.ErrorMapper {
@@ -58,8 +58,8 @@ func autoSubscribers(p1 *channels.Subscriber) []event.Subscriber {
 }
 
 // autoHandlers are the services that handle messages.
-func autoHandlers(p1 *channels.AlertHandler) []messenger.Handlers {
-	return []messenger.Handlers{p1}
+func autoHandlers(p1 *webhook.Deliverer, p2 *channels.AlertHandler) []messenger.Handlers {
+	return []messenger.Handlers{p1, p2}
 }
 
 // autoTasks are the services that schedule tasks.
@@ -91,6 +91,9 @@ func autoServices() []goncini.Service {
 		{Type: "workflow.Registry", Provider: "checks.NewWorkflows", Needs: []string{}},
 		{Type: "messenger.Config", Provider: "autoDefaultMessengerConfig", Needs: []string{}},
 		{Type: "messenger.Transports", Provider: "messenger.NewSQLTransports", Needs: []string{"*sql.DB", "messenger.Config"}},
+		{Type: "webhook.Config", Provider: "autoConfigWebhooks", Needs: []string{"config.Config"}},
+		{Type: "func() time.Time", Provider: "clock", Needs: []string{}},
+		{Type: "*webhook.Deliverer", Provider: "webhook.NewDeliverer", Needs: []string{"webhook.Config", "func() time.Time"}},
 		{Type: "*channels.Store", Provider: "channels.NewStore", Needs: []string{"*db.SQL"}},
 		{Type: "mailer.Config", Provider: "autoConfigMailer", Needs: []string{"config.Config"}},
 		{Type: "goncini.Log", Provider: "autoConfigLog", Needs: []string{"config.Config"}},
@@ -98,11 +101,8 @@ func autoServices() []goncini.Service {
 		{Type: "*slog.Logger", Provider: "goncini.NewLogger", Needs: []string{"slog.Handler"}},
 		{Type: "mailer.Transport", Provider: "mailer.NewTransport", Needs: []string{"mailer.Config", "*slog.Logger"}},
 		{Type: "*mailer.Mailer", Provider: "mailer.New", Needs: []string{"mailer.Config", "mailer.Transport"}},
-		{Type: "httpclient.Config", Provider: "autoDefaultHttpclientConfig", Needs: []string{}},
-		{Type: "*httpclient.Client", Provider: "httpclient.New", Needs: []string{"httpclient.Config"}},
-		{Type: "func() time.Time", Provider: "clock", Needs: []string{}},
-		{Type: "*channels.AlertHandler", Provider: "channels.NewAlertHandler", Needs: []string{"*channels.Store", "*mailer.Mailer", "*httpclient.Client", "func() time.Time"}},
-		{Type: "[]messenger.Handlers", Provider: "autoHandlers", Needs: []string{"*channels.AlertHandler"}},
+		{Type: "*channels.AlertHandler", Provider: "channels.NewAlertHandler", Needs: []string{"*channels.Store", "*mailer.Mailer", "func() time.Time"}},
+		{Type: "[]messenger.Handlers", Provider: "autoHandlers", Needs: []string{"*webhook.Deliverer", "*channels.AlertHandler"}},
 		{Type: "*messenger.Bus", Provider: "messenger.NewBus", Needs: []string{"messenger.Config", "messenger.Transports", "[]messenger.Handlers", "*slog.Logger"}},
 		{Type: "*channels.Subscriber", Provider: "channels.NewSubscriber", Needs: []string{"*messenger.Bus"}},
 		{Type: "[]event.Subscriber", Provider: "autoSubscribers", Needs: []string{"*channels.Subscriber"}},
@@ -149,7 +149,7 @@ func autoServices() []goncini.Service {
 func autoOpenAPI() openapi.Annotations {
 	return openapi.Annotations{
 		Operations: map[string]openapi.OperationDoc{
-			"github.com/goncini/goncini/examples/heartbeat/channels.(*Channels).Create": {Summary: "Adds a channel, which the project's next flips alert.", Errors: []error{channels.Unavailable{}, security.Unauthenticated{}}},
+			"github.com/goncini/goncini/examples/heartbeat/channels.(*Channels).Create": {Summary: "Adds a channel, which the project's next flips alert.", Description: "A webhook\nchannel gets a secret, which signs its webhooks.", Errors: []error{channels.Unavailable{}, security.Unauthenticated{}}},
 			"github.com/goncini/goncini/examples/heartbeat/channels.(*Channels).Delete": {Summary: "Removes a channel.", Errors: []error{channels.NotFound{}, channels.Unavailable{}, security.Unauthenticated{}}},
 			"github.com/goncini/goncini/examples/heartbeat/channels.(*Channels).List":   {Summary: "Returns a page of the project's channels, the newest first.", Errors: []error{channels.Unavailable{}, security.Unauthenticated{}}},
 			"github.com/goncini/goncini/examples/heartbeat/channels.(*Channels).Show":   {Summary: "Returns a channel.", Errors: []error{channels.NotFound{}, channels.Unavailable{}, security.Unauthenticated{}}},
@@ -168,7 +168,7 @@ func autoOpenAPI() openapi.Annotations {
 			"github.com/goncini/goncini/examples/heartbeat/projects.(*Projects).Show":   {Summary: "Returns the project that the key authenticates.", Errors: []error{security.Unauthenticated{}}},
 		},
 		Types: map[reflect.Type]openapi.TypeDoc{
-			reflect.TypeFor[channels.Channel]():     {Description: "Channel is where a project's alerts go.", Fields: map[string]string{"Kind": "email or webhook", "Target": "the email address, or the webhook's URL"}},
+			reflect.TypeFor[channels.Channel]():     {Description: "Channel is where a project's alerts go.", Fields: map[string]string{"Kind": "email or webhook", "Target": "the email address, or the webhook's URL", "Secret": "a webhook's, which signs it, for its receiver to check"}},
 			reflect.TypeFor[channels.CreateInput](): {Fields: map[string]string{"Body.Target": "the email address, or the webhook's URL"}},
 			reflect.TypeFor[checks.Badge]():         {Description: "Badge is the status of a project's checks, as shields.io's endpoint\nbadges read it: https://img.shields.io/endpoint?url=<the badge's URL>.", Fields: map[string]string{"Message": "up, or how many checks are down"}},
 			reflect.TypeFor[checks.Check]():         {Description: "Check is a check, as the API serves it.", Fields: map[string]string{"ID": "and its ping URL's: /ping/{id}", "Period": "the seconds between pings", "Grace": "the seconds a ping may be late by", "Status": "new, up, down or paused", "StartedAt": "when the job's run started, if it runs", "DueAt": "when it goes down without a ping, if it is up"}},
@@ -199,14 +199,14 @@ func autoConfigMailer(c config.Config) mailer.Config { return c.Mailer }
 // autoConfigProfiler is the Profiler section of the config.
 func autoConfigProfiler(c config.Config) profiler.Config { return c.Profiler }
 
+// autoConfigWebhooks is the Webhooks section of the config.
+func autoConfigWebhooks(c config.Config) webhook.Config { return c.Webhooks }
+
 // autoDefaultOpenapiConfig is the default of openapi.Config, which the config doesn't have.
 func autoDefaultOpenapiConfig() openapi.Config { return openapi.Config{} }
 
 // autoDefaultCacheConfig is the default of cache.Config, which the config doesn't have.
 func autoDefaultCacheConfig() cache.Config { return cache.Config{} }
-
-// autoDefaultHttpclientConfig is the default of httpclient.Config, which the config doesn't have.
-func autoDefaultHttpclientConfig() httpclient.Config { return httpclient.Config{} }
 
 // autoDefaultMessengerConfig is the default of messenger.Config, which the config doesn't have.
 func autoDefaultMessengerConfig() messenger.Config { return messenger.Config{} }

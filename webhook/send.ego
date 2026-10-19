@@ -1,0 +1,131 @@
+package webhook
+
+import (
+	"bytes"
+	"cmp"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/effect-go/effect-go/layer"
+	"github.com/effect-go/effect-go/schedule"
+
+	"github.com/goncini/goncini/httpclient"
+	"github.com/goncini/goncini/messenger"
+	"github.com/goncini/goncini/uid"
+)
+
+// Config configures the webhooks that the app sends.
+type Config struct {
+	// Queue is the transport of the deliveries; empty means async.
+	Queue string
+	// Retries is how many times a delivery is retried while its receiver
+	// fails; zero means 10, and a negative number none. The first waits
+	// Delay, zero meaning 30 seconds, and each the double of the last:
+	// about 8 hours in all, by default. Then the delivery goes to the
+	// failure transport.
+	Retries int
+	Delay   time.Duration
+	// Timeout bounds each try; zero means 10 seconds.
+	Timeout time.Duration
+	// Private lets the webhooks go to private addresses, as a receiver of
+	// the local machine in development or tests: httpclient.Public refuses
+	// them otherwise.
+	Private bool
+}
+
+// Layer is the providers of the Sender, and of the handler that delivers
+// the webhooks.
+var Layer = layer.Set(NewSender, NewDeliverer)
+
+// Webhook is a webhook to send.
+type Webhook struct {
+	// ID identifies the webhook to its receiver, which may get it twice: the
+	// same for each try, and when the app sends it again, as the ID of the
+	// event it tells. Empty means a new one.
+	ID string
+	// URL is the receiver's.
+	URL string
+	// Secret is the receiver's, which signs the webhook, from NewSecret.
+	Secret string
+	// Body is sent as JSON.
+	Body any
+}
+
+// Delivery is the message that delivers a webhook, which a worker handles.
+type Delivery struct {
+	ID     string          `json:"id"`
+	URL    string          `json:"url"`
+	Secret string          `json:"secret"`
+	Body   json.RawMessage `json:"body"`
+}
+
+// Sender sends webhooks, through the bus.
+type Sender struct {
+	bus *messenger.Bus
+}
+
+func NewSender(bus *messenger.Bus) *Sender {
+	return &Sender{bus: bus}
+}
+
+// Send queues a webhook: in a transaction, with it, when the queue is in
+// the same database.
+func (s *Sender) Send(ctx context.Context, w Webhook) error {
+	check key(w.Secret) ""
+	body := check json.Marshal(w.Body) ""
+	id := cmp.Or(w.ID, uid.NewV7().String())
+	return messenger.Dispatch(ctx, s.bus, Delivery{ID: id, URL: w.URL, Secret: w.Secret, Body: body})
+}
+
+// Deliverer posts the webhooks, signed.
+type Deliverer struct {
+	config Config
+	client *httpclient.Client
+	now    func() time.Time
+}
+
+func NewDeliverer(c Config, now func() time.Time) *Deliverer {
+	client := httpclient.New(httpclient.Config{Timeout: cmp.Or(c.Timeout, 10*time.Second), Retries: -1})
+	if !c.Private {
+		client.Transport = httpclient.Public()
+	}
+	return &Deliverer{config: c, client: client, now: now}
+}
+
+// Handlers registers the handler of the deliveries, routes them to the
+// queue, and retries them on their own schedule.
+func (d *Deliverer) Handlers(b *messenger.Bus) {
+	messenger.Handle(b, d.deliver)
+	messenger.Route[Delivery](b, cmp.Or(d.config.Queue, "async"))
+	retries := if d.config.Retries == 0 { 10 } else { max(d.config.Retries, 0) }
+	messenger.Retry[Delivery](b, schedule.Max(schedule.Exponential(cmp.Or(d.config.Delay, 30*time.Second)), schedule.Recurs(retries)))
+}
+
+// deliver posts the webhook, and fails unless its receiver answers 2xx.
+effect (d *Deliverer) deliver(m Delivery) error {
+	req := check http.NewRequestWithContext(ctx, http.MethodPost, m.URL, bytes.NewReader(m.Body)) ""
+	req.Header.Set("Content-Type", "application/json")
+	check Sign(req.Header, m.Secret, m.ID, d.now(), m.Body) ""
+	res := check d.client.Do(req) ""
+	io.Copy(io.Discard, io.LimitReader(res.Body, 1<<16)) // so that the connection is reused
+	res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		return fmt.Errorf("webhook: %s answered %s", host(m.URL), res.Status)
+	}
+	return nil
+}
+
+// host is a URL's host, for the errors, which keep the rest of it, which
+// may hold a token, out of the logs.
+func host(u string) string {
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return "the receiver"
+	}
+	return parsed.Host
+}

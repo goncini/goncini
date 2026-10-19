@@ -12,11 +12,13 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/effect-go/effect-go/schedule"
+
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/messenger"
 )
 
-//line messenger_test.ego:17
+//line messenger_test.ego:19
 type welcome struct {
 	User string `json:"user"`
 }
@@ -39,7 +41,7 @@ func TestDispatchNow(t *testing.T) {
 	if err := messenger.Dispatch(ctx, b, welcome{"ann"}); err != nil {
 		panic(err)
 	}
-//line messenger_test.ego:37
+//line messenger_test.ego:39
 	if len(got) != 1 || got[0] != "ann" {
 		t.Errorf("handled %v", got)
 	}
@@ -50,7 +52,7 @@ func TestDispatchNow(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line messenger_test.ego:44
+//line messenger_test.ego:46
 	if len(list) != 0 {
 		t.Errorf("sent %v", list)
 	}
@@ -64,7 +66,7 @@ func worker(b *messenger.Bus, limit int) *messenger.Worker {
 func TestWorker(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 
-//line messenger_test.ego:56
+//line messenger_test.ego:58
 		b, async, _ := newBus()
 		var mu sync.Mutex
 		var got []string
@@ -79,11 +81,11 @@ func TestWorker(t *testing.T) {
 		if err := messenger.Dispatch(ctx, b, welcome{"ann"}); err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:68
+//line messenger_test.ego:70
 		if err := messenger.Dispatch(ctx, b, welcome{"bob"}, messenger.Delay(time.Hour)); err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:69
+//line messenger_test.ego:71
 		if len(got) != 0 {
 			t.Fatal("a routed message was handled when dispatched")
 		}
@@ -92,12 +94,12 @@ func TestWorker(t *testing.T) {
 		if err := w.Run(ctx); err != nil {
 			panic(err)
 		} // returns after 2 messages, an hour later
-//line messenger_test.ego:75
+//line messenger_test.ego:77
 		left, err := async.List(ctx)
 		if err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:76
+//line messenger_test.ego:78
 		if len(got) != 2 || got[0] != "ann" || got[1] != "bob" || len(left) != 0 {
 			t.Errorf("handled %v, left %v", got, left)
 		}
@@ -105,11 +107,11 @@ func TestWorker(t *testing.T) {
 	})
 }
 
-//line messenger_test.ego:82
+//line messenger_test.ego:84
 func TestRetriesAndFailures(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 
-//line messenger_test.ego:84
+//line messenger_test.ego:86
 		b, _, failed := newBus()
 		start := time.Now()
 		var tries []time.Duration
@@ -123,11 +125,11 @@ func TestRetriesAndFailures(t *testing.T) {
 		if err := messenger.Dispatch(ctx, b, welcome{"ann"}); err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:95
+//line messenger_test.ego:97
 		if err := worker(b, 0).Run(ctx); err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:96
+//line messenger_test.ego:98
 		want := []time.Duration{0, time.Second, 3 * time.Second, 7 * time.Second} // then 1, 2 and 4 seconds later
 		if len(tries) != len(want) {
 			t.Fatalf("tries at %v", tries)
@@ -141,9 +143,48 @@ func TestRetriesAndFailures(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:106
+//line messenger_test.ego:108
 		if len(list) != 1 || list[0].Attempts != 4 || list[0].Error != "the mail server is down" {
 			t.Errorf("failed %+v", list)
+		}
+
+	})
+}
+
+// TestRetryOfAType checks that the messages of a type with a schedule of
+// its own are retried on it.
+//
+//line messenger_test.ego:116
+func TestRetryOfAType(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+
+//line messenger_test.ego:118
+		b, _, failed := newBus()
+		start := time.Now()
+		var tries []time.Duration
+		messenger.Handle(b, func(ctx context.Context, m welcome) error {
+			tries = append(tries, time.Since(start))
+			return errors.New("the receiver is down")
+		})
+		messenger.Route[welcome](b, "async")
+		messenger.Retry[welcome](b, schedule.Max(schedule.Spaced(time.Hour), schedule.Recurs(1)))
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+		defer cancel()
+		if err := messenger.Dispatch(ctx, b, welcome{"ann"}); err != nil {
+			panic(err)
+		}
+//line messenger_test.ego:130
+		if err := worker(b, 0).Run(ctx); err != nil {
+			panic(err)
+		}
+//line messenger_test.ego:131
+		list, err := failed.List(ctx)
+		if err != nil {
+			panic(err)
+		}
+//line messenger_test.ego:132
+		if len(tries) != 2 || tries[1] < time.Hour || tries[1] > time.Hour+2*time.Second || len(list) != 1 {
+			t.Errorf("tries at %v, failed %v", tries, list)
 		}
 
 	})
@@ -152,11 +193,11 @@ func TestRetriesAndFailures(t *testing.T) {
 // TestStopping checks that a worker told to stop finishes the message it
 // handles, and that one cut short by the stop timeout goes back.
 //
-//line messenger_test.ego:114
+//line messenger_test.ego:140
 func TestStopping(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 
-//line messenger_test.ego:116
+//line messenger_test.ego:142
 		b, async, _ := newBus()
 		var done []string
 		messenger.Handle(b, func(ctx context.Context, m welcome) error {
@@ -166,7 +207,7 @@ func TestStopping(t *testing.T) {
 			} else {
 				takes = 10 * time.Second
 			}
-//line messenger_test.ego:120
+//line messenger_test.ego:146
 			select {
 			case <-time.After(takes):
 				done = append(done, m.User)
@@ -181,7 +222,7 @@ func TestStopping(t *testing.T) {
 			if err := messenger.Dispatch(ctx, b, welcome{user}); err != nil {
 				panic(err)
 			}
-//line messenger_test.ego:132
+//line messenger_test.ego:158
 			ctx, stop := context.WithCancel(ctx)
 			w := worker(b, 0)
 			finished := make(chan error)
@@ -200,7 +241,7 @@ func TestStopping(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:147
+//line messenger_test.ego:173
 		if len(done) != 1 || done[0] != "quick" || len(left) != 1 || left[0].Attempts != 0 {
 			// slow is back, as it was: being cut short isn't a failure.
 			t.Errorf("done %v, left %+v", done, left)
@@ -213,27 +254,27 @@ func TestStopping(t *testing.T) {
 // acknowledged, as when the worker dies, is received again once its lease
 // runs out.
 //
-//line messenger_test.ego:157
+//line messenger_test.ego:183
 func TestLostWorker(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 
-//line messenger_test.ego:159
+//line messenger_test.ego:185
 		ctx := context.Background()
 		tr := &messenger.MemoryTransport{}
 		if err := tr.Send(ctx, messenger.Message{ID: "1", Type: "welcome"}); err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:162
+//line messenger_test.ego:188
 		lease, ok, err := tr.Receive(ctx, time.Minute)
 		if err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:163
+//line messenger_test.ego:189
 		_, again, err := tr.Receive(ctx, time.Minute)
 		if err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:164
+//line messenger_test.ego:190
 		if !ok || again {
 			t.Fatalf("received %v, again %v", ok, again)
 		}
@@ -242,7 +283,7 @@ func TestLostWorker(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:169
+//line messenger_test.ego:195
 		if !back || other.Message().ID != "1" {
 			t.Fatal("the message isn't back once the lease ran out")
 		}
@@ -250,16 +291,16 @@ func TestLostWorker(t *testing.T) {
 		if err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:173
+//line messenger_test.ego:199
 		if err := lease.Ack(ctx); err != nil {
 			panic(err)
 		} // the dead worker's: nothing happens
-//line messenger_test.ego:174
+//line messenger_test.ego:200
 		list, err := tr.List(ctx)
 		if err != nil {
 			panic(err)
 		}
-//line messenger_test.ego:175
+//line messenger_test.ego:201
 		if held || len(list) != 1 {
 			t.Errorf("the old lease still held it: extended %v, left %d", held, len(list))
 		}
@@ -269,7 +310,7 @@ func TestLostWorker(t *testing.T) {
 
 // TestFailedCommands checks messenger:failed:show, retry and remove.
 //
-//line messenger_test.ego:182
+//line messenger_test.ego:208
 func TestFailedCommands(t *testing.T) {
 	b, async, failed := newBus()
 	messenger.Route[welcome](b, "async")
@@ -278,11 +319,11 @@ func TestFailedCommands(t *testing.T) {
 	if err := failed.Send(ctx, messenger.Message{ID: "1", Type: "github.com/goncini/goncini/messenger_test.welcome", Body: []byte(`{"user":"ann"}`), Attempts: 4, Error: "down", AvailableAt: at}); err != nil {
 		panic(err)
 	}
-//line messenger_test.ego:188
+//line messenger_test.ego:214
 	if err := failed.Send(ctx, messenger.Message{ID: "2", Type: "github.com/goncini/goncini/messenger_test.welcome", Attempts: 4, AvailableAt: at}); err != nil {
 		panic(err)
 	}
-//line messenger_test.ego:189
+//line messenger_test.ego:215
 	run := func(args ...string) (string, error) {
 		var out strings.Builder
 		err := console.Run(ctx, &out, messenger.Commands(b), "", args)
@@ -292,28 +333,28 @@ func TestFailedCommands(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-//line messenger_test.ego:195
+//line messenger_test.ego:221
 	if !strings.Contains(shown, "1   github.com/goncini/goncini/messenger_test.welcome  4         2026-10-07 12:00:00  down") {
 		t.Errorf("show:\n%s", shown)
 	}
 	if _, err := run("messenger:failed:retry", "1"); err != nil {
 		panic(err)
 	}
-//line messenger_test.ego:199
+//line messenger_test.ego:225
 	if _, err := run("messenger:failed:remove", "2"); err != nil {
 		panic(err)
 	}
-//line messenger_test.ego:200
+//line messenger_test.ego:226
 	back, err := async.List(ctx)
 	if err != nil {
 		panic(err)
 	}
-//line messenger_test.ego:201
+//line messenger_test.ego:227
 	left, err := failed.List(ctx)
 	if err != nil {
 		panic(err)
 	}
-//line messenger_test.ego:202
+//line messenger_test.ego:228
 	if len(back) != 1 || back[0].ID != "1" || back[0].Attempts != 0 || len(left) != 0 {
 		t.Errorf("back %+v, left %+v", back, left)
 	}

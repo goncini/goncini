@@ -4,15 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	stdmime "mime"
-	"net/http"
-	"net/http/httptest"
 	"net/mail"
 	"slices"
-	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/goncini/goncini/mailer/mailertest"
+	"github.com/goncini/goncini/webhook/webhooktest"
 	"github.com/goncini/goncini/webtest"
 
 	"github.com/goncini/goncini/examples/heartbeat/testapp"
@@ -40,79 +39,66 @@ func TestChannels(t *testing.T) {
 	acme.Get("/api/v1/channels/" + ch.ID).Problem(404)
 }
 
-// hook is a webhook's receiver, which answers each POST with the next of
-// its statuses, then 204.
-type hook struct {
-	mu       sync.Mutex
-	statuses []int
-	alerts   []map[string]any
-	keys     []string
-}
-
-func (h *hook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.keys = append(h.keys, r.Header.Get("Idempotency-Key"))
-	status := http.StatusNoContent
-	if len(h.statuses) > 0 {
-		status, h.statuses = h.statuses[0], h.statuses[1:]
-	}
-	if status < 300 {
-		var alert map[string]any
-		json.NewDecoder(r.Body).Decode(&alert)
-		h.alerts = append(h.alerts, alert)
-	}
-	w.WriteHeader(status)
-}
-
 // TestAlerts checks that each flip of a check alerts its project's
-// channels once, out of the request: a webhook that keeps failing fails
-// the alert, which is retried, without sending its email again. It runs in
-// real time, not in a synctest bubble, whose time doesn't move while the
-// app talks to the SMTP and webhook servers: it waits for the retries.
+// channels once, out of the request: by email, and by a signed webhook,
+// retried while its receiver fails. The SMTP server and the receiver are
+// made outside the synctest bubble, whose time moves while they are up.
 func TestAlerts(t *testing.T) {
 	smtp := mailertest.NewServer(t)
 	t.Setenv("MAILER_DSN", smtp.DSN())
-	// The client tries 4 times, then the alert fails.
-	receiver := &hook{statuses: []int{502, 502, 502, 502}}
-	srv := httptest.NewServer(receiver)
-	defer srv.Close()
-	a, acme := testapp.Boot(t)
-	acme.Post("/api/v1/channels", `{"kind":"email","target":"ops@example.com"}`).Status(201)
-	acme.Post("/api/v1/channels", `{"kind":"webhook","target":"`+srv.URL+`/alerts"}`).Status(201)
-	var chk struct {
-		ID string `json:"id"`
-	}
-	acme.Post("/api/v1/checks", `{"name":"backup","period":60,"grace":60}`).Status(201).JSON(&chk)
-	job := webtest.NewClient(t, a)
+	hooks := webhooktest.NewReceiver(t)
+	synctest.Test(t, (t *testing.T) => {
+		a, acme := testapp.Boot(t)
+		acme.Post("/api/v1/channels", `{"kind":"email","target":"ops@example.com"}`).Status(201)
+		var ch struct {
+			ID     string `json:"id"`
+			Secret string `json:"secret"`
+		}
+		acme.Post("/api/v1/channels", `{"kind":"webhook","target":"`+hooks.URL()+`/alerts"}`).Status(201).JSON(&ch)
+		hooks.SetSecret(ch.Secret)
+		var chk struct {
+			ID string `json:"id"`
+		}
+		acme.Post("/api/v1/checks", `{"name":"backup","period":60,"grace":60}`).Status(201).JSON(&chk)
+		job := webtest.NewClient(t, a)
 
-	job.Post("/ping/"+chk.ID+"/fail", "disk full").Status(204)
-	job.Post("/ping/"+chk.ID+"/fail", "disk full").Status(204) // down already: no flip
-	if len(smtp.Messages()) != 0 {
-		t.Fatal("alerted in the request")
-	}
-	webtest.Run(t, a, "messenger:consume", "-drain")
-	time.Sleep(time.Second) // until the alert's retry is due
-	webtest.Run(t, a, "messenger:consume", "-drain")
-	job.Get("/ping/" + chk.ID).Status(204)
-	webtest.Run(t, a, "messenger:consume", "-drain")
+		hooks.Fail(502, 502)
+		job.Post("/ping/"+chk.ID+"/fail", "disk full").Status(204)
+		job.Post("/ping/"+chk.ID+"/fail", "disk full").Status(204) // down already: no flip
+		if len(smtp.Messages()) != 0 {
+			t.Fatal("alerted in the request")
+		}
+		webtest.Run(t, a, "messenger:consume", "-drain") // the email, and the webhook's first try
+		time.Sleep(30 * time.Second)
+		webtest.Run(t, a, "messenger:consume", "-drain")
+		time.Sleep(time.Minute)
+		webtest.Run(t, a, "messenger:consume", "-drain")
+		job.Get("/ping/" + chk.ID).Status(204)
+		webtest.Run(t, a, "messenger:consume", "-drain")
 
-	var subjects []string
-	for _, m := range smtp.Messages() {
-		msg := must mail.ReadMessage(bytes.NewReader(m.Data))
-		subject := must new(stdmime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
-		subjects = append(subjects, m.To[0]+": "+subject)
-	}
-	if want := []string{"ops@example.com: backup is down", "ops@example.com: backup is up"}; !slices.Equal(subjects, want) {
-		t.Errorf("emails %q, want %q", subjects, want)
-	}
-	receiver.mu.Lock()
-	defer receiver.mu.Unlock()
-	if len(receiver.alerts) != 2 || receiver.alerts[0]["status"] != "down" || receiver.alerts[1]["status"] != "up" || receiver.alerts[0]["name"] != "backup" {
-		t.Errorf("webhooks %v", receiver.alerts)
-	}
-	keys := receiver.keys
-	if len(keys) != 6 || slices.Compact(slices.Clone(keys[:5]))[0] != keys[4] || len(slices.Compact(slices.Clone(keys[:5]))) != 1 || keys[5] == keys[0] {
-		t.Errorf("idempotency keys %q: the same for an alert's tries, another for the next", keys)
-	}
+		var subjects []string
+		for _, m := range smtp.Messages() {
+			msg := must mail.ReadMessage(bytes.NewReader(m.Data))
+			subject := must new(stdmime.WordDecoder).DecodeHeader(msg.Header.Get("Subject"))
+			subjects = append(subjects, m.To[0]+": "+subject)
+		}
+		if want := []string{"ops@example.com: backup is down", "ops@example.com: backup is up"}; !slices.Equal(subjects, want) {
+			t.Errorf("emails %q, want %q", subjects, want)
+		}
+		var statuses []int
+		var alerts []map[string]any
+		for _, d := range hooks.Deliveries() {
+			statuses = append(statuses, d.Status)
+			var alert map[string]any
+			must json.Unmarshal(d.Body, &alert)
+			alerts = append(alerts, alert)
+		}
+		if !slices.Equal(statuses, []int{502, 502, 204, 204}) {
+			t.Fatalf("webhooks answered %v", statuses)
+		}
+		got := hooks.Deliveries()
+		if got[0].ID != got[2].ID || got[3].ID == got[0].ID || alerts[2]["status"] != "down" || alerts[3]["status"] != "up" || alerts[2]["name"] != "backup" {
+			t.Errorf("webhooks %v, of IDs %s, %s and %s", alerts, got[0].ID, got[2].ID, got[3].ID)
+		}
+	})
 }

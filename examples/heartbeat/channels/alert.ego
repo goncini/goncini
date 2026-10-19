@@ -1,21 +1,18 @@
 package channels
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/goncini/goncini/event"
-	"github.com/goncini/goncini/httpclient"
 	"github.com/goncini/goncini/mailer"
 	"github.com/goncini/goncini/messenger"
 	"github.com/goncini/goncini/mime"
 	"github.com/goncini/goncini/scheduler"
 	"github.com/goncini/goncini/uid"
+	"github.com/goncini/goncini/webhook"
 
 	"github.com/goncini/goncini/examples/heartbeat/checks"
 )
@@ -53,19 +50,21 @@ const deliveriesKept = 30 * 24 * time.Hour
 
 // AlertHandler sends the alerts to the channels.
 type AlertHandler struct {
-	store  *Store
-	mailer *mailer.Mailer
-	client *httpclient.Client
-	now    func() time.Time
+	store    *Store
+	mailer   *mailer.Mailer
+	webhooks *webhook.Sender // on the bus it handles the alerts of
+	now      func() time.Time
 }
 
-func NewAlertHandler(store *Store, m *mailer.Mailer, client *httpclient.Client, now func() time.Time) *AlertHandler {
-	return &AlertHandler{store: store, mailer: m, client: client, now: now}
+func NewAlertHandler(store *Store, m *mailer.Mailer, now func() time.Time) *AlertHandler {
+	return &AlertHandler{store: store, mailer: m, now: now}
 }
 
 // Handlers registers the handler, and routes the alerts to the async
-// queue.
+// queue. The handler sends the webhooks on the bus it is given: it can't
+// take the bus, which takes the handlers.
 func (h *AlertHandler) Handlers(b *messenger.Bus) {
+	h.webhooks = webhook.NewSender(b)
 	messenger.Handle(b, h.handle)
 	messenger.Route[Alert](b, "async")
 }
@@ -88,7 +87,9 @@ effect (h *AlertHandler) handle(m Alert) error {
 	return errors.Join(errs...)
 }
 
-// deliver sends the alert to the channel, unless it was.
+// deliver sends the alert to the channel, unless it was: an email, or a
+// webhook, which its own message delivers, retried while its receiver
+// fails, with the flip's ID, for the receiver to take it once.
 effect (h *AlertHandler) deliver(ch Channel, m Alert) error {
 	sent := check h.store.Delivered(m.Flip, ch.ID)
 	if sent {
@@ -96,7 +97,7 @@ effect (h *AlertHandler) deliver(ch Channel, m Alert) error {
 	}
 	match ch.Kind {
 		Email => check h.email(ch, m)
-		_     => check h.webhook(ch, m)
+		_     => check h.webhooks.Send(ctx, webhook.Webhook{ID: m.Flip.String(), URL: ch.Target, Secret: ch.Secret, Body: m}) ""
 	}
 	return h.store.AddDelivery(m.Flip, ch.ID, h.now())
 }
@@ -108,20 +109,4 @@ effect (h *AlertHandler) email(ch Channel, m Alert) error {
 		Subject: f"{m.Name} is {m.Status}",
 		Text:    f"The check {m.Name} is {m.Status}, since {m.At.Format(time.RFC1123)}.\n",
 	})
-}
-
-// webhook posts the alert to the channel's URL, as JSON. Its
-// Idempotency-Key, the same for each try, tells the receiver that an alert
-// is sent again, and lets the client retry it.
-effect (h *AlertHandler) webhook(ch Channel, m Alert) error {
-	body := must json.Marshal(m)
-	req := check http.NewRequestWithContext(ctx, http.MethodPost, ch.Target, bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Idempotency-Key", m.Flip.String())
-	res := check h.client.Do(req)
-	res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode > 299 {
-		return fmt.Errorf("the webhook answered %s", res.Status)
-	}
-	return nil
 }

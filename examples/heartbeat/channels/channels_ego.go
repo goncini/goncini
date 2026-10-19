@@ -19,15 +19,16 @@ import (
 //line channels.ego:14
 const (
 	Email   = "email"
-	Webhook = "webhook" // a POST of the Alert, as JSON
+	Webhook = "webhook" // a POST of the Alert, as JSON, signed as Standard Webhooks says
 )
 
 // Channel is where a project's alerts go.
 type Channel struct {
 	ID        uid.UUID  `json:"id"`
 	ProjectID uid.UUID  `json:"-"`
-	Kind      string    `json:"kind"`   // email or webhook
-	Target    string    `json:"target"` // the email address, or the webhook's URL
+	Kind      string    `json:"kind"`             // email or webhook
+	Target    string    `json:"target"`           // the email address, or the webhook's URL
+	Secret    string    `json:"secret,omitempty"` // a webhook's, which signs it, for its receiver to check
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -72,13 +73,13 @@ func (e Unavailable) As(target any) bool {
 
 // Problem says what each ChannelError looks like over HTTP.
 //
-//line channels.ego:36
+//line channels.ego:37
 func Problem(err error) httpkernel.Problem {
 	var v httpkernel.Problem
 	if err == nil {
 		v = httpkernel.Problem{}
 	} else if e, ok := errors.AsType[NotFound](err); ok {
-//line channels.ego:39
+//line channels.ego:40
 		v = httpkernel.Problem{Status: http.StatusNotFound, Detail: e.Error()}
 	} else if _, ok := errors.AsType[Unavailable](err); ok {
 		v = httpkernel.Problem{Status: http.StatusServiceUnavailable}
@@ -90,5 +91,5 @@ func Problem(err error) httpkernel.Problem {
 
 // Problems is what the kernel registers to answer ChannelErrors.
 //
-//line channels.ego:45
+//line channels.ego:46
 var Problems = httpkernel.Map[ChannelError](Problem)

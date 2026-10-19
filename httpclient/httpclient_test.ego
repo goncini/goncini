@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -198,4 +199,17 @@ func TestHandlerTimeout(t *testing.T) {
 		}
 		time.Sleep(time.Minute)
 	})
+}
+
+// TestPublic checks that a client of Public doesn't connect to the
+// loopback.
+func TestPublic(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc((w http.ResponseWriter, r *http.Request) => {}))
+	defer srv.Close()
+	c := httpclient.New(httpclient.Config{Retries: -1})
+	c.Transport = httpclient.Public()
+	req := must http.NewRequest(http.MethodGet, srv.URL, nil)
+	if _, err := c.Do(req); err == nil || !strings.Contains(err.Error(), "127.0.0.1 isn't a public address") {
+		t.Errorf("connected to the loopback: %v", err)
+	}
 }

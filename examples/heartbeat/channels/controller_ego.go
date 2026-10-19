@@ -14,6 +14,7 @@ import (
 	"github.com/goncini/goncini/routing"
 	"github.com/goncini/goncini/security"
 	"github.com/goncini/goncini/uid"
+	"github.com/goncini/goncini/webhook"
 
 	"github.com/goncini/goncini/examples/heartbeat/projects"
 
@@ -22,7 +23,7 @@ import (
 
 // Channels serves the channels of the authenticated project.
 //
-//line controller.ego:18
+//line controller.ego:19
 type Channels struct {
 	store *Store
 	now   func() time.Time
@@ -49,7 +50,7 @@ type ListInput struct {
 func (c *Channels) List(ctx context.Context, in ListInput) (_ listing.Page[Channel], err error) {
 	ctx, span := trace.Start(ctx, "channels.Channels.List")
 	defer trace.End(span, &err)
-//line controller.ego:42
+//line controller.ego:43
 	list, count, err := c.store.List(ctx, projects.Current(ctx).ID, in.Limit, in.Offset)
 	if err != nil {
 		if _, ok := errors.AsType[ChannelError](err); ok {
@@ -57,7 +58,7 @@ func (c *Channels) List(ctx context.Context, in ListInput) (_ listing.Page[Chann
 		}
 		return listing.Page[Channel]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:43
+//line controller.ego:44
 	return listing.Page[Channel]{Items: list, Total: count, Window: in.Window}, nil
 }
 
@@ -69,7 +70,7 @@ type IDInput struct {
 func (c *Channels) Show(ctx context.Context, in IDInput) (_ Channel, err error) {
 	ctx, span := trace.Start(ctx, "channels.Channels.Show")
 	defer trace.End(span, &err)
-//line controller.ego:52
+//line controller.ego:53
 	ch, ok, err := c.store.Get(ctx, projects.Current(ctx).ID, in.ID)
 	if err != nil {
 		if _, ok := errors.AsType[ChannelError](err); ok {
@@ -77,7 +78,7 @@ func (c *Channels) Show(ctx context.Context, in IDInput) (_ Channel, err error) 
 		}
 		return Channel{}, Unavailable{Cause: err}
 	}
-//line controller.ego:53
+//line controller.ego:54
 	if !ok {
 		return Channel{}, NotFound{ID: in.ID}
 	}
@@ -107,19 +108,23 @@ func (in *CreateInput) Validate() error {
 	return nil
 }
 
-// Create adds a channel, which the project's next flips alert.
+// Create adds a channel, which the project's next flips alert. A webhook
+// channel gets a secret, which signs its webhooks.
 func (c *Channels) Create(ctx context.Context, in CreateInput) (_ httpkernel.Created[Channel], err error) {
 	ctx, span := trace.Start(ctx, "channels.Channels.Create")
 	defer trace.End(span, &err)
-//line controller.ego:84
+//line controller.ego:86
 	ch := Channel{ID: uid.NewV7(), ProjectID: projects.Current(ctx).ID, Kind: in.Body.Kind, Target: in.Body.Target, CreatedAt: c.now().UTC()}
+	if ch.Kind == Webhook {
+		ch.Secret = webhook.NewSecret()
+	}
 	if err := c.store.Add(ctx, ch); err != nil {
 		if _, ok := errors.AsType[ChannelError](err); ok {
 			return httpkernel.Created[Channel]{}, err
 		}
 		return httpkernel.Created[Channel]{}, Unavailable{Cause: err}
 	}
-//line controller.ego:86
+//line controller.ego:91
 	return httpkernel.Created[Channel]{Body: ch}, nil
 }
 
@@ -127,7 +132,7 @@ func (c *Channels) Create(ctx context.Context, in CreateInput) (_ httpkernel.Cre
 func (c *Channels) Delete(ctx context.Context, in IDInput) (_ httpkernel.NoContent, err error) {
 	ctx, span := trace.Start(ctx, "channels.Channels.Delete")
 	defer trace.End(span, &err)
-//line controller.ego:91
+//line controller.ego:96
 	deleted, err := c.store.Delete(ctx, projects.Current(ctx).ID, in.ID)
 	if err != nil {
 		if _, ok := errors.AsType[ChannelError](err); ok {
@@ -135,7 +140,7 @@ func (c *Channels) Delete(ctx context.Context, in IDInput) (_ httpkernel.NoConte
 		}
 		return httpkernel.NoContent{}, Unavailable{Cause: err}
 	}
-//line controller.ego:92
+//line controller.ego:97
 	if !deleted {
 		return httpkernel.NoContent{}, NotFound{ID: in.ID}
 	}

@@ -10,6 +10,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/effect-go/effect-go/schedule"
+
 	"github.com/goncini/goncini/console"
 	"github.com/goncini/goncini/messenger"
 )
@@ -105,6 +107,30 @@ func TestRetriesAndFailures(t *testing.T) {
 		list := must failed.List(ctx)
 		if len(list) != 1 || list[0].Attempts != 4 || list[0].Error != "the mail server is down" {
 			t.Errorf("failed %+v", list)
+		}
+	})
+}
+
+// TestRetryOfAType checks that the messages of a type with a schedule of
+// its own are retried on it.
+func TestRetryOfAType(t *testing.T) {
+	synctest.Test(t, (t *testing.T) => {
+		b, _, failed := newBus()
+		start := time.Now()
+		var tries []time.Duration
+		messenger.Handle(b, func(ctx context.Context, m welcome) error {
+			tries = append(tries, time.Since(start))
+			return errors.New("the receiver is down")
+		})
+		messenger.Route[welcome](b, "async")
+		messenger.Retry[welcome](b, schedule.Max(schedule.Spaced(time.Hour), schedule.Recurs(1)))
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+		defer cancel()
+		must messenger.Dispatch(ctx, b, welcome{"ann"})
+		must worker(b, 0).Run(ctx)
+		list := must failed.List(ctx)
+		if len(tries) != 2 || tries[1] < time.Hour || tries[1] > time.Hour+2*time.Second || len(list) != 1 {
+			t.Errorf("tries at %v, failed %v", tries, list)
 		}
 	})
 }

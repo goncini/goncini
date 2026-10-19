@@ -7,6 +7,10 @@
 //	t.Setenv("MAILER_DSN", smtp.DSN())
 //	… // the app sends an email
 //	msg := smtp.Messages()[0]
+//
+// The mailer closes its connection after each email: an app in a
+// testing/synctest bubble, whose time moves only while no goroutine waits
+// on the network, can sleep, if the server is made outside the bubble.
 package mailertest
 
 import (
@@ -20,7 +24,7 @@ import (
 
 // Message is an email the server received.
 //
-//line mailertest.ego:20
+//line mailertest.ego:24
 type Message struct {
 	From string
 	To   []string
@@ -45,12 +49,12 @@ func NewServer(t testing.TB) *Server {
 	s.wg.Go(s.accept)
 	t.Cleanup(func() {
 
-//line mailertest.ego:43
+//line mailertest.ego:47
 		ln.Close()
 		s.wg.Wait()
 
 	})
-//line mailertest.ego:46
+//line mailertest.ego:50
 	return s
 }
 
@@ -81,10 +85,10 @@ func (s *Server) serve(conn net.Conn) {
 	defer conn.Close()
 	r := textproto.NewReader(bufio.NewReader(conn))
 	reply := func(line string) {
-//line mailertest.ego:75
+//line mailertest.ego:79
 		conn.Write([]byte(line + "\r\n"))
 	}
-//line mailertest.ego:76
+//line mailertest.ego:80
 	reply("220 mailertest ready")
 	var msg Message
 	for {

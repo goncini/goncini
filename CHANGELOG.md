@@ -53,6 +53,27 @@ new` and the makers.
   authenticated the request, which a verifier records with
   `security.SetClaims`, as oidc's does: `Load` reads them to create the
   user of a first request.
+- **webhook**, a new package, sends and receives webhooks, as Symfony's
+  Webhook component does. `Sender.Send` queues a webhook, which a worker
+  posts signed as the Standard Webhooks specification says, retried on a
+  schedule of its own, 10 times over about 8 hours, to public addresses
+  only. `Verify` is middleware that checks the signatures of received
+  webhooks, `Standard`, GitHub's or Stripe's, within 5 minutes of their
+  timestamp, or answers 401. `webhooktest.NewReceiver(t)` is a receiver
+  for tests.
+- **httpclient:** `Public()` is a transport that connects to public
+  addresses only, whatever a host resolves to: not to the loopback,
+  private, link-local or reserved ones, nor the IPv6 addresses that hold
+  one, so that the URLs that users give can't reach the app's network.
+- **messenger:** `Retry[M](b, schedule)` retries the messages of a type on
+  a schedule of their own.
+- **httpkernel:** `ReadBody(w, r)` reads a request's body up to the
+  kernel's `BodyLimit`, for middleware.
+- **Tests in fake time:** the servers of `mailertest`, `webhooktest` and
+  `oidctest`, made outside a synctest bubble, let its time move: heartbeat's
+  alerts test, which waits for retries, runs in it again.
+- **examples/heartbeat:** a webhook channel has a secret, which signs its
+  alerts, sent with `webhook.Sender`.
 - **redis**, a new module, keeps messages and locks in Redis:
   `redis.Messenger` is a bus whose queues are in Redis, and `redis.Lock` a
   lock store, as the scheduler's, which share a `redis.Client` from a

@@ -117,6 +117,7 @@ type Bus struct {
 	mu       sync.RWMutex
 	handlers map[reflect.Type][]func(context.Context, any) error
 	routes   map[reflect.Type]string
+	retries  map[string]schedule.Schedule // by type name, those that aren't Retry
 	names    map[reflect.Type]string
 	types    map[string]reflect.Type
 }
@@ -171,7 +172,7 @@ func NewSQLTransports(pool *sql.DB, c Config) (Transports, error) {
 		}
 		ts[name] = v
 	}
-//line messenger.ego:166
+//line messenger.ego:167
 	return ts, nil
 }
 
@@ -205,7 +206,7 @@ func (c Config) TransportNames() []string {
 // Background runs a worker of the queues until ctx is done, if
 // Config.Consume says so: serve runs it beside the server.
 //
-//line messenger.ego:191
+//line messenger.ego:192
 func (b *Bus) Background(ctx context.Context) error {
 	if !b.Config.Consume {
 		return nil
@@ -234,17 +235,17 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 	if c.Retries == 0 {
 		retries = 3
 	} else {
-//line messenger.ego:215
+//line messenger.ego:216
 		retries = max(c.Retries, 0)
 	}
-//line messenger.ego:216
+//line messenger.ego:217
 	var delay time.Duration
 	if c.Delay == 0 {
 		delay = time.Second
 	} else {
 		delay = c.Delay
 	}
-//line messenger.ego:217
+//line messenger.ego:218
 	var v string
 	if c.Failed == "" {
 		v = "failed"
@@ -258,7 +259,7 @@ func NewBus(c Config, transports Transports, handlers []Handlers, logger *slog.L
 		Config:     c,
 		Logger:     logger,
 	}
-//line messenger.ego:224
+//line messenger.ego:225
 	for _, h := range handlers {
 		h.Handlers(b)
 	}
@@ -292,6 +293,20 @@ func Route[M any](b *Bus, transport string) {
 	b.routes[t] = transport
 }
 
+// Retry is the schedule of the retries of the messages of type M, instead
+// of the bus's Retry: longer for a webhook, whose receiver may be down for
+// hours.
+func Retry[M any](b *Bus, s schedule.Schedule) {
+	t := reflect.TypeFor[M]()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.register(t)
+	if b.retries == nil {
+		b.retries = map[string]schedule.Schedule{}
+	}
+	b.retries[b.names[t]] = s
+}
+
 // register names t, for transports: as Go writes it, with its package's
 // path.
 func (b *Bus) register(t reflect.Type) {
@@ -315,7 +330,7 @@ type Option func(*Message)
 // DelayStamp does.
 func Delay(d time.Duration) Option {
 	return func(m *Message) {
-//line messenger.ego:279
+//line messenger.ego:294
 		m.AvailableAt = m.AvailableAt.Add(d)
 	}
 }
@@ -323,7 +338,7 @@ func Delay(d time.Duration) Option {
 // Dispatch handles m now, if its type has no route, or sends it to its
 // transport.
 //
-//line messenger.ego:284
+//line messenger.ego:299
 func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
 	t := reflect.TypeFor[M]()
 	b.mu.RLock()
@@ -341,7 +356,7 @@ func Dispatch[M any](ctx context.Context, b *Bus, m M, opts ...Option) error {
 	if err != nil {
 		return err
 	}
-//line messenger.ego:298
+//line messenger.ego:313
 	msg := Message{ID: uid.NewV7().String(), Type: name, Body: body, AvailableAt: b.now()}
 	for _, o := range opts {
 		o(&msg)
@@ -362,7 +377,7 @@ func (b *Bus) handle(ctx context.Context, t reflect.Type, m any) error {
 			return err
 		}
 	}
-//line messenger.ego:316
+//line messenger.ego:331
 	return nil
 }
 
@@ -394,7 +409,13 @@ func (b *Bus) retry(msg Message, err error) (time.Time, bool) {
 	if _, ok := errors.AsType[NoHandler](err); ok {
 		return time.Time{}, false // trying again won't help
 	}
-	wait, ok := b.Retry.Next(msg.Attempts, err)
+	b.mu.RLock()
+	s, own := b.retries[msg.Type]
+	b.mu.RUnlock()
+	if !own {
+		s = b.Retry
+	}
+	wait, ok := s.Next(msg.Attempts, err)
 	return b.now().Add(wait), ok
 }
 

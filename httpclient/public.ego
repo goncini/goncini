@@ -1,0 +1,66 @@
+package httpclient
+
+import (
+	"fmt"
+	"net"
+	"net/http"
+	"net/netip"
+	"syscall"
+	"time"
+)
+
+// Public returns a transport that connects to public addresses only,
+// whatever a URL's host resolves to: not to the loopback, private,
+// link-local or reserved ones, such as a cloud's metadata service at
+// 169.254.169.254. A client of URLs that users give, such as their
+// webhooks', uses it, so that they can't make the app call its own
+// network. It uses no proxy, which would be such an address.
+func Public() http.RoundTripper {
+	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second, Control: public}
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.Proxy, t.DialContext = nil, d.DialContext
+	return t
+}
+
+// public refuses an address that isn't public: the dialer checks the one
+// it connects to, after the host's name is resolved, so that a name that
+// resolves to another address the next time can't pass.
+func public(network, address string, _ syscall.RawConn) error {
+	ap := check netip.ParseAddrPort(address) ""
+	if !isPublic(ap.Addr()) {
+		return fmt.Errorf("httpclient: %s isn't a public address", ap.Addr())
+	}
+	return nil
+}
+
+// reserved are the ranges of addresses that aren't public, but for those
+// that netip's methods tell.
+var reserved = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),     // this network
+	netip.MustParsePrefix("100.64.0.0/10"), // carrier-grade NAT, as a cloud's network
+	netip.MustParsePrefix("192.0.0.0/24"),  // the IETF's
+	netip.MustParsePrefix("198.18.0.0/15"), // benchmarks
+	netip.MustParsePrefix("240.0.0.0/4"),   // reserved, and broadcast
+}
+
+// Ranges of IPv6 addresses that hold an IPv4 one, which must be public.
+var (
+	nat64  = netip.MustParsePrefix("64:ff9b::/96")
+	sixTo4 = netip.MustParsePrefix("2002::/16")
+)
+
+func isPublic(a netip.Addr) bool {
+	a = a.Unmap()
+	switch b := a.As16(); {
+	case nat64.Contains(a):
+		return isPublic(netip.AddrFrom4([4]byte(b[12:])))
+	case sixTo4.Contains(a):
+		return isPublic(netip.AddrFrom4([4]byte(b[2:6])))
+	}
+	for _, p := range reserved {
+		if p.Contains(a) {
+			return false
+		}
+	}
+	return a.IsGlobalUnicast() && !a.IsPrivate()
+}
