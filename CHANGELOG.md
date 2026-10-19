@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 (2026-10-19)
+
+Every module is tagged v0.3.0, the new `redis` module included. To
+upgrade an app, require `github.com/goncini/goncini v0.3.0` and its
+adapters at v0.3.0, then run `go tool goncini tidy` and `go tool goncini
+generate`.
 
 What [dogfooding](docs/dogfood.md) a new app, `examples/heartbeat`, found.
 It is a cron-job monitoring API, after Healthchecks.io, made with `goncini
