@@ -56,8 +56,8 @@ func TestNew(t *testing.T) {
 		t.Errorf("generate with a module missing: %v", err)
 	}
 	after := must os.ReadFile(filepath.Join(dir, "app", FileName))
-	if string(after) != string(wiring) {
-		t.Error("a failed generate changed the wiring")
+	if string(after) != string(wiring) || !stale(dir) {
+		t.Error("a failed generate changed the wiring, or left the app as if generated")
 	}
 	must tidy(dir)
 	gomod := must os.ReadFile(filepath.Join(dir, "go.mod"))

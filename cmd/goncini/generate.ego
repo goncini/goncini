@@ -69,11 +69,23 @@ func generate(root string, checkOnly bool) (err error) {
 	}
 	// A stub, until the app's packages are loaded: the file that a former
 	// version of goncini, or a former run, wrote may not compile. If
-	// generating fails, the file goes back as it was.
+	// generating fails, the file goes back as it was, with its time: the
+	// .ego files changed since stay newer, and the app stale, even those
+	// saved while it failed.
 	if rerr == nil {
+		info, serr := os.Stat(path)
 		defer func() {
 			if err != nil {
 				os.WriteFile(path, old, 0o644)
+				if serr == nil {
+					os.Chtimes(path, info.ModTime(), info.ModTime())
+				}
+			}
+		}()
+	} else {
+		defer func() {
+			if err != nil {
+				os.Remove(path) // the stub: the app is stale without it
 			}
 		}()
 	}

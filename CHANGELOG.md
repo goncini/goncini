@@ -59,6 +59,10 @@ generate`.
   authenticated the request, which a verifier records with
   `security.SetClaims`, as oidc's does: `Load` reads them to create the
   user of a first request.
+- **goncini generate**, when it fails, puts the wiring back with its
+  time as well as its content, so that the app stays stale: a `.ego` file
+  saved while it failed, or just after, was taken as generated, and `goncini
+  serve` ran the app as it was before.
 - **mailer:** API transports, for providers' HTTP APIs, as Symfony's
   bridges are: `postmark+api://TOKEN@default` (`?message_stream=`),
   `sendgrid+api://KEY@default` and `mailgun+api://KEY:DOMAIN@default`

@@ -89,8 +89,8 @@ func TestNew(t *testing.T) {
 		panic(err)
 	}
 //line new_test.ego:59
-	if string(after) != string(wiring) {
-		t.Error("a failed generate changed the wiring")
+	if string(after) != string(wiring) || !stale(dir) {
+		t.Error("a failed generate changed the wiring, or left the app as if generated")
 	}
 	if err := tidy(dir); err != nil {
 		panic(err)
