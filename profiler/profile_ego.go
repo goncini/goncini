@@ -104,6 +104,24 @@ func build(root sdktrace.ReadOnlySpan, spans []sdktrace.ReadOnlySpan) Profile {
 	return p
 }
 
+// walk calls f with each span of p, depth first, the root's depth 0.
+func (p Profile) walk(f func(s Span, depth int)) {
+	children := map[string][]Span{}
+	for _, s := range p.Spans {
+		children[s.Parent] = append(children[s.Parent], s)
+	}
+	var visit func(s Span, depth int)
+	visit = func(s Span, depth int) {
+		f(s, depth)
+		for _, c := range children[s.ID] {
+			visit(c, depth+1)
+		}
+	}
+	for _, root := range children[""] {
+		visit(root, 0)
+	}
+}
+
 // attributes returns a span's attributes, as strings.
 func attributes(s sdktrace.ReadOnlySpan) map[string]string {
 	if len(s.Attributes()) == 0 {

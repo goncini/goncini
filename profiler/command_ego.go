@@ -86,13 +86,10 @@ func describe(p Profile) string {
 // printProfile writes p's spans as a tree, with their errors and log records.
 func printProfile(out io.Writer, p Profile) {
 	fmt.Fprintf(out, "%s  %d  %s  %s\n", describe(p), p.Status, micros(p.Micros), p.Time.Local().Format(time.DateTime))
-	children := map[string][]Span{}
-	for _, s := range p.Spans {
-		children[s.Parent] = append(children[s.Parent], s)
-	}
-	var walk func(s Span, depth int)
-	walk = func(s Span, depth int) {
-		indent := strings.Repeat("  ", depth)
+	p.walk(func(s Span, depth int) {
+
+//line command.ego:78
+		indent := strings.Repeat("  ", depth+1)
 		fmt.Fprintf(out, "%s%s  +%s  %s", indent, s.Name, micros(s.Start), micros(s.Micros))
 		if s.Error != "" {
 			fmt.Fprintf(out, "  error: %s", s.Error)
@@ -106,16 +103,13 @@ func printProfile(out io.Writer, p Profile) {
 				fmt.Fprintf(out, "%s  [%s] %s\n", indent, e.Attributes["log.severity"], e.Attributes["log.message"])
 			}
 		}
-		for _, c := range children[s.ID] {
-			walk(c, depth+1)
-		}
-	}
-	for _, root := range children[""] {
-		walk(root, 1)
-	}
+
+	})
 }
 
 // micros writes a duration in microseconds, rounded for reading.
+//
+//line command.ego:96
 func micros(us int64) string {
 	d := time.Duration(us) * time.Microsecond
 	if d >= time.Millisecond {

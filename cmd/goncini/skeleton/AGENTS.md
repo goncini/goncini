@@ -446,7 +446,9 @@ changes.
 
 With `profiler.Layer` in `Services` and `c.Profiler.Enabled = true` in
 `config/dev.ego`, each request's spans, queries and logs are kept:
-`/_profiler` lists them, and `go tool goncini debug:requests [id]` prints them.
+`/_profiler` lists them, in a browser as pages with each request's
+timeline, queries and logs, and `go tool goncini debug:requests [id]`
+prints them.
 
 ## Wiring
 

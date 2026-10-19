@@ -97,6 +97,10 @@
     notification once. The email channel is one, rather than the channel
     named `email` being special.
 - **httpclient:** `Send` posts a `url.Values` body as a URL-encoded form.
+- **profiler:** `/_profiler` and `/_profiler/{id}` are pages in a browser,
+  which asks for HTML: the last requests, with their statuses, queries and
+  durations, and a request's timeline of spans, whose details unfold, its
+  queries and its logs. Other clients, and `?format=json`, still get JSON.
 
 ## v0.3.0 (2026-10-19)
 

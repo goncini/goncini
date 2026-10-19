@@ -6,8 +6,10 @@
 // records, which goncini adds to their spans.
 //
 // In dev, with Config.Enabled, each request's profile is kept in
-// var/profiler: /_profiler lists the last ones as JSON, /_profiler/{id}
-// shows one, and debug:requests prints them from another terminal. The
+// var/profiler: /_profiler lists the last ones, /_profiler/{id} shows one,
+// with a timeline of its spans, its queries and its logs, as pages in a
+// browser and as JSON otherwise, and debug:requests prints them from
+// another terminal. The
 // profiles hold the requests' queries and logs, and /_profiler has no
 // authentication: enable it in dev only.
 //
@@ -34,7 +36,7 @@ import (
 
 // Config configures the profiler.
 //
-//line profiler.ego:34
+//line profiler.ego:36
 type Config struct {
 	// Enabled profiles the app's requests: for development only, as
 	// profiles show the requests' data.

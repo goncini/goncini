@@ -10,8 +10,9 @@ import (
 )
 
 // Routes serves the profiles, when the profiler is enabled: the last ones
-// at Config.Path (?limit=50), and one at Config.Path/{id}. They are plain
-// handlers, which the API's OpenAPI document leaves out.
+// at Config.Path (?limit=50), and one at Config.Path/{id}, as pages for
+// browsers, and as JSON for the others, or with ?format=json. They are
+// plain handlers, which the API's OpenAPI document leaves out.
 func (p *Profiler) Routes(r *routing.Router) {
 	if !p.Config.Enabled {
 		return
@@ -43,6 +44,14 @@ func (p *Profiler) list(w http.ResponseWriter, r *http.Request) {
 		httpkernel.WriteError(w, r, err)
 		return
 	}
+	if wantsHTML(r) {
+		pg := page{Path: p.Config.Path, Profiles: make([]view, len(profiles))}
+		for i, pr := range profiles {
+			pg.Profiles[i] = viewOf(pr)
+		}
+		render(w, pg)
+		return
+	}
 	out := make([]summary, len(profiles))
 	for i, pr := range profiles {
 		out[i] = summary{pr.ID, pr.Time.Format("2006-01-02T15:04:05.000Z07:00"), pr.Micros, pr.Name, pr.Method, pr.Path, pr.Route, pr.Status, p.Config.Path + "/" + pr.ID}
@@ -57,6 +66,8 @@ func (p *Profiler) show(w http.ResponseWriter, r *http.Request) {
 		httpkernel.WriteError(w, r, err)
 	case !ok:
 		httpkernel.WriteError(w, r, noProfile{})
+	case wantsHTML(r):
+		render(w, detail(p.Config.Path, pr))
 	default:
 		write(w, pr)
 	}

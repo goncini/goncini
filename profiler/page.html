@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if .Profile}}{{.Profile.Describe}} · {{end}}Profiler</title>
+<style>
+:root {
+  --bg: #ffffff; --fg: #1d1f23; --muted: #6a6f78; --line: #e3e5e8; --row: #f6f7f9;
+  --server: #3b6fd8; --client: #8a55d0; --query: #1f9a6b; --internal: #8a909a; --error: #d23f3f; --warn: #b7791f;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171a; --fg: #e4e6ea; --muted: #959ba5; --line: #2b2f35; --row: #1c1f23;
+    --server: #6d97ee; --client: #ad84ea; --query: #46c294; --internal: #6f7680; --error: #f06a6a; --warn: #e0a84a;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; }
+a { color: var(--server); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1 { font-size: 18px; margin: 0 0 4px; word-break: break-all; }
+h2 { font-size: 15px; margin: 28px 0 8px; }
+.meta { color: var(--muted); margin: 0 0 4px; }
+.meta span + span::before { content: " · "; }
+code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+pre { margin: 4px 0 0; padding: 8px 10px; background: var(--row); border-radius: 6px; white-space: pre-wrap; word-break: break-word; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-weight: 600; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wrap { overflow-x: auto; }
+.status { font-weight: 600; }
+.s2 { color: var(--query); } .s3 { color: var(--muted); } .s4 { color: var(--warn); } .s5 { color: var(--error); }
+.empty { color: var(--muted); padding: 24px 0; }
+.spans details { border-bottom: 1px solid var(--line); }
+.spans summary { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 80px; gap: 12px; align-items: center; padding: 5px 4px; cursor: pointer; list-style: none; }
+.spans summary::-webkit-details-marker { display: none; }
+.spans summary:hover { background: var(--row); }
+.name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track { position: relative; height: 10px; }
+.bar { position: absolute; top: 0; height: 10px; min-width: 2px; border-radius: 2px; background: var(--internal); }
+.bar.server { background: var(--server); } .bar.client { background: var(--client); } .bar.query { background: var(--query); } .bar.error { background: var(--error); }
+.err { color: var(--error); }
+.detail { padding: 4px 4px 12px; }
+.detail table td:first-child { color: var(--muted); width: 30%; word-break: break-all; }
+.detail table td { word-break: break-word; }
+.sev { font-weight: 600; } .sev-WARN { color: var(--warn); } .sev-ERROR { color: var(--error); }
+@media (max-width: 640px) {
+  .spans summary { grid-template-columns: minmax(0, 1fr) 70px; }
+  .track { display: none; }
+}
+</style>
+</head>
+<body>
+<main>
+{{if .Profile}}{{with .Profile}}
+<p class="meta"><a href="{{$.Path}}">← All requests</a></p>
+<h1>{{.Describe}}</h1>
+<p class="meta">{{if .Status}}<span class="status s{{.StatusClass}}">{{.Status}}</span>{{end}}<span>{{micros .Micros}}</span><span>{{.Time.Local.Format "2006-01-02 15:04:05.000"}}</span><span class="mono">trace {{.Trace}}</span><span><a href="?format=json">JSON</a></span></p>
+{{end}}
+<h2>Timeline</h2>
+<div class="spans">
+{{range .Rows}}<details>
+<summary><span class="name" style="padding-left: {{.Indent}}px">{{.Name}}{{if .Error}} <span class="err">✕</span>{{end}}</span><span class="track"><span class="bar {{.Class}}" style="left: {{.Left}}%; width: {{.Width}}%"></span></span><span class="num mono">{{micros .Micros}}</span></summary>
+<div class="detail">
+{{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+{{if .Query}}<pre>{{.Query}}</pre>{{end}}
+<table>
+<tr><td>kind</td><td class="mono">{{.Kind}}</td></tr>
+<tr><td>start</td><td class="mono">+{{micros .Start}}</td></tr>
+{{range $k, $v := .Attributes}}<tr><td class="mono">{{$k}}</td><td class="mono">{{$v}}</td></tr>
+{{end}}</table>
+</div>
+</details>
+{{end}}</div>
+
+<h2>Queries{{if .Queries}} · {{len .Queries}} in {{micros .QueryMicros}}{{end}}</h2>
+{{if .Queries}}<div class="wrap"><table>
+<tr><th>Query</th><th class="num">At</th><th class="num">Took</th></tr>
+{{range .Queries}}<tr><td><pre>{{.Query}}</pre>{{if .Error}}<div class="err">{{.Error}}</div>{{end}}</td><td class="num mono">+{{micros .Start}}</td><td class="num mono">{{micros .Micros}}</td></tr>
+{{end}}</table></div>{{else}}<p class="empty">No queries.</p>{{end}}
+
+<h2>Logs{{if .Logs}} · {{len .Logs}}{{end}}</h2>
+{{if .Logs}}<div class="wrap"><table>
+<tr><th>Level</th><th>Message</th><th class="num">At</th></tr>
+{{range .Logs}}<tr><td class="sev sev-{{.Severity}}">{{.Severity}}</td><td>{{.Message}}{{range $k, $v := .Attributes}}<div class="meta mono">{{$k}}={{$v}}</div>{{end}}</td><td class="num mono">+{{micros .At}}</td></tr>
+{{end}}</table></div>{{else}}<p class="empty">No logs.</p>{{end}}
+
+{{else}}
+<h1>Requests</h1>
+<p class="meta">The last {{len .Profiles}} profiled · <a href="?format=json">JSON</a></p>
+{{if .Profiles}}<div class="wrap"><table>
+<tr><th>Time</th><th>Request</th><th class="num">Status</th><th class="num">Queries</th><th class="num">Took</th></tr>
+{{range .Profiles}}<tr><td class="mono">{{.Time.Local.Format "15:04:05.000"}}</td><td><a href="{{$.Path}}/{{.ID}}">{{.Describe}}</a></td><td class="num status s{{.StatusClass}}">{{if .Status}}{{.Status}}{{end}}</td><td class="num">{{.Queries}}</td><td class="num mono">{{micros .Micros}}</td></tr>
+{{end}}</table></div>{{else}}<p class="empty">No profiles yet: make a request to the app.</p>{{end}}
+{{end}}
+</main>
+</body>
+</html>

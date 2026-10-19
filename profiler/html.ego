@@ -1,0 +1,119 @@
+package profiler
+
+import (
+	"bytes"
+	"embed"
+	"html/template"
+	"maps"
+	"net/http"
+	"strings"
+)
+
+//go:embed page.html
+var files embed.FS
+
+// pageTemplate is the page of the profiles, and of one.
+var pageTemplate = template.Must(template.New("page.html").Funcs(template.FuncMap{"micros": micros}).ParseFS(files, "page.html"))
+
+// page is what pageTemplate shows: the list of Profiles, or a Profile.
+type page struct {
+	Path     string
+	Profiles []view
+	Profile  *view
+	// Rows are the profile's spans as a tree, depth first.
+	Rows        []row
+	Queries     []row
+	QueryMicros int64
+	Logs        []logLine
+}
+
+// view is a profile, with what the page shows of it.
+type view struct {
+	Profile
+	Describe    string
+	StatusClass int // 2 for a 2xx
+	Queries     int
+}
+
+// row is a span in the timeline.
+type row struct {
+	Span
+	Indent int // in pixels
+	// Left and Width place its bar, in percent of the profile's time.
+	Left, Width float64
+	Class       string // its bar's
+	Query       string
+	// Attributes are the span's, but its query.
+	Attributes map[string]string
+}
+
+// logLine is a log record of a span.
+type logLine struct {
+	At                int64
+	Severity, Message string
+	Attributes        map[string]string
+}
+
+// wantsHTML reports whether r is a browser's, which asks for HTML, unless
+// ?format=json says otherwise.
+func wantsHTML(r *http.Request) bool {
+	return r.URL.Query().Get("format") != "json" && strings.Contains(r.Header.Get("Accept"), "text/html")
+}
+
+func viewOf(p Profile) view {
+	v := view{Profile: p, Describe: describe(p), StatusClass: p.Status / 100}
+	for _, s := range p.Spans {
+		if s.Attributes["db.query.text"] != "" {
+			v.Queries++
+		}
+	}
+	return v
+}
+
+// detail returns the page of p.
+func detail(path string, p Profile) page {
+	v := viewOf(p)
+	pg := page{Path: path, Profile: &v}
+	total := float64(max(p.Micros, 1))
+	p.walk((s Span, depth int) => {
+		r := row{Span: s, Indent: depth * 16, Left: float64(s.Start) / total * 100, Width: float64(s.Micros) / total * 100, Query: s.Attributes["db.query.text"], Attributes: maps.Clone(s.Attributes)}
+		delete(r.Attributes, "db.query.text")
+		r.Left = min(r.Left, 99.5)
+		r.Width = min(r.Width, 100-r.Left)
+		switch {
+		case s.Error != "":
+			r.Class = "error"
+		case r.Query != "":
+			r.Class = "query"
+		case s.Kind == "server":
+			r.Class = "server"
+		case s.Kind == "client":
+			r.Class = "client"
+		}
+		pg.Rows = append(pg.Rows, r)
+		if r.Query != "" {
+			pg.Queries = append(pg.Queries, r)
+			pg.QueryMicros += s.Micros
+		}
+		for _, e := range s.Events {
+			if e.Name != "log" {
+				continue
+			}
+			attrs := maps.Clone(e.Attributes)
+			delete(attrs, "log.severity")
+			delete(attrs, "log.message")
+			pg.Logs = append(pg.Logs, logLine{At: e.At, Severity: e.Attributes["log.severity"], Message: e.Attributes["log.message"], Attributes: attrs})
+		}
+	})
+	return pg
+}
+
+func render(w http.ResponseWriter, pg page) {
+	var b bytes.Buffer
+	if err := pageTemplate.Execute(&b, pg); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(b.Bytes())
+}

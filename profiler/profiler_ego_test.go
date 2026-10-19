@@ -143,3 +143,36 @@ func TestRoutes(t *testing.T) {
 		t.Error("a disabled profiler wants spans, or serves routes")
 	}
 }
+
+// TestPages checks that a browser gets the profiles as pages, escaped, and
+// JSON when it asks for it.
+func TestPages(t *testing.T) {
+	p := newProfiler(profiler.Config{Enabled: true, Dir: t.TempDir()})
+	request(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(p)).Tracer("test"), "/articles/<b>")
+	listed, err := p.Store.List(1)
+	if err != nil {
+		panic(err)
+	}
+//line profiler_test.ego:128
+	id := listed[0].ID
+	k := &httpkernel.Kernel{Handler: routing.New(p)}
+	get := func(path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Header.Set("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
+		k.ServeHTTP(w, r)
+		return w
+	}
+	for path, wants := range map[string][]string{
+		"/_profiler":                        {"text/html", `href="/_profiler/` + id + `"`, "GET /articles/&lt;b&gt; (/articles)", `class="num status s5">503`},
+		"/_profiler/" + id:                  {"text/html", "<h2>Queries · 1 in", "SELECT * FROM articles", `class="bar error"`, "no such table", "sev-WARN", "slow"},
+		"/_profiler/" + id + "?format=json": {"application/json", `"db.query.text":"SELECT * FROM articles"`},
+	} {
+		w := get(path)
+		for _, want := range wants {
+			if !strings.Contains(w.Header().Get("Content-Type")+w.Body.String(), want) {
+				t.Errorf("%s: no %q in %d %s", path, want, w.Code, w.Body)
+			}
+		}
+	}
+}
