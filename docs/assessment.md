@@ -365,8 +365,8 @@ Form login, sessions, remember-me and CSRF stay out, as browser concerns.
 ### 4.7 Asked of effect-go
 
 Step 8 of the backlog needs effect-go's `layer`, whose resolver `ego
-generate` runs, as the user decided on 2026-10-19. Its maintainers' session
-wasn't running that day; these are the requests to give it.
+generate` runs, as the user decided on 2026-10-19. These requests were sent
+to its maintainers' session the same day, once it ran.
 
 1. **Decoration**, as Symfony's `#[AsDecorator]`: `layer.Decorate(NewCachedRepo)`,
    whose provider `func NewCachedRepo(inner articles.Repo, c *cache.Cache) articles.Repo`
