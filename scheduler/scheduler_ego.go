@@ -199,11 +199,8 @@ func (s *Scheduler) exclusive(ctx context.Context, t task) (bool, error) {
 	running := (&lock.Factory{Store: s.Locks}).New("scheduler:" + t.name)
 	var runErr error
 	held, err := running.Run(ctx, func(ctx context.Context) error {
-
-//line scheduler.ego:188
 		runErr = s.run(ctx, t)
 		return nil
-
 	})
 	if err != nil {
 		return false, err

@@ -57,8 +57,6 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 	}
 
 	t.Run("order and delays", func(t *testing.T) {
-
-//line transporttest.ego:56
 		tr, c := setup(t)
 		for _, m := range []messenger.Message{msg("later", c.now.Add(time.Hour)), msg("b", c.now.Add(-time.Second)), msg("a", c.now.Add(-time.Minute))} {
 			if err := tr.Send(ctx, m); err != nil {
@@ -75,13 +73,9 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 		b.Ack(ctx)
 		c.now = c.now.Add(time.Hour)
 		receive(t, tr, "later")
-
 	})
 
-//line transporttest.ego:74
 	t.Run("acknowledging", func(t *testing.T) {
-
-//line transporttest.ego:75
 		tr, c := setup(t)
 		tr.Send(ctx, msg("a", c.now))
 		lease := receive(t, tr, "a")
@@ -90,13 +84,9 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 		}
 		c.now = c.now.Add(time.Hour)
 		receive(t, tr, "") // gone for good
-
 	})
 
-//line transporttest.ego:85
 	t.Run("lost leases", func(t *testing.T) {
-
-//line transporttest.ego:86
 		tr, c := setup(t)
 		tr.Send(ctx, msg("a", c.now))
 		dead := receive(t, tr, "a")
@@ -121,13 +111,9 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 		if again.Message().Attempts != 0 {
 			t.Errorf("attempts %d", again.Message().Attempts)
 		}
-
 	})
 
-//line transporttest.ego:112
 	t.Run("sending again", func(t *testing.T) {
-
-//line transporttest.ego:113
 		tr, c := setup(t)
 		tr.Send(ctx, msg("a", c.now))
 		old := receive(t, tr, "a")
@@ -147,13 +133,9 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 		}
 		c.now = c.now.Add(time.Hour)
 		receive(t, tr, "")
-
 	})
 
-//line transporttest.ego:134
 	t.Run("retrying", func(t *testing.T) {
-
-//line transporttest.ego:135
 		tr, c := setup(t)
 		tr.Send(ctx, msg("a", c.now))
 		lease := receive(t, tr, "a")
@@ -168,13 +150,9 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 		if got.Attempts != 1 || got.Error != "the server is down" {
 			t.Errorf("retried %+v", got)
 		}
-
 	})
 
-//line transporttest.ego:151
 	t.Run("browsing", func(t *testing.T) {
-
-//line transporttest.ego:152
 		tr, c := setup(t)
 		b, ok := tr.(messenger.Browser)
 		if !ok {
@@ -196,6 +174,5 @@ func Run(t *testing.T, newTransport func(t *testing.T, now func() time.Time) mes
 		b.Remove(ctx, "a")
 		receive(t, tr, "b")
 		receive(t, tr, "")
-
 	})
 }

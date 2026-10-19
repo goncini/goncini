@@ -312,15 +312,11 @@ func writeHeader(b *bytes.Buffer, h textproto.MIMEHeader) {
 	order := []string{"From", "To", "Cc", "Reply-To", "Subject", "Date", "Message-Id", "Mime-Version", "Content-Type", "Content-Transfer-Encoding"}
 	written := map[string]bool{}
 	write := func(name string) {
-
-//line mime.ego:274
 		for _, v := range h[name] {
 			b.WriteString(fold(name + ": " + v))
 		}
 		written[name] = true
-
 	}
-//line mime.ego:279
 	for _, name := range order {
 		write(name)
 	}

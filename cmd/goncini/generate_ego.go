@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,7 +26,7 @@ import (
 
 // FileName is the file that goncini generate writes in the app's package.
 //
-//line generate.ego:25
+//line generate.ego:24
 const FileName = "autoconfigured_gen.go"
 
 const (
@@ -55,17 +54,17 @@ func generate(root string, checkOnly bool) (err error) {
 		if err2 != nil {
 			return err2
 		}
-//line generate.ego:49
+//line generate.ego:48
 		code, err3 := autoconfigure(root, services)
 		if err3 != nil {
 			return err3
 		}
-//line generate.ego:50
+//line generate.ego:49
 		old, err4 := os.ReadFile(path)
 		if err4 != nil {
 			return err4
 		}
-//line generate.ego:51
+//line generate.ego:50
 		if !bytes.Equal(old, code) {
 			return fmt.Errorf("%s isn't up to date: run goncini generate", path)
 		}
@@ -111,19 +110,19 @@ func generate(root string, checkOnly bool) (err error) {
 	if err5 := os.WriteFile(path, []byte(stub), 0o644); err5 != nil {
 		return err5
 	}
-//line generate.ego:94
+//line generate.ego:93
 	egoGenerate(root, "./...") // the app's layers can't be wired until Autoconfigured is
 	code, err6 := autoconfigure(root, nil)
 	if err6 != nil {
 		return err6
 	}
-//line generate.ego:96
+//line generate.ego:95
 	if err7 := os.WriteFile(path, code, 0o644); err7 != nil {
 		return err7
 	}
 	// The app's package first: its layers are what the others need to
 	// type-check, and their errors, such as a cycle, are the ones to show.
-//line generate.ego:99
+//line generate.ego:98
 	if out, err := egoGenerate(root, "./"+appDir); err != nil {
 		return egoError(err, out)
 	}
@@ -136,17 +135,17 @@ func generate(root string, checkOnly bool) (err error) {
 	if err8 != nil {
 		return err8
 	}
-//line generate.ego:108
+//line generate.ego:107
 	v, err9 := autoconfigure(root, services)
 	if err9 != nil {
 		return err9
 	}
 	code = v
-//line generate.ego:109
+//line generate.ego:108
 	if err10 := os.WriteFile(path, code, 0o644); err10 != nil {
 		return err10
 	}
-//line generate.ego:110
+//line generate.ego:109
 	return os.Chtimes(path, start, start)
 }
 
@@ -226,7 +225,7 @@ func autoconfigure(root string, services []service) ([]byte, error) {
 	if err2 != nil {
 		return nil, err2
 	}
-//line generate.ego:186
+//line generate.ego:185
 	var b strings.Builder
 	var names []string
 	for _, k := range kinds {
@@ -246,7 +245,14 @@ func autoconfigure(root string, services []service) ([]byte, error) {
 			for i, n := range s.needs {
 				needs[i] = strconv.Quote(n)
 			}
-			fmt.Fprintf(&b, "\t\t{Type: %q, Provider: %q, Needs: []string{%s}},\n", s.typ, s.provider, strings.Join(needs, ", "))
+			var lazy string
+			if s.lazy {
+				lazy = ", Lazy: true"
+			} else {
+				lazy = ""
+			}
+//line generate.ego:205
+			fmt.Fprintf(&b, "\t\t{Type: %q, Provider: %q, Needs: []string{%s}%s},\n", s.typ, s.provider, strings.Join(needs, ", "), lazy)
 		}
 		b.WriteString("\t}\n}\n\n")
 	}
@@ -319,14 +325,10 @@ func load(root string) (*app, error) {
 //line generate.ego:272
 	var errs []error
 	packages.Visit(pkgs, nil, func(p *egopackages.Package) {
-
-//line generate.ego:274
 		for _, e := range p.Errors {
 			errs = append(errs, errors.New(e.Error()))
 		}
-
 	})
-//line generate.ego:278
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
@@ -441,7 +443,8 @@ func ident(x ast.Expr) *ast.Ident {
 }
 
 // addProviders adds the results of the providers in args, written in the
-// app's package: functions, sets, and layer.Close of a function.
+// app's package: functions, sets, and layer.Close or layer.Decorate of a
+// function.
 func (a *app) addProviders(args []ast.Expr, seen map[types.Object]bool) {
 	a.addProvidersIn(a.pkg.TypesInfo, args, seen)
 }
@@ -451,7 +454,7 @@ func (a *app) addProviders(args []ast.Expr, seen map[types.Object]bool) {
 func (a *app) addProvidersIn(info *types.Info, args []ast.Expr, seen map[types.Object]bool) {
 	for _, x := range args {
 		if call, ok := x.(*ast.CallExpr); ok {
-			if isFunc(info, call.Fun, layerPath, "Close") || isFunc(info, call.Fun, layerPath, "Set") {
+			if isFunc(info, call.Fun, layerPath, "Close") || isFunc(info, call.Fun, layerPath, "Decorate") || isFunc(info, call.Fun, layerPath, "Set") {
 				a.addProvidersIn(info, call.Args, seen)
 			}
 			continue
@@ -476,9 +479,13 @@ func (a *app) addProvidersIn(info *types.Info, args []ast.Expr, seen map[types.O
 			seen[fn] = true
 		}
 		if sig, ok := info.TypeOf(x).(*types.Signature); ok && sig.Results().Len() > 0 {
-			a.provided = append(a.provided, sig.Results().At(0).Type())
+			// A type provided twice, as by a decorator, or a provider that
+			// overrides a set's, is one service.
+			if out := sig.Results().At(0).Type(); !a.provides(out) {
+				a.provided = append(a.provided, out)
+			}
 			for i := 0; i < sig.Params().Len(); i++ {
-				a.needed = append(a.needed, sig.Params().At(i).Type())
+				a.needed = append(a.needed, unlazy(sig.Params().At(i).Type()))
 			}
 		}
 	}
@@ -489,14 +496,10 @@ func (a *app) addProvidersIn(info *types.Info, args []ast.Expr, seen map[types.O
 func (a *app) varInit(v *types.Var) (ast.Expr, *types.Info) {
 	var pkg *packages.Package
 	packages.Visit(a.all, nil, func(p *egopackages.Package) {
-
-//line generate.ego:415
 		if p.Types == v.Pkg() {
 			pkg = p
 		}
-
 	})
-//line generate.ego:419
 	if pkg == nil {
 		return nil, nil
 	}
@@ -520,6 +523,14 @@ func (a *app) varInit(v *types.Var) (ast.Expr, *types.Info) {
 		}
 	}
 	return nil, nil
+}
+
+// unlazy returns T for a layer.Lazy[T], which needs a T; or else t.
+func unlazy(t types.Type) types.Type {
+	if n, ok := types.Unalias(t).(*types.Named); ok && isNamed(n, layerPath, "Lazy") {
+		return n.TypeArgs().At(0)
+	}
+	return t
 }
 
 func isNamed(t types.Type, path, name string) bool {
@@ -568,19 +579,15 @@ func (a *app) lookup(name string) types.Type {
 	} else {
 		path = gonciniPath + "/" + pkgName
 	}
-//line generate.ego:485
+//line generate.ego:498
 	var found types.Type
 	packages.Visit(a.all, nil, func(p *egopackages.Package) {
-
-//line generate.ego:487
 		if found == nil && p.PkgPath == path {
 			if obj := p.Types.Scope().Lookup(typeName); obj != nil {
 				found = obj.Type()
 			}
 		}
-
 	})
-//line generate.ego:493
 	return found
 }
 
@@ -588,25 +595,21 @@ func (a *app) lookup(name string) types.Type {
 func (a *app) collect(k kind, elem types.Type) (params []string, values string) {
 	var items []string
 	add := func(t types.Type, value string) {
-
-//line generate.ego:500
 		p := "p" + strconv.Itoa(len(params)+1)
 		params = append(params, p+" "+a.typeString(t))
 		items = append(items, strings.ReplaceAll(value, "$", p))
-
 	}
-//line generate.ego:504
 	switch k.name {
 	case "autoProblems":
 
-//line generate.ego:506
+//line generate.ego:519
 		for _, v := range a.mappers(elem) {
 			items = append(items, a.qualify(v.Pkg())+"."+v.Name())
 		}
 
 	case "autoChecks":
 
-//line generate.ego:511
+//line generate.ego:524
 		for _, t := range a.provided {
 			if m := pinger(t); m != "" {
 				add(t, "$."+m)
@@ -615,14 +618,10 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 
 	default:
 
-//line generate.ego:518
+//line generate.ego:531
 		iface, _ := elem.Underlying().(*types.Interface)
-		var added []types.Type
 		for _, t := range a.provided {
-			// A type provided twice, as by a provider that overrides a
-			// set's, is one service.
-			if iface != nil && types.Implements(t, iface) && !types.IsInterface(t) && !slices.ContainsFunc(added, func(u types.Type) bool { return types.Identical(t, u) }) {
-				added = append(added, t)
+			if iface != nil && types.Implements(t, iface) && !types.IsInterface(t) {
 				add(t, "$")
 			}
 		}
@@ -758,6 +757,7 @@ func (a *app) importBlock() string {
 type service struct {
 	typ, provider string
 	needs         []string
+	lazy          bool // built when first needed, rather than with the app
 }
 
 // describe returns the services that the app's injector named Build, or
@@ -772,7 +772,7 @@ func describe(root string) ([]service, error) {
 	if err != nil {
 		return nil, err
 	}
-//line generate.ego:671
+//line generate.ego:681
 	if len(pkgs) != 1 || len(pkgs[0].Errors) > 0 {
 		return nil, nil
 	}
@@ -796,31 +796,46 @@ func describe(root string) ([]service, error) {
 		if pkg == p.Types {
 			v = ""
 		} else {
-//line generate.ego:689
+//line generate.ego:699
 			v = pkg.Name()
 		}
 		return v
 	}
-//line generate.ego:690
+//line generate.ego:700
 	var services []service
-	for _, stmt := range build.Body.List {
-		assign, ok := stmt.(*ast.AssignStmt)
-		if !ok || len(assign.Rhs) != 1 {
-			continue
-		}
-		call, ok := assign.Rhs[0].(*ast.CallExpr)
-		lhs, ok2 := assign.Lhs[0].(*ast.Ident)
-		if !ok || !ok2 || p.TypesInfo.Defs[lhs] == nil {
-			continue
-		}
-		s := service{typ: types.TypeString(p.TypesInfo.Defs[lhs].Type(), name), provider: types.ExprString(call.Fun)}
-		for _, arg := range call.Args {
-			if t := p.TypesInfo.TypeOf(arg); t != nil {
-				s.needs = append(s.needs, types.TypeString(t, name))
+	var walk func(stmts []ast.Stmt, lazy bool)
+	walk = func(stmts []ast.Stmt, lazy bool) {
+		for _, stmt := range stmts {
+			assign, ok := stmt.(*ast.AssignStmt)
+			if !ok || len(assign.Rhs) != 1 {
+				continue
 			}
+			call, ok := assign.Rhs[0].(*ast.CallExpr)
+			lhs, ok2 := assign.Lhs[0].(*ast.Ident)
+			if !ok || !ok2 || p.TypesInfo.Defs[lhs] == nil {
+				continue
+			}
+			// A lazy service is built by the function that layer.NewLazy
+			// takes, which the services that need it call through Get.
+			if isFunc(p.TypesInfo, call.Fun, layerPath, "NewLazy") {
+				if lit, ok := call.Args[0].(*ast.FuncLit); ok {
+					walk(lit.Body.List, true)
+				}
+				continue
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Get" && isNamed(p.TypesInfo.TypeOf(sel.X), layerPath, "Lazy") {
+				continue
+			}
+			s := service{typ: types.TypeString(p.TypesInfo.Defs[lhs].Type(), name), provider: types.ExprString(call.Fun), lazy: lazy}
+			for _, arg := range call.Args {
+				if t := p.TypesInfo.TypeOf(arg); t != nil {
+					s.needs = append(s.needs, types.TypeString(t, name))
+				}
+			}
+			services = append(services, s)
 		}
-		services = append(services, s)
 	}
+	walk(build.Body.List, false)
 	return services, nil
 }
 

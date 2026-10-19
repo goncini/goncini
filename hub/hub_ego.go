@@ -126,14 +126,10 @@ func (h *Hub) listen(ctx context.Context) {
 	pause := time.Second
 	for ctx.Err() == nil {
 		err := h.transport.Listen(ctx, func(u Update) {
-
-//line hub.ego:124
 			if u.Origin != h.origin {
 				h.dispatch(u)
 			}
-
 		})
-//line hub.ego:128
 		if ctx.Err() != nil {
 			return
 		}
@@ -249,14 +245,10 @@ func Subscribe[T any](ctx context.Context, h *Hub, lastEventID string, topics ..
 		h.topic(name).subscribers[s] = true
 	}
 	context.AfterFunc(ctx, func() {
-
-//line hub.ego:234
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		h.unsubscribe(s)
-
 	})
-//line hub.ego:238
 	return ch
 }
 

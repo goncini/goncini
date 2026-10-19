@@ -125,8 +125,6 @@ func TestVerify(t *testing.T) {
 func TestSend(t *testing.T) {
 	hooks := webhooktest.NewReceiver(t) // outside the bubble, whose time it lets move
 	synctest.Test(t, func(t *testing.T) {
-
-//line webhook_test.ego:117
 		ctx := context.Background()
 		async, failed := &messenger.MemoryTransport{}, &messenger.MemoryTransport{}
 		d := webhook.NewDeliverer(webhook.Config{Private: true}, time.Now)
@@ -171,6 +169,5 @@ func TestSend(t *testing.T) {
 		if len(list) != 1 || !strings.Contains(list[0].Error, "isn't a public address") || len(hooks.Deliveries()) != 3 {
 			t.Errorf("failed %+v", list)
 		}
-
 	})
 }

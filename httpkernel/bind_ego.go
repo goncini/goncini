@@ -249,18 +249,14 @@ func parser(t reflect.Type) (func(string) (reflect.Value, error), bool) {
 		return parsing(t, "must be a duration, such as 1m30s", time.ParseDuration), true
 	case reflect.PointerTo(t).Implements(textUnmarshaler):
 		return func(s string) (reflect.Value, error) {
-
-//line bind.ego:223
 			v := reflect.New(t)
 			if err := v.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(s)); err != nil {
 				return reflect.Value{}, fmt.Errorf("is invalid: %w", err)
 			}
 //line bind.ego:225
 			return v.Elem(), nil
-
 		}, true
 	}
-//line bind.ego:228
 	switch t.Kind() {
 	case reflect.String:
 		return parsing(t, "", asString), true
@@ -297,20 +293,15 @@ func parser(t reflect.Type) (func(string) (reflect.Value, error), bool) {
 // error.
 func parsing[V any](t reflect.Type, detail string, parse func(string) (V, error)) func(string) (reflect.Value, error) {
 	return func(s string) (reflect.Value, error) {
-
-//line bind.ego:252
 		v, err := parse(s)
 		if err != nil {
 			return reflect.Value{}, fmt.Errorf("%v", detail)
 		}
 		return reflect.ValueOf(v).Convert(t), nil
-
 	}
 }
 
 // asString parses a string: any is fine.
-//
-//line bind.ego:261
 func asString(s string) (string, error) { return s, nil }
 
 // bind fills in from r: the parameters first, then the body, of at most

@@ -93,15 +93,11 @@ func TestClient(t *testing.T) {
 //line client_test.ego:68
 	ctx := t.Context()
 	status := func(what string, got, want int) {
-
-//line client_test.ego:70
 		if got != want {
 			t.Fatalf("%s: status %d, want %d", what, got, want)
 		}
-
 	}
 
-//line client_test.ego:75
 	type user = struct {
 		Email    openapi_types.Email `json:"email"`
 		Password string              `json:"password"`
@@ -308,10 +304,7 @@ func TestClient(t *testing.T) {
 // withToken authenticates a request with a token, as RealWorld does.
 func withToken(token string) client.RequestEditorFn {
 	return func(ctx context.Context, req *http.Request) error {
-
-//line client_test.ego:182
 		req.Header.Set("Authorization", "Token "+token)
 		return nil
-
 	}
 }

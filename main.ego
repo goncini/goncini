@@ -169,7 +169,8 @@ func writeServices(out io.Writer, services []Service) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "SERVICE\tPROVIDER\tNEEDS")
 	for _, s := range services {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", s.Type, s.Provider, strings.Join(s.Needs, ", "))
+		lazy := if s.Lazy { " (lazy)" } else { "" }
+		fmt.Fprintf(tw, "%s%s\t%s\t%s\n", s.Type, lazy, s.Provider, strings.Join(s.Needs, ", "))
 	}
 	return tw.Flush()
 }

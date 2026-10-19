@@ -69,15 +69,11 @@ func Boot[C, A any](t testing.TB, load func(*goncini.Env) C, build func(context.
 	select {
 	case app = <-built:
 		t.Cleanup(func() {
-
-//line webtest.ego:62
 			close(stop)
 			if err := <-done; err != nil {
 				t.Errorf("closing the app: %v", err)
 			}
-
 		})
-//line webtest.ego:67
 	case err := <-done:
 		t.Fatalf("building the app: %v", err)
 	}
@@ -122,13 +118,9 @@ func Isolate(t testing.TB, iso db.Isolator) context.Context {
 		t.Fatalf("isolating the test: %v", err)
 	}
 	t.Cleanup(func() {
-
-//line webtest.ego:111
 		if err := rollback(); err != nil {
 			t.Errorf("rolling back the test's transaction: %v", err)
 		}
-
 	})
-//line webtest.ego:115
 	return ctx
 }

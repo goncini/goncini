@@ -42,8 +42,6 @@ func client(t *testing.T) (*redis.Client, string) {
 //line redis_test.ego:32
 	prefix := "test:" + uid.NewV4().String() + ":"
 	t.Cleanup(func() {
-
-//line redis_test.ego:34
 		ctx := context.Background()
 		keys, err := c.Keys(ctx, prefix+"*").Result()
 		if err != nil {
@@ -57,9 +55,7 @@ func client(t *testing.T) (*redis.Client, string) {
 		}
 //line redis_test.ego:39
 		closeClient()
-
 	})
-//line redis_test.ego:41
 	return c, prefix
 }
 
@@ -89,18 +85,14 @@ func TestRateLimitStore(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 20 {
 		wg.Go(func() {
-
-//line redis_test.ego:70
 			res, err := l.Take(ctx, "k", 1)
 			if err != nil {
 				t.Error(err)
 			} else if res.Allowed {
 				allowed.Add(1)
 			}
-
 		})
 	}
-//line redis_test.ego:78
 	wg.Wait()
 	if n := allowed.Load(); n != 10 {
 		t.Errorf("%d takes allowed, not 10", n)

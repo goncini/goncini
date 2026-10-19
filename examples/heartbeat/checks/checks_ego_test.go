@@ -68,8 +68,6 @@ func TestChecks(t *testing.T) {
 // their output.
 func TestPings(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line checks_test.ego:67
 		a, acme := testapp.Boot(t)
 		chk := create(acme)
 		job := webtest.NewClient(t, a).WithHeader("User-Agent", "cron")
@@ -124,18 +122,13 @@ func TestPings(t *testing.T) {
 			job.Get(ping).Status(204)
 		}
 		job.Get(ping).Status(429)
-
 	})
 }
 
 // TestSweep checks that a check whose ping is late goes down, which its
 // project's badge says, and that a paused check isn't expected.
-//
-//line checks_test.ego:126
 func TestSweep(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line checks_test.ego:128
 		a, acme := testapp.Boot(t)
 		chk := create(acme)
 		var project struct {
@@ -164,18 +157,13 @@ func TestSweep(t *testing.T) {
 		acme.Post("/api/v1/checks/"+chk.ID+"/pause", nil).Problem(409).HasDetail("check: can't pause from paused")
 		badge.Get(badgePath).Status(200).Contains(`"message":"no data"`)
 		acme.Post("/api/v1/checks/"+chk.ID+"/resume", nil).Status(200).Contains(`"status":"new"`)
-
 	})
 }
 
 // TestEvents checks that a project streams its checks' flips, once they
 // are saved, and that a client that reconnects gets those it missed.
-//
-//line checks_test.ego:161
 func TestEvents(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line checks_test.ego:163
 		a, acme := testapp.Boot(t)
 		chk := create(acme)
 		job := webtest.NewClient(t, a)
@@ -208,6 +196,5 @@ func TestEvents(t *testing.T) {
 		if theirs := other.WithHeader("Last-Event-ID", events[0].ID).WithContext(ctx).Get("/api/v1/checks/events").Status(200).Events(); len(theirs) != 0 {
 			t.Errorf("another project's stream: %+v", theirs)
 		}
-
 	})
 }

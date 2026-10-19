@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -202,7 +201,8 @@ func autoconfigure(root string, services []service) ([]byte, error) {
 			for i, n := range s.needs {
 				needs[i] = strconv.Quote(n)
 			}
-			fmt.Fprintf(&b, "\t\t{Type: %q, Provider: %q, Needs: []string{%s}},\n", s.typ, s.provider, strings.Join(needs, ", "))
+			lazy := if s.lazy { ", Lazy: true" } else { "" }
+			fmt.Fprintf(&b, "\t\t{Type: %q, Provider: %q, Needs: []string{%s}%s},\n", s.typ, s.provider, strings.Join(needs, ", "), lazy)
 		}
 		b.WriteString("\t}\n}\n\n")
 	}
@@ -364,7 +364,8 @@ func ident(x ast.Expr) *ast.Ident {
 }
 
 // addProviders adds the results of the providers in args, written in the
-// app's package: functions, sets, and layer.Close of a function.
+// app's package: functions, sets, and layer.Close or layer.Decorate of a
+// function.
 func (a *app) addProviders(args []ast.Expr, seen map[types.Object]bool) {
 	a.addProvidersIn(a.pkg.TypesInfo, args, seen)
 }
@@ -374,7 +375,7 @@ func (a *app) addProviders(args []ast.Expr, seen map[types.Object]bool) {
 func (a *app) addProvidersIn(info *types.Info, args []ast.Expr, seen map[types.Object]bool) {
 	for _, x := range args {
 		if call, ok := x.(*ast.CallExpr); ok {
-			if isFunc(info, call.Fun, layerPath, "Close") || isFunc(info, call.Fun, layerPath, "Set") {
+			if isFunc(info, call.Fun, layerPath, "Close") || isFunc(info, call.Fun, layerPath, "Decorate") || isFunc(info, call.Fun, layerPath, "Set") {
 				a.addProvidersIn(info, call.Args, seen)
 			}
 			continue
@@ -399,9 +400,13 @@ func (a *app) addProvidersIn(info *types.Info, args []ast.Expr, seen map[types.O
 			seen[fn] = true
 		}
 		if sig, ok := info.TypeOf(x).(*types.Signature); ok && sig.Results().Len() > 0 {
-			a.provided = append(a.provided, sig.Results().At(0).Type())
+			// A type provided twice, as by a decorator, or a provider that
+			// overrides a set's, is one service.
+			if out := sig.Results().At(0).Type(); !a.provides(out) {
+				a.provided = append(a.provided, out)
+			}
 			for i := 0; i < sig.Params().Len(); i++ {
-				a.needed = append(a.needed, sig.Params().At(i).Type())
+				a.needed = append(a.needed, unlazy(sig.Params().At(i).Type()))
 			}
 		}
 	}
@@ -439,6 +444,14 @@ func (a *app) varInit(v *types.Var) (ast.Expr, *types.Info) {
 		}
 	}
 	return nil, nil
+}
+
+// unlazy returns T for a layer.Lazy[T], which needs a T; or else t.
+func unlazy(t types.Type) types.Type {
+	if n, ok := types.Unalias(t).(*types.Named); ok && isNamed(n, layerPath, "Lazy") {
+		return n.TypeArgs().At(0)
+	}
+	return t
 }
 
 func isNamed(t types.Type, path, name string) bool {
@@ -516,12 +529,8 @@ func (a *app) collect(k kind, elem types.Type) (params []string, values string) 
 		}
 		_ => {
 			iface, _ := elem.Underlying().(*types.Interface)
-			var added []types.Type
 			for _, t := range a.provided {
-				// A type provided twice, as by a provider that overrides a
-				// set's, is one service.
-				if iface != nil && types.Implements(t, iface) && !types.IsInterface(t) && !slices.ContainsFunc(added, u => types.Identical(t, u)) {
-					added = append(added, t)
+				if iface != nil && types.Implements(t, iface) && !types.IsInterface(t) {
 					add(t, "$")
 				}
 			}
@@ -657,6 +666,7 @@ func (a *app) importBlock() string {
 type service struct {
 	typ, provider string
 	needs         []string
+	lazy          bool // built when first needed, rather than with the app
 }
 
 // describe returns the services that the app's injector named Build, or
@@ -688,24 +698,39 @@ func describe(root string) ([]service, error) {
 	}
 	name := func(pkg *types.Package) string { return if pkg == p.Types { "" } else { pkg.Name() } }
 	var services []service
-	for _, stmt := range build.Body.List {
-		assign, ok := stmt.(*ast.AssignStmt)
-		if !ok || len(assign.Rhs) != 1 {
-			continue
-		}
-		call, ok := assign.Rhs[0].(*ast.CallExpr)
-		lhs, ok2 := assign.Lhs[0].(*ast.Ident)
-		if !ok || !ok2 || p.TypesInfo.Defs[lhs] == nil {
-			continue
-		}
-		s := service{typ: types.TypeString(p.TypesInfo.Defs[lhs].Type(), name), provider: types.ExprString(call.Fun)}
-		for _, arg := range call.Args {
-			if t := p.TypesInfo.TypeOf(arg); t != nil {
-				s.needs = append(s.needs, types.TypeString(t, name))
+	var walk func(stmts []ast.Stmt, lazy bool)
+	walk = func(stmts []ast.Stmt, lazy bool) {
+		for _, stmt := range stmts {
+			assign, ok := stmt.(*ast.AssignStmt)
+			if !ok || len(assign.Rhs) != 1 {
+				continue
 			}
+			call, ok := assign.Rhs[0].(*ast.CallExpr)
+			lhs, ok2 := assign.Lhs[0].(*ast.Ident)
+			if !ok || !ok2 || p.TypesInfo.Defs[lhs] == nil {
+				continue
+			}
+			// A lazy service is built by the function that layer.NewLazy
+			// takes, which the services that need it call through Get.
+			if isFunc(p.TypesInfo, call.Fun, layerPath, "NewLazy") {
+				if lit, ok := call.Args[0].(*ast.FuncLit); ok {
+					walk(lit.Body.List, true)
+				}
+				continue
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Get" && isNamed(p.TypesInfo.TypeOf(sel.X), layerPath, "Lazy") {
+				continue
+			}
+			s := service{typ: types.TypeString(p.TypesInfo.Defs[lhs].Type(), name), provider: types.ExprString(call.Fun), lazy: lazy}
+			for _, arg := range call.Args {
+				if t := p.TypesInfo.TypeOf(arg); t != nil {
+					s.needs = append(s.needs, types.TypeString(t, name))
+				}
+			}
+			services = append(services, s)
 		}
-		services = append(services, s)
 	}
+	walk(build.Body.List, false)
 	return services, nil
 }
 

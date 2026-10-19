@@ -90,8 +90,6 @@ func TestEvery(t *testing.T) {
 func TestOneInstancePerTick(t *testing.T) {
 	for _, shared := range []bool{true, false} {
 		synctest.Test(t, func(t *testing.T) {
-
-//line scheduler_test.ego:70
 			var mu sync.Mutex
 			runs := map[string]int{}
 			var locks lock.Store
@@ -104,15 +102,11 @@ func TestOneInstancePerTick(t *testing.T) {
 			for _, instance := range []string{"a", "b"} {
 				s := scheduler.New(scheduler.Config{}, locks, nil, slog.New(slog.DiscardHandler))
 				s.Add("report", scheduler.Every(time.Minute), func(ctx context.Context) error {
-
-//line scheduler_test.ego:82
 					mu.Lock()
 					defer mu.Unlock()
 					runs[instance]++
 					return nil
-
 				})
-//line scheduler_test.ego:87
 				wg.Go(func() {
 //line scheduler_test.ego:87
 					s.Run(ctx)
@@ -124,7 +118,6 @@ func TestOneInstancePerTick(t *testing.T) {
 			if shared && total != 10 || !shared && (runs["a"] != 10 || runs["b"] != 10) {
 				t.Errorf("shared %v: runs %v", shared, runs)
 			}
-
 		})
 	}
 }
@@ -132,12 +125,8 @@ func TestOneInstancePerTick(t *testing.T) {
 // TestNoOverlap checks that a run that outlasts its interval in one
 // instance isn't overlapped by the next tick's in another: that tick is
 // skipped.
-//
-//line scheduler_test.ego:101
 func TestNoOverlap(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line scheduler_test.ego:103
 		var mu sync.Mutex
 		running, most, runs := 0, 0, 0
 		locks := &lock.MemoryStore{}
@@ -147,8 +136,6 @@ func TestNoOverlap(t *testing.T) {
 		for range 2 {
 			s := scheduler.New(scheduler.Config{}, locks, nil, slog.New(slog.DiscardHandler))
 			s.Add("report", scheduler.Every(time.Minute), func(ctx context.Context) error {
-
-//line scheduler_test.ego:112
 				mu.Lock()
 				running++
 				runs++
@@ -159,9 +146,7 @@ func TestNoOverlap(t *testing.T) {
 				running--
 				mu.Unlock()
 				return nil
-
 			})
-//line scheduler_test.ego:123
 			wg.Go(func() {
 //line scheduler_test.ego:123
 				s.Run(ctx)
@@ -172,33 +157,24 @@ func TestNoOverlap(t *testing.T) {
 		if most != 1 || runs != 5 {
 			t.Errorf("%d runs, %d at once at most; want 5, one at a time", runs, most)
 		}
-
 	})
 }
 
 // TestFailures checks that a task that panics is logged with its stack, and
 // runs again at its next tick, and that one whose lock can't be taken
 // doesn't run.
-//
-//line scheduler_test.ego:135
 func TestFailures(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line scheduler_test.ego:137
 		var logs strings.Builder
 		var mu sync.Mutex
 		runs := 0
 		s := scheduler.New(scheduler.Config{}, nil, nil, slog.New(slog.NewTextHandler(&logs, nil)))
 		s.Add("panics", scheduler.Every(time.Minute), func(ctx context.Context) error {
-
-//line scheduler_test.ego:142
 			mu.Lock()
 			runs++
 			mu.Unlock()
 			panic("boom")
-
 		})
-//line scheduler_test.ego:147
 		ctx, stop := context.WithTimeout(context.Background(), 2*time.Minute+time.Second)
 		defer stop()
 		if err := s.Run(ctx); err != nil {
@@ -213,13 +189,9 @@ func TestFailures(t *testing.T) {
 		runs = 0
 		s = scheduler.New(scheduler.Config{}, failingStore{}, nil, slog.New(slog.NewTextHandler(&logs, nil)))
 		s.Add("locked", scheduler.Every(time.Minute), func(ctx context.Context) error {
-
-//line scheduler_test.ego:158
 			runs++
 			return nil
-
 		})
-//line scheduler_test.ego:161
 		ctx, stop = context.WithTimeout(context.Background(), time.Minute+time.Second)
 		defer stop()
 		if err := s.Run(ctx); err != nil {
@@ -229,13 +201,10 @@ func TestFailures(t *testing.T) {
 		if runs != 0 || !strings.Contains(logs.String(), "taking the task's lock failed") {
 			t.Errorf("%d runs, logs:\n%s", runs, logs.String())
 		}
-
 	})
 }
 
 // failingStore is a lock store that is down.
-//
-//line scheduler_test.ego:171
 type failingStore struct{}
 
 func (failingStore) Acquire(ctx context.Context, key, owner string, ttl time.Duration) (bool, error) {
@@ -261,20 +230,14 @@ func TestDebugTable(t *testing.T) {
 // with now as their tick, and none while one runs in another instance.
 func TestTrigger(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line scheduler_test.ego:193
 		locks := &lock.MemoryStore{}
 		s := scheduler.New(scheduler.Config{}, locks, nil, slog.New(slog.DiscardHandler))
 		var ticks []time.Time
 		s.Add("report", scheduler.Every(time.Hour), func(ctx context.Context) error {
-
-//line scheduler_test.ego:197
 			tick, _ := scheduler.Tick(ctx)
 			ticks = append(ticks, tick)
 			return nil
-
 		})
-//line scheduler_test.ego:201
 		trigger := func(args ...string) error {
 			return console.Run(context.Background(), io.Discard, scheduler.Commands(s), "", append([]string{"scheduler:trigger"}, args...))
 		}
@@ -297,14 +260,11 @@ func TestTrigger(t *testing.T) {
 		if err := trigger("report"); err == nil || len(ticks) != 1 {
 			t.Errorf("%v, %d runs; want an error, and no run", err, len(ticks))
 		}
-
 	})
 }
 
 // TestCronDaylightSaving checks New York's clock changes: a time the
 // spring skips doesn't happen, and one the fall repeats happens once.
-//
-//line scheduler_test.ego:220
 func TestCronDaylightSaving(t *testing.T) {
 	ny, err := time.LoadLocation("America/New_York")
 	if err != nil {

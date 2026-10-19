@@ -123,8 +123,6 @@ func (a *app) newCrawler() *crawler {
 		x.problem = pe.Underlying().(*types.Interface)
 	}
 	packages.Visit(a.all, nil, func(p *packages.Package) {
-
-//line annotations.ego:119
 		if !x.module[p] && p.PkgPath != gonciniPath && !strings.HasPrefix(p.PkgPath, gonciniPath+"/") {
 			return
 		}
@@ -160,9 +158,7 @@ func (a *app) newCrawler() *crawler {
 				}
 			}
 		}
-
 	})
-//line annotations.ego:155
 	return x
 }
 
@@ -180,8 +176,6 @@ func (x *crawler) endpoints() []*types.Func {
 	for _, p := range x.a.all {
 		for _, f := range p.Syntax {
 			ast.Inspect(f, func(n ast.Node) bool {
-
-//line annotations.ego:172
 				call, ok := n.(*ast.CallExpr)
 				if !ok || len(call.Args) != 1 || !x.isFunc(p, calleeIdent(call.Fun), "httpkernel", "Endpoint") {
 					return true
@@ -210,11 +204,9 @@ func (x *crawler) endpoints() []*types.Func {
 					fns = append(fns, fn)
 				}
 				return true
-
 			})
 		}
 	}
-//line annotations.ego:203
 	sort.Slice(fns, func(i, j int) bool { return runtimeName(fns[i]) < runtimeName(fns[j]) })
 	return fns
 }
@@ -294,8 +286,6 @@ func (x *crawler) crawl(fn *types.Func, found found, seen map[*types.Func]bool) 
 	seen[fn] = true
 	info := d.pkg.TypesInfo
 	ast.Inspect(d.fd.Body, func(n ast.Node) bool {
-
-//line annotations.ego:280
 		switch n := n.(type) {
 		case *ast.CompositeLit:
 			named, ok := types.Unalias(info.TypeOf(n)).(*types.Named)
@@ -314,15 +304,12 @@ func (x *crawler) crawl(fn *types.Func, found found, seen map[*types.Func]bool) 
 			}
 		}
 		return true
-
 	})
 }
 
 // isCase reports whether t is an error case that the kernel answers for:
 // an exported struct type that a mapper's error set has, or a
 // ProblemError.
-//
-//line annotations.ego:304
 func (x *crawler) isCase(t *types.Named) bool {
 	if _, ok := t.Underlying().(*types.Struct); !ok || !t.Obj().Exported() || t.TypeArgs().Len() > 0 {
 		return false

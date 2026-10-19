@@ -103,8 +103,10 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	v6 := goncini.NewMiddleware()
 	v7 := autoProblems()
 	renderer := conduit.NewRenderer()
-	validator2 := conduit.NewValidator()
-	kernel, err := goncini.NewKernel(http, router, v6, v7, renderer, validator2, dispatcher, logger)
+	config10 := autoDefaultValidatorConfig()
+	validator2 := goncini.NewValidator(config10)
+	validator3 := conduit.NewValidator(validator2)
+	kernel, err := goncini.NewKernel(http, router, v6, v7, renderer, validator3, dispatcher, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
@@ -113,19 +115,19 @@ func Build(ctx context.Context, s *scope.Scope, cfg config.Config) (*goncini.App
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	config10 := autoDefaultSchedulerConfig()
+	config11 := autoDefaultSchedulerConfig()
 	sqlStore, err := lock.NewSQLStore(db2)
 	if err != nil {
 		return nil, fmt.Errorf("NewSQLStore: %w", err)
 	}
 	v8 := autoTasks(notifications2)
-	scheduler2 := scheduler.New(config10, sqlStore, v8, logger)
+	scheduler2 := scheduler.New(config11, sqlStore, v8, logger)
 	v9 := autoCommands(migrator2, bus, scheduler2)
 	v10 := autoChecks(db2)
 	v11 := autoServices()
-	config11 := autoConfigOpenAPI(cfg)
+	config12 := autoConfigOpenAPI(cfg)
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config11, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config12, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}
@@ -216,8 +218,10 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config) (*Test, e
 	v6 := goncini.NewMiddleware()
 	v7 := autoProblems()
 	renderer := conduit.NewRenderer()
-	validator2 := conduit.NewValidator()
-	kernel, err := goncini.NewKernel(http, router, v6, v7, renderer, validator2, dispatcher, logger)
+	config10 := autoDefaultValidatorConfig()
+	validator2 := goncini.NewValidator(config10)
+	validator3 := conduit.NewValidator(validator2)
+	kernel, err := goncini.NewKernel(http, router, v6, v7, renderer, validator3, dispatcher, logger)
 	if err != nil {
 		return nil, fmt.Errorf("NewKernel: %w", err)
 	}
@@ -226,19 +230,19 @@ func BuildTest(ctx context.Context, s *scope.Scope, cfg config.Config) (*Test, e
 	if err != nil {
 		return nil, fmt.Errorf("migrator: %w", err)
 	}
-	config10 := autoDefaultSchedulerConfig()
+	config11 := autoDefaultSchedulerConfig()
 	sqlStore, err := lock.NewSQLStore(db2)
 	if err != nil {
 		return nil, fmt.Errorf("NewSQLStore: %w", err)
 	}
 	v8 := autoTasks(notifications2)
-	scheduler2 := scheduler.New(config10, sqlStore, v8, logger)
+	scheduler2 := scheduler.New(config11, sqlStore, v8, logger)
 	v9 := autoCommands(migrator2, bus, scheduler2)
 	v10 := autoChecks(db2)
 	v11 := autoServices()
-	config11 := autoConfigOpenAPI(cfg)
+	config12 := autoConfigOpenAPI(cfg)
 	annotations := autoOpenAPI()
-	document, err := goncini.NewOpenAPI(config11, router, kernel, annotations)
+	document, err := goncini.NewOpenAPI(config12, router, kernel, annotations)
 	if err != nil {
 		return nil, fmt.Errorf("NewOpenAPI: %w", err)
 	}

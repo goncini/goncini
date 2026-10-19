@@ -1,0 +1,30 @@
+package main
+
+import (
+	"fmt"
+	"slices"
+	"testing"
+)
+
+// TestDescribe checks that debug:container lists what the injector builds:
+// a decorator as a service of the type it wraps, and the lazy services,
+// built in the functions that layer.NewLazy takes, as lazy, without the
+// Gets that reach them.
+func TestDescribe(t *testing.T) {
+	services := must describe("testdata/wired")
+	var got []string
+	for _, s := range services {
+		got = append(got, fmt.Sprintf("%s %s %v %v", s.typ, s.provider, s.needs, s.lazy))
+	}
+	want := []string{
+		"*DB NewDB [] false",
+		"Repo NewPgRepo [*DB] false",
+		"Repo NewCounted [Repo] false",
+		"*SMTP NewSMTP [] true",
+		"*Mailer NewMailer [*SMTP *DB] true",
+		"*Reports NewReports [Repo layer.Lazy[*Mailer]] false",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("services:\n%q\nwant\n%q", got, want)
+	}
+}

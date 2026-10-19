@@ -48,8 +48,6 @@ func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C)
 	}
 	var usage error
 	scope.Main(func(s *scope.Scope) error {
-
-//line main.ego:47
 		app, err2 := build(s.Context(), s, cfg)
 		if err2 != nil {
 			return err2
@@ -62,9 +60,7 @@ func Main[C any](load func(*Env) C, build func(context.Context, *scope.Scope, C)
 			return nil
 		}
 		return err
-
 	})
-//line main.ego:56
 	if usage != nil {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
@@ -200,7 +196,14 @@ func writeServices(out io.Writer, services []Service) error {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "SERVICE\tPROVIDER\tNEEDS")
 	for _, s := range services {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", s.Type, s.Provider, strings.Join(s.Needs, ", "))
+		var lazy string
+		if s.Lazy {
+			lazy = " (lazy)"
+		} else {
+			lazy = ""
+		}
+//line main.ego:173
+		fmt.Fprintf(tw, "%s%s\t%s\t%s\n", s.Type, lazy, s.Provider, strings.Join(s.Needs, ", "))
 	}
 	return tw.Flush()
 }
@@ -213,7 +216,7 @@ func writeConfig(out io.Writer, env *Env, cfg any) error {
 	if err != nil {
 		return err
 	}
-//line main.ego:182
+//line main.ego:183
 	dec := jsontext.NewDecoder(bytes.NewReader(b))
 	enc := jsontext.NewEncoder(out, jsontext.WithIndent("  "))
 	for {
@@ -224,7 +227,7 @@ func writeConfig(out io.Writer, env *Env, cfg any) error {
 		if err != nil {
 			return err
 		}
-//line main.ego:190
+//line main.ego:191
 		if tok.Kind() == '"' {
 			s := tok.String()
 			for _, secret := range env.read {

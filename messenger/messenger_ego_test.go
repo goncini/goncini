@@ -65,8 +65,6 @@ func worker(b *messenger.Bus, limit int) *messenger.Worker {
 
 func TestWorker(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line messenger_test.ego:58
 		b, async, _ := newBus()
 		var mu sync.Mutex
 		var got []string
@@ -103,15 +101,11 @@ func TestWorker(t *testing.T) {
 		if len(got) != 2 || got[0] != "ann" || got[1] != "bob" || len(left) != 0 {
 			t.Errorf("handled %v, left %v", got, left)
 		}
-
 	})
 }
 
-//line messenger_test.ego:84
 func TestRetriesAndFailures(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line messenger_test.ego:86
 		b, _, failed := newBus()
 		start := time.Now()
 		var tries []time.Duration
@@ -147,18 +141,13 @@ func TestRetriesAndFailures(t *testing.T) {
 		if len(list) != 1 || list[0].Attempts != 4 || list[0].Error != "the mail server is down" {
 			t.Errorf("failed %+v", list)
 		}
-
 	})
 }
 
 // TestUnrecoverable checks that a message whose handler's error is
 // unrecoverable goes to the failure transport at once.
-//
-//line messenger_test.ego:116
 func TestUnrecoverable(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line messenger_test.ego:118
 		b, _, failed := newBus()
 		tries := 0
 		messenger.Handle(b, func(ctx context.Context, m welcome) error {
@@ -184,18 +173,13 @@ func TestUnrecoverable(t *testing.T) {
 		if tries != 1 || len(list) != 1 || list[0].Error != "there is no such address" {
 			t.Errorf("tries %d, failed %+v", tries, list)
 		}
-
 	})
 }
 
 // TestRetryOfAType checks that the messages of a type with a schedule of
 // its own are retried on it.
-//
-//line messenger_test.ego:138
 func TestRetryOfAType(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line messenger_test.ego:140
 		b, _, failed := newBus()
 		start := time.Now()
 		var tries []time.Duration
@@ -223,18 +207,13 @@ func TestRetryOfAType(t *testing.T) {
 		if len(tries) != 2 || tries[1] < time.Hour || tries[1] > time.Hour+2*time.Second || len(list) != 1 {
 			t.Errorf("tries at %v, failed %v", tries, list)
 		}
-
 	})
 }
 
 // TestStopping checks that a worker told to stop finishes the message it
 // handles, and that one cut short by the stop timeout goes back.
-//
-//line messenger_test.ego:162
 func TestStopping(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line messenger_test.ego:164
 		b, async, _ := newBus()
 		var done []string
 		messenger.Handle(b, func(ctx context.Context, m welcome) error {
@@ -283,19 +262,14 @@ func TestStopping(t *testing.T) {
 			// slow is back, as it was: being cut short isn't a failure.
 			t.Errorf("done %v, left %+v", done, left)
 		}
-
 	})
 }
 
 // TestLostWorker checks that a message a worker leased, and never
 // acknowledged, as when the worker dies, is received again once its lease
 // runs out.
-//
-//line messenger_test.ego:205
 func TestLostWorker(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line messenger_test.ego:207
 		ctx := context.Background()
 		tr := &messenger.MemoryTransport{}
 		if err := tr.Send(ctx, messenger.Message{ID: "1", Type: "welcome"}); err != nil {
@@ -341,13 +315,10 @@ func TestLostWorker(t *testing.T) {
 		if held || len(list) != 1 {
 			t.Errorf("the old lease still held it: extended %v, left %d", held, len(list))
 		}
-
 	})
 }
 
 // TestFailedCommands checks messenger:failed:show, retry and remove.
-//
-//line messenger_test.ego:230
 func TestFailedCommands(t *testing.T) {
 	b, async, failed := newBus()
 	messenger.Route[welcome](b, "async")

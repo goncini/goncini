@@ -25,18 +25,12 @@ func TestBoot(t *testing.T) {
 		name = cfg
 		s.Defer(func(context.Context) error { closed = true; return nil })
 		hello := console.New("hello", "Greets", func(ctx context.Context, out io.Writer, args []string) error {
-
-//line webtest_test.ego:23
 			_, err := io.WriteString(out, "hello "+strings.Join(args, " "))
 			return err
-
 		})
-//line webtest_test.ego:26
 		return &goncini.App{Router: routing.New(), Commands: []console.Command{hello}}, nil
 	}
 	t.Run("boot", func(t *testing.T) {
-
-//line webtest_test.ego:29
 		app := webtest.Boot(t, load, build)
 		if app.Router == nil || name != "test" {
 			t.Errorf("booted %+v in %q", app, name)
@@ -47,9 +41,7 @@ func TestBoot(t *testing.T) {
 		if closed {
 			t.Error("closed before the test ended")
 		}
-
 	})
-//line webtest_test.ego:40
 	if !closed {
 		t.Error("not closed when the test ended")
 	}

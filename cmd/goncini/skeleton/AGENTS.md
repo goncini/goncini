@@ -480,6 +480,13 @@ plain constructors, matched by their result types.
   `messenger/sqs` modules' `amqp.Messenger` and `sqs.Messenger` put the
   queues in RabbitMQ or Amazon SQS, and the failure transport in the
   database, `memory://` in tests too.
+- `layer.Decorate(f)` in `Services` changes a service rather than
+  replacing it: `f` takes the service and returns it, or another of its
+  type, which the other providers get, as RealWorld gives goncini's
+  validator its messages with `func(v *validator.Validator)
+  *validator.Validator`. A parameter `layer.Lazy[T]` builds T at its first
+  `Get()`, for what only some commands or requests need;
+  `debug:container` marks it lazy.
 - `messenger.Config.Consume` and `scheduler.Config.Run` run a worker and
   the scheduled tasks inside `serve`, beside the server, instead of as
   processes of their own.

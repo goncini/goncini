@@ -50,8 +50,6 @@ func connect(t *testing.T) (*amqp.Connection, func() error) {
 func queue(t *testing.T) string {
 	name := "test." + uid.NewV4().String()
 	t.Cleanup(func() {
-
-//line amqp_test.ego:37
 		conn, err := amqp091.Dial(os.Getenv("AMQP_TEST_URL"))
 		if err != nil {
 			panic(err)
@@ -72,7 +70,6 @@ func queue(t *testing.T) string {
 				panic(err)
 			}
 		}
-
 	})
 //line amqp_test.ego:45
 	return name

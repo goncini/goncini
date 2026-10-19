@@ -124,8 +124,6 @@ func TestTokens(t *testing.T) {
 
 func TestTokensExpire(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line security_test.ego:76
 		tokens, err := security.NewTokens(security.Config{Secret: secret, TTL: time.Hour})
 		if err != nil {
 			panic(err)
@@ -145,11 +143,9 @@ func TestTokensExpire(t *testing.T) {
 		if _, err := tokens.Verify(context.Background(), token); err == nil || err.Error() != "invalid token: it has expired" {
 			t.Errorf("after the TTL: %v", err)
 		}
-
 	})
 }
 
-//line security_test.ego:87
 type user struct{ Name string }
 
 // api is an API with a public route and a route that needs a user, behind

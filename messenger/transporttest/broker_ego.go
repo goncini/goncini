@@ -73,8 +73,6 @@ func RunBroker(t *testing.T, newTransport func(t *testing.T) messenger.Transport
 	}
 
 	t.Run("delivery", func(t *testing.T) {
-
-//line broker.ego:67
 		tr := newTransport(t)
 		send(t, tr, msg("a", 0), msg("b", -time.Minute))
 		a, b := await(t, tr), await(t, tr)
@@ -94,13 +92,9 @@ func RunBroker(t *testing.T, newTransport func(t *testing.T) messenger.Transport
 		ack(t, b)
 		time.Sleep(time.Second)
 		none(t, tr) // gone for good
-
 	})
 
-//line broker.ego:88
 	t.Run("delays", func(t *testing.T) {
-
-//line broker.ego:89
 		tr := newTransport(t)
 		// Three seconds, which isn't a power of two.
 		send(t, tr, msg("later", 3*time.Second), msg("now", 0))
@@ -113,13 +107,9 @@ func RunBroker(t *testing.T, newTransport func(t *testing.T) messenger.Transport
 		if late := time.Since(later.Message().AvailableAt); late > 2*time.Second {
 			t.Errorf("received %v late", late)
 		}
-
 	})
 
-//line broker.ego:103
 	t.Run("retrying", func(t *testing.T) {
-
-//line broker.ego:104
 		tr := newTransport(t)
 		send(t, tr, msg("a", 0))
 		lease := await(t, tr)
@@ -133,13 +123,9 @@ func RunBroker(t *testing.T, newTransport func(t *testing.T) messenger.Transport
 		if got.ID != "a" || got.Attempts != 2 || got.Error != "the server is down" || string(got.Body) != `{"id":"a"}` {
 			t.Errorf("retried %+v", got)
 		}
-
 	})
 
-//line broker.ego:119
 	t.Run("giving back", func(t *testing.T) {
-
-//line broker.ego:120
 		tr := newTransport(t)
 		send(t, tr, msg("a", 0))
 		lease := await(t, tr)
@@ -147,6 +133,5 @@ func RunBroker(t *testing.T, newTransport func(t *testing.T) messenger.Transport
 			t.Fatal(err)
 		}
 		ack(t, await(t, tr))
-
 	})
 }

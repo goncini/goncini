@@ -187,14 +187,10 @@ func TestKilledWorkerLosesNothing(t *testing.T) {
 //line gate_test.ego:138
 	first := g.start(200*time.Millisecond, 5*time.Second)
 	g.waitFor("the first worker to be handling messages", 10*time.Second, func() bool {
-
-//line gate_test.ego:140
 		started, _ := g.count("start")
 		ended, _ := g.count("end")
 		return started >= 20 && started > ended
-
 	})
-//line gate_test.ego:144
 	if err := first.Process.Kill(); err != nil {
 		panic(err)
 	} // SIGKILL: no chance to give anything back
@@ -206,13 +202,9 @@ func TestKilledWorkerLosesNothing(t *testing.T) {
 	}
 	second := g.start(10*time.Millisecond, 5*time.Second)
 	g.waitFor("every job to be handled", 30*time.Second, func() bool {
-
-//line gate_test.ego:152
 		_, ended := g.count("end")
 		return ended == 100 && g.left() == 0
-
 	})
-//line gate_test.ego:155
 	if err := second.Process.Signal(syscall.SIGTERM); err != nil {
 		panic(err)
 	}
@@ -239,13 +231,9 @@ func TestSIGTERMDrains(t *testing.T) {
 //line gate_test.ego:173
 	w := g.start(time.Second, 5*time.Second)
 	g.waitFor("the worker to be handling 4 messages", 10*time.Second, func() bool {
-
-//line gate_test.ego:175
 		started, _ := g.count("start")
 		return started >= 4
-
 	})
-//line gate_test.ego:178
 	start := time.Now()
 	if err := w.Process.Signal(syscall.SIGTERM); err != nil {
 		panic(err)
@@ -265,13 +253,9 @@ func TestSIGTERMDrains(t *testing.T) {
 	// messages go back as they were.
 	slow := g.start(time.Hour, 500*time.Millisecond)
 	g.waitFor("the slow worker to be handling 4 messages", 10*time.Second, func() bool {
-
-//line gate_test.ego:194
 		again, _ := g.count("start")
 		return again >= started+4
-
 	})
-//line gate_test.ego:197
 	start = time.Now()
 	if err := slow.Process.Signal(syscall.SIGTERM); err != nil {
 		panic(err)

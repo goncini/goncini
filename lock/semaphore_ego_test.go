@@ -16,8 +16,6 @@ import (
 //line semaphore_test.ego:14
 func TestSemaphore(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line semaphore_test.ego:16
 		ctx := context.Background()
 		f := &lock.Factory{Store: &lock.MemoryStore{}, TTL: time.Minute}
 		a, b, c := f.NewSemaphore("pdf", 2), f.NewSemaphore("pdf", 2), f.NewSemaphore("pdf", 2)
@@ -94,13 +92,10 @@ func TestSemaphore(t *testing.T) {
 		}
 
 		go func() {
-
-//line semaphore_test.ego:46
 			time.Sleep(2500 * time.Millisecond)
 			if err := c.Release(ctx); err != nil {
 				panic(err)
 			}
-
 		}()
 //line semaphore_test.ego:49
 		start := time.Now()
@@ -111,26 +106,19 @@ func TestSemaphore(t *testing.T) {
 		if waited := time.Since(start); waited != 3*time.Second {
 			t.Errorf("b waited %v for c's slot, freed after 2.5s", waited)
 		}
-
 	})
 }
 
 // TestSemaphoreRun checks that Run keeps the number of its functions
 // running at once to the limit, refreshing their slots beyond the TTL.
-//
-//line semaphore_test.ego:59
 func TestSemaphoreRun(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line semaphore_test.ego:61
 		ctx := context.Background()
 		f := &lock.Factory{Store: &lock.MemoryStore{}, TTL: time.Second}
 		var running, most, ran atomic.Int32
 		var wg sync.WaitGroup
 		for range 10 {
 			wg.Go(func() {
-
-//line semaphore_test.ego:67
 				s := f.NewSemaphore("render", 3)
 				for {
 					ok, err := s.Run(ctx, func(ctx context.Context) error {
@@ -151,14 +139,11 @@ func TestSemaphoreRun(t *testing.T) {
 					}
 					time.Sleep(100 * time.Millisecond)
 				}
-
 			})
 		}
-//line semaphore_test.ego:85
 		wg.Wait()
 		if most.Load() != 3 || ran.Load() != 10 {
 			t.Errorf("%d at most at once, %d ran", most.Load(), ran.Load())
 		}
-
 	})
 }

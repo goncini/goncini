@@ -136,15 +136,11 @@ func TestRequirementsBehindMiddleware(t *testing.T) {
 	tag := func(name string) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-
-//line requirements_test.ego:105
 				w.Header().Set("X-Route", name)
 				next.ServeHTTP(w, req)
-
 			})
 		}
 	}
-//line requirements_test.ego:109
 	r.With(tag("id")).Get("/articles/{id<\\d+>}", echo("id"))
 	r.With(tag("slug")).Get("/articles/{slug}", echo("slug"))
 	for target, want := range map[string]string{"/articles/1": "id", "/articles/x": "slug"} {

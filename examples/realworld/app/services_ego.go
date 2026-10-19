@@ -24,6 +24,7 @@ import (
 	"github.com/goncini/goncini/security"
 
 	"github.com/goncini/goncini/examples/realworld/articles"
+	"github.com/goncini/goncini/examples/realworld/conduit"
 	"github.com/goncini/goncini/examples/realworld/migrations"
 	"github.com/goncini/goncini/examples/realworld/moderation"
 	"github.com/goncini/goncini/examples/realworld/notifications"
@@ -34,7 +35,7 @@ import (
 
 // Services is the app's own services.
 //
-//line services.ego:32
+//line services.ego:33
 var Services = layer.Set(
 	db.Open, db.NewSQL, migrator,
 	security.NewTokens, hasher, firewall, security.NewAccess,
@@ -45,6 +46,7 @@ var Services = layer.Set(
 	notifications.NewNotifications, notifications.NewSubscriber,
 	messenger.SQL, lock.SQL, scheduler.New,
 	routes, clock,
+	layer.Decorate(conduit.NewValidator),
 )
 
 // routes puts the API under /api, behind the users' firewall, and the

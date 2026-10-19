@@ -44,8 +44,6 @@ func titles(t *testing.T, ch <-chan httpkernel.Event[note], n int) []string {
 
 func TestHub(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line hub_test.ego:40
 		h := newHub(t, hub.Config{})
 		ctx, cancel := context.WithCancel(context.Background())
 		notes := hub.Subscribe[note](ctx, h, "", "notes")
@@ -73,18 +71,13 @@ func TestHub(t *testing.T) {
 		if _, ok := <-notes; ok {
 			t.Error("a subscription outlives its ctx")
 		}
-
 	})
 }
 
 // TestReplay checks that a client that reconnects gets what it missed
 // after its last event, of what the instance keeps.
-//
-//line hub_test.ego:63
 func TestReplay(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line hub_test.ego:65
 		h := newHub(t, hub.Config{History: 3})
 		ctx := context.Background()
 		first := hub.Subscribe[note](t.Context(), h, "", "notes")
@@ -112,18 +105,13 @@ func TestReplay(t *testing.T) {
 		if got := titles(t, gone, 3); got[0] != "b" || got[2] != "d" {
 			t.Errorf("after a: %v", got)
 		}
-
 	})
 }
 
 // TestSlowSubscriber checks that a client that falls behind is let go,
 // so that it reconnects, while the others keep up.
-//
-//line hub_test.ego:91
 func TestSlowSubscriber(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line hub_test.ego:93
 		h := newHub(t, hub.Config{Buffer: 2})
 		ctx := context.Background()
 		slow := hub.Subscribe[note](t.Context(), h, "", "notes")
@@ -148,6 +136,5 @@ func TestSlowSubscriber(t *testing.T) {
 		if got := titles(t, fast, 1); got[0] != "d" {
 			t.Errorf("the fast one's %v", got)
 		}
-
 	})
 }

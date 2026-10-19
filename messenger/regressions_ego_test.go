@@ -98,8 +98,6 @@ func TestSQLFailureTransport(t *testing.T) {
 // back.
 func TestStopTimeoutBoundsHandlers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line regressions_test.ego:58
 		b, async, _ := newBus()
 		messenger.Handle(b, func(ctx context.Context, m welcome) error {
 			time.Sleep(time.Hour) // deaf to ctx
@@ -130,13 +128,10 @@ func TestStopTimeoutBoundsHandlers(t *testing.T) {
 			t.Errorf("stopping took %v; left %+v", took, left)
 		}
 		time.Sleep(time.Hour) // let the deaf handler end
-
 	})
 }
 
 // flaky is a transport whose receives fail some of the time.
-//
-//line regressions_test.ego:85
 type flaky struct {
 	messenger.Transport
 	calls atomic.Int32
@@ -153,8 +148,6 @@ func (f *flaky) Receive(ctx context.Context, ttl time.Duration) (messenger.Lease
 // receive.
 func TestReceiveErrorsPass(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line regressions_test.ego:101
 		b, async, _ := newBus()
 		b.Transports["async"] = &flaky{Transport: async}
 		handled := 0
@@ -173,14 +166,11 @@ func TestReceiveErrorsPass(t *testing.T) {
 		if handled != 3 {
 			t.Errorf("handled %d", handled)
 		}
-
 	})
 }
 
 // TestSetupIsRetried checks that a transport whose table creation failed
 // creates it at the next call.
-//
-//line regressions_test.ego:118
 func TestSetupIsRetried(t *testing.T) {
 	_, ts := sqliteBus(t, messenger.Config{})
 	cancelled, cancel := context.WithCancel(context.Background())
@@ -336,8 +326,6 @@ func TestWorkerErrors(t *testing.T) {
 // named as the app likes, but the failure transport.
 func TestBackground(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line regressions_test.ego:214
 		emails := &messenger.MemoryTransport{}
 		b := messenger.NewBus(messenger.Config{Consume: true}, messenger.Transports{"emails": emails, "failed": &messenger.MemoryTransport{}}, nil, slog.New(slog.DiscardHandler))
 		var handled atomic.Int32
@@ -359,6 +347,5 @@ func TestBackground(t *testing.T) {
 		if handled.Load() != 1 {
 			t.Errorf("%d handled", handled.Load())
 		}
-
 	})
 }

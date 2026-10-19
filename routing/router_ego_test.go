@@ -332,14 +332,10 @@ func (userRoutes) Routes(r *routing.Router) {
 func TestPrefixAndWith(t *testing.T) {
 	var tag func(http.Handler) http.Handler = func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line router_test.ego:283
 			w.Header().Set("X-Tag", "1")
 			next.ServeHTTP(w, r)
-
 		})
 	}
-//line router_test.ego:286
 	r := routing.New(routing.Prefix("/api", routing.With(tag, articleRoutes{}), userRoutes{}))
 	for path, tagged := range map[string]string{"/api/articles": "1", "/api/users": ""} {
 		if rec := serve(r, "GET", path); rec.Code != 200 || rec.Header().Get("X-Tag") != tagged {

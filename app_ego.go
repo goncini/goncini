@@ -112,6 +112,9 @@ type Service struct {
 	Provider string
 	// Needs are the types of what the provider takes.
 	Needs []string
+	// Lazy is true for a service built when first needed, through a
+	// layer.Lazy, rather than with the app.
+	Lazy bool
 }
 
 // Check reports whether a service that the app needs is ready, such as its
@@ -129,6 +132,13 @@ type Check func(ctx context.Context) error
 //
 // where NewConduitRenderer returns an httpkernel.Renderer. NewLogHandler,
 // NewMiddleware, NewRenderer and NewValidator are there to be replaced so.
+// A decorator changes one of goncini's services rather than replacing it,
+// listed in the app's Services as layer.Decorate(f), where f takes the
+// service and returns it, or another of its type:
+//
+//	func NewValidator(v *validator.Validator) *validator.Validator {
+//		return v.Message("required", "can't be blank")
+//	}
 var Framework = layer.Set(NewTracing, NewLogHandler, NewLogger, NewRouter, NewMiddleware, NewRenderer, NewValidator, NewDispatcher, NewKernel, NewServer, NewOpenAPI, NewApp)
 
 // NewLogHandler returns where an app's logs go: text or JSON records on
@@ -169,8 +179,9 @@ func NewRenderer() httpkernel.Renderer {
 
 // NewValidator returns the validator of inputs, which checks their validate
 // struct tags, with the rules of goncini's own that c configures: see the
-// validator package.
-func NewValidator(c validator.Config) httpkernel.Validator {
+// validator package. An app decorates it to give it messages or rules of its
+// own.
+func NewValidator(c validator.Config) *validator.Validator {
 	v := validator.New()
 	v.Config = c
 	return v
@@ -192,7 +203,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:185
+//line app.ego:196
 		mw = append(mw, proxies.Middleware)
 	}
 	if len(c.TrustedHosts) > 0 {
@@ -200,7 +211,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:189
+//line app.ego:200
 		mw = append(mw, hosts)
 	}
 	mw = append(mw, httpkernel.AccessLog(logger))
@@ -209,7 +220,7 @@ func NewKernel(c HTTP, router *routing.Router, middleware []httpkernel.Middlewar
 		if err != nil {
 			return nil, err
 		}
-//line app.ego:194
+//line app.ego:205
 		mw = append(mw, cors)
 	}
 	return &httpkernel.Kernel{
@@ -251,17 +262,17 @@ func NewServer(c HTTP, kernel *httpkernel.Kernel, logger *slog.Logger) *httpkern
 // serves, with the doc comments and errors of a, and serves it on router
 // as c says.
 //
-//line app.ego:228
+//line app.ego:239
 func NewOpenAPI(c openapi.Config, router *routing.Router, kernel *httpkernel.Kernel, a openapi.Annotations) (*openapi.Document, error) {
 	doc, err := openapi.Generate(router.List(), kernel, c, a)
 	if err != nil {
 		return nil, err
 	}
-//line app.ego:230
+//line app.ego:241
 	if err := openapi.Mount(router, doc, c); err != nil {
 		return nil, err
 	}
-//line app.ego:231
+//line app.ego:242
 	return doc, nil
 }
 

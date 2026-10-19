@@ -15,14 +15,10 @@ func TestV7Counter(t *testing.T) {
 	clock.mu.Lock()
 	savedLast, savedSeq := clock.last, clock.seq
 	t.Cleanup(func() {
-
-//line ulid_internal_test.ego:14
 		clock.mu.Lock()
 		clock.last, clock.seq = savedLast, savedSeq
 		clock.mu.Unlock()
-
 	})
-//line ulid_internal_test.ego:18
 	future := uint64(time.Now().Add(time.Hour).UnixMilli())
 	clock.last, clock.seq = future, 1<<12-1
 	clock.mu.Unlock()
@@ -39,14 +35,10 @@ func TestULIDOverflow(t *testing.T) {
 	ulids.mu.Lock()
 	savedMS, savedLast := ulids.ms, ulids.last
 	t.Cleanup(func() {
-
-//line ulid_internal_test.ego:34
 		ulids.mu.Lock()
 		ulids.ms, ulids.last = savedMS, savedLast
 		ulids.mu.Unlock()
-
 	})
-//line ulid_internal_test.ego:38
 	future := uint64(time.Now().Add(time.Hour).UnixMilli())
 	last := ULID{}
 	last[0], last[1], last[2], last[3], last[4], last[5] = byte(future>>40), byte(future>>32), byte(future>>24), byte(future>>16), byte(future>>8), byte(future)

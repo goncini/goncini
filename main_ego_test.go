@@ -73,7 +73,6 @@ type routes struct{}
 
 func (routes) Routes(r *routing.Router) {
 	r.Get("/hello", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
 	})).Name("hello")
 }
 
@@ -102,13 +101,9 @@ func TestRun(t *testing.T) {
 	env := goncini.NewEnv("prod", map[string]string{"DB_PASSWORD": `s3"cret`, "DB_HOST": "db.internal"})
 	cfg := load(env)
 	greet := console.New("greet", "Greets", func(ctx context.Context, out io.Writer, args []string) error {
-
-//line main_test.ego:80
 		_, err := io.WriteString(out, "hello "+strings.Join(args, " "))
 		return err
-
 	})
-//line main_test.ego:83
 	app := build(cfg.HTTP, []routing.Routes{routes{}}, []console.Command{greet})
 	run := func(args ...string) (string, error) {
 		var out bytes.Buffer
@@ -219,14 +214,10 @@ func TestNewKernel(t *testing.T) {
 	// The app's middleware runs inside goncini's.
 	var mw httpkernel.Middleware = func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line main_test.ego:188
 			w.Header().Set("X-App", "1")
 			next.ServeHTTP(w, r)
-
 		})
 	}
-//line main_test.ego:191
 	logger := slog.New(slog.DiscardHandler)
 	k, err := goncini.NewKernel(goncini.HTTP{TrustedHosts: []string{"api.example.com"}}, routing.New(), []httpkernel.Middleware{mw}, nil, nil, nil, nil, logger)
 	if err != nil {
@@ -291,13 +282,9 @@ func (r *recorder) WithAttrs([]slog.Attr) slog.Handler       { return r }
 func (r *recorder) WithGroup(string) slog.Handler            { return r }
 func (r *recorder) Handle(_ context.Context, rec slog.Record) error {
 	rec.Attrs(func(a slog.Attr) bool {
-
-//line main_test.ego:245
 		r.attrs[a.Key] = a.Value.String()
 		return true
-
 	})
-//line main_test.ego:248
 	return nil
 }
 

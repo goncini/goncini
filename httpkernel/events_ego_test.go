@@ -42,18 +42,14 @@ func TestKernelEvents(t *testing.T) {
 	})
 	k := &httpkernel.Kernel{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line events_test.ego:41
 			if r.URL.Path == "/fail" {
 				httpkernel.WriteError(w, r, httpkernel.Problem{Status: http.StatusConflict, Detail: "taken"})
 				return
 			}
 			w.Write([]byte("ok"))
-
 		}),
 		Events: d,
 	}
-//line events_test.ego:49
 	k.Logger, _ = logged()
 	get := func(path string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
@@ -88,12 +84,8 @@ func TestResponseEventEdges(t *testing.T) {
 		panic("boom")
 	})
 	k := &httpkernel.Kernel{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line events_test.ego:83
 		panic(http.ErrAbortHandler)
-
 	}), Events: d}
-//line events_test.ego:85
 	var logs *bytes.Buffer
 	k.Logger, logs = logged()
 	func() {

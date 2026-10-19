@@ -32,7 +32,9 @@
 // own to layer.Build: an httpkernel.Renderer for an error format of its
 // own, []httpkernel.Middleware, an httpkernel.Validator, or a slog.Handler
 // to log with zap, zerolog, logrus or OpenTelemetry, as docs/logging.md in
-// the repository shows.
+// the repository shows. It changes one rather than replacing it with a
+// decorator, layer.Decorate in its Services, such as of the
+// *validator.Validator, to give it messages of its own.
 //
 // # Commands
 //

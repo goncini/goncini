@@ -96,14 +96,10 @@ func TestProblems(t *testing.T) {
 	tr := translation.New(translation.Config{}, catalogs)
 	k := &httpkernel.Kernel{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line translation_test.ego:96
 			httpkernel.WriteError(w, r, httpkernel.Invalid(httpkernel.Violation{Pointer: "#/title", Detail: "can't be blank"}, httpkernel.Violation{Parameter: "limit", Detail: "must be at least 1"}))
-
 		}),
 		Events: event.New(tr),
 	}
-//line translation_test.ego:100
 	for lang, want := range map[string]string{
 		"fr-FR,fr;q=0.9": `"title":"Entité non traitable"`,
 		"de":             `"title":"Unprocessable Entity"`,

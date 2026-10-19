@@ -111,13 +111,9 @@ func adminAPI(t *testing.T) *webtest.Client {
 		return httpkernel.NoContent{}, nil
 	})
 	admin := routing.RoutesFunc(func(r *routing.Router) {
-
-//line access_test.ego:89
 		r.With(access.Require("ROLE_EDITOR")).Get("/edit", ok)
 		r.With(access.Require(security.Authenticated)).Get("/docs/{owner}", read)
-
 	})
-//line access_test.ego:92
 	public := routing.RoutesFunc(func(r *routing.Router) {
 //line access_test.ego:92
 		r.Get("/public", ok)

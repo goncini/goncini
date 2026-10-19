@@ -74,8 +74,6 @@ func TestGet(t *testing.T) {
 
 func TestRetries(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line httpclient_test.ego:70
 		a := &api{statuses: []int{503, 502}}
 		start := time.Now()
 		if _, err2 := httpclient.Get[repo](context.Background(), client(a), "/repos/goncini"); err2 != nil {
@@ -112,15 +110,11 @@ func TestRetries(t *testing.T) {
 		if e, ok := errors.AsType[*httpclient.StatusError](err); !ok || e.Status != 404 || e.Body != "down" || len(a.got) != 1 {
 			t.Errorf("%d attempts, %v", len(a.got), err)
 		}
-
 	})
 }
 
-//line httpclient_test.ego:103
 func TestPOSTs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line httpclient_test.ego:105
 		a := &api{statuses: []int{503}}
 		ctx := context.Background()
 		if _, err := httpclient.Send[repo](ctx, client(a), http.MethodPost, "/repos", repo{"new"}); err == nil || len(a.got) != 1 {
@@ -150,14 +144,11 @@ func TestPOSTs(t *testing.T) {
 		if a.got[0].Header.Get("Content-Type") != "application/x-www-form-urlencoded" || a.bodies[0] != "name=new+%26+old" {
 			t.Errorf("a form: %q, %q", a.got[0].Header.Get("Content-Type"), a.bodies[0])
 		}
-
 	})
 }
 
 // failing is a transport whose first round trip fails, as a connection
 // refused.
-//
-//line httpclient_test.ego:128
 type failing struct {
 	http.RoundTripper
 	failed bool
@@ -173,8 +164,6 @@ func (f *failing) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func TestConnectionFailures(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line httpclient_test.ego:143
 		a := &api{}
 		c := client(a)
 		c.Transport = &failing{RoundTripper: c.Transport}
@@ -185,11 +174,9 @@ func TestConnectionFailures(t *testing.T) {
 		if len(a.got) != 1 {
 			t.Errorf("%d attempts reached the API", len(a.got))
 		}
-
 	})
 }
 
-//line httpclient_test.ego:153
 func TestTracePropagates(t *testing.T) {
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	tp := sdktrace.NewTracerProvider()
@@ -217,17 +204,13 @@ func TestRedirectsAndHosts(t *testing.T) {
 	var auths []string
 	c := httpclient.New(httpclient.Config{BaseURL: "https://api.example.com", Header: map[string]string{"Authorization": "Bearer secret"}})
 	c.Transport = httpclient.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line httpclient_test.ego:173
 		auths = append(auths, r.URL.Host+" "+r.Header.Get("Authorization"))
 		if r.URL.Path == "/old" {
 			http.Redirect(w, r, "/new", http.StatusMovedPermanently)
 			return
 		}
 		w.Write([]byte(`{"name":"goncini"}`))
-
 	}))
-//line httpclient_test.ego:180
 	r, err := httpclient.Get[repo](context.Background(), c, "/old")
 	if err != nil {
 		panic(err)
@@ -262,8 +245,6 @@ func TestRedirectsAndHosts(t *testing.T) {
 // the request.
 func TestHandlerTimeout(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line httpclient_test.ego:199
 		c := httpclient.New(httpclient.Config{Timeout: time.Second, Retries: -1})
 		c.Transport = httpclient.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { time.Sleep(time.Minute) }))
 		_, err := httpclient.Get[repo](context.Background(), c, "https://api.example.com/slow")
@@ -271,17 +252,13 @@ func TestHandlerTimeout(t *testing.T) {
 			t.Errorf("got %v", err)
 		}
 		time.Sleep(time.Minute)
-
 	})
 }
 
 // TestPublic checks that a client of Public doesn't connect to the
 // loopback.
-//
-//line httpclient_test.ego:211
 func TestPublic(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
 	}))
 //line httpclient_test.ego:213
 	defer srv.Close()

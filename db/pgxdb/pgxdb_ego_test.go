@@ -129,8 +129,6 @@ func TestOpen(t *testing.T) {
 func TestIsolate(t *testing.T) {
 	tr := open(t)
 	t.Run("test", func(t *testing.T) {
-
-//line pgxdb_test.ego:90
 		ctx := webtest.Isolate(t, tr)
 		if err := tr.InTx(ctx, func(ctx context.Context) error {
 			_, err := tr.Conn(ctx).Exec(ctx, "INSERT INTO pgxdb_articles VALUES ('isolated')")
@@ -147,9 +145,7 @@ func TestIsolate(t *testing.T) {
 		if n != 1 {
 			t.Errorf("%d rows inside the test", n)
 		}
-
 	})
-//line pgxdb_test.ego:101
 	var n int
 	if err := tr.Pool.QueryRow(context.Background(), "SELECT count(*) FROM pgxdb_articles").Scan(&n); err != nil {
 		panic(err)

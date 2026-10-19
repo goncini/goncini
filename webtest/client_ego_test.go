@@ -29,16 +29,12 @@ import (
 //
 //line client_test.ego:25
 var echo = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line client_test.ego:26
 	body, _ := io.ReadAll(r.Body)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Seen", r.Header.Get("Authorization"))
 	fmt.Fprintf(w, `{"method":%q,"uri":%q,"type":%q,"body":%q}`, r.Method, r.URL.RequestURI(), r.Header.Get("Content-Type"), body)
-
 })
 
-//line client_test.ego:32
 type echoed struct {
 	Method string `json:"method"`
 	URI    string `json:"uri"`
@@ -237,17 +233,11 @@ func (i *isolator) Isolate(ctx context.Context) (context.Context, func() error, 
 func TestIsolate(t *testing.T) {
 	iso := &isolator{}
 	t.Run("test", func(t *testing.T) {
-
-//line client_test.ego:186
 		ctx := webtest.Isolate(t, iso)
 		seen := false
 		h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line client_test.ego:189
 			seen = r.Context().Value(marker{}) == true
-
 		})
-//line client_test.ego:191
 		webtest.NewClient(t, h).WithContext(ctx).Get("/")
 		if !seen {
 			t.Error("the request's context isn't the isolated one")
@@ -255,9 +245,7 @@ func TestIsolate(t *testing.T) {
 		if iso.rolledBack {
 			t.Error("rolled back before the test ended")
 		}
-
 	})
-//line client_test.ego:199
 	if !iso.rolledBack {
 		t.Error("not rolled back when the test ended")
 	}
@@ -267,8 +255,6 @@ func TestIsolate(t *testing.T) {
 // an hour-long request takes no time.
 func TestInABubble(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line client_test.ego:208
 		build := func(ctx context.Context, s *scope.Scope, cfg string) (*goncini.App, error) {
 			r := routing.New()
 			r.Get("/slow", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -284,11 +270,9 @@ func TestInABubble(t *testing.T) {
 		if d := time.Since(start); d != time.Hour {
 			t.Errorf("the request took %v of fake time", d)
 		}
-
 	})
 }
 
-//line client_test.ego:222
 type greeting struct {
 	Hello string `json:"hello"`
 }
@@ -327,14 +311,10 @@ func TestContract(t *testing.T) {
 func TestContractPassesReadErrors(t *testing.T) {
 	var got error
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line client_test.ego:256
 		_, got = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusEarlyHints)
 		w.WriteHeader(http.StatusNoContent)
-
 	})
-//line client_test.ego:260
 	r := routing.New()
 	r.Post("/", h)
 	doc := &openapi.Document{Paths: map[string]*openapi.PathItem{"/": {Post: &openapi.Operation{Responses: map[string]*openapi.Response{"204": {}}}}}}

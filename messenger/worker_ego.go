@@ -65,12 +65,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	handling, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
 	defer cancel(nil)
 	stop := context.AfterFunc(ctx, func() {
-
-//line worker.ego:64
 		time.AfterFunc(w.stopTimeout(), func() { cancel(errStopTimeout) })
-
 	})
-//line worker.ego:66
 	defer stop()
 	receiving, done := context.WithCancel(ctx)
 	defer done()

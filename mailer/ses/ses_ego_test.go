@@ -40,8 +40,6 @@ func TestSend(t *testing.T) {
 	var got sendEmail
 	var auth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line ses_test.ego:38
 		if r.Method != http.MethodPost || r.URL.Path != "/v2/email/outbound-emails" {
 			t.Errorf("%s %s", r.Method, r.URL)
 		}
@@ -57,9 +55,7 @@ func TestSend(t *testing.T) {
 			return
 		}
 		w.Write([]byte(`{"MessageId":"1"}`))
-
 	}))
-//line ses_test.ego:51
 	t.Cleanup(srv.Close)
 	tr := &ses.Transport{
 		Client: sesv2.New(sesv2.Options{

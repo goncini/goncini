@@ -101,19 +101,14 @@ type ErrorMapper func(err error) (Problem, bool)
 //	var Problems = httpkernel.Map[ArticleError](Problem)
 func Map[E error](problem func(error) Problem) ErrorMapper {
 	return func(err error) (Problem, bool) {
-
-//line kernel.ego:100
 		if e, ok := errors.AsType[E](err); ok {
 			return problem(e), true
 		}
 		return Problem{}, false
-
 	}
 }
 
 // Renderer writes a problem as the response to r, with its Header.
-//
-//line kernel.ego:108
 type Renderer func(w http.ResponseWriter, r *http.Request, p Problem)
 
 // Validator checks the inputs Endpoint binds with rules that hold for any

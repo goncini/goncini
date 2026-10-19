@@ -79,8 +79,6 @@ func detail(path string, p Profile) page {
 	pg := page{Path: path, Profile: &v}
 	total := float64(max(p.Micros, 1))
 	p.walk(func(s Span, depth int) {
-
-//line html.ego:79
 		r := row{Span: s, Indent: depth * 16, Left: float64(s.Start) / total * 100, Width: float64(s.Micros) / total * 100, Query: s.Attributes["db.query.text"], Attributes: maps.Clone(s.Attributes)}
 		delete(r.Attributes, "db.query.text")
 		r.Left = min(r.Left, 99.5)
@@ -109,9 +107,7 @@ func detail(path string, p Profile) page {
 			delete(attrs, "log.message")
 			pg.Logs = append(pg.Logs, logLine{At: e.At, Severity: e.Attributes["log.severity"], Message: e.Attributes["log.message"], Attributes: attrs})
 		}
-
 	})
-//line html.ego:108
 	return pg
 }
 

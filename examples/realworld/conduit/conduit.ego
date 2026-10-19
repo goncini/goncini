@@ -59,9 +59,10 @@ func NewRenderer() httpkernel.Renderer {
 	return Render
 }
 
-// NewValidator provides the validator with RealWorld's messages.
-func NewValidator() httpkernel.Validator {
-	return validator.New().Message("required", "can't be blank")
+// NewValidator gives goncini's validator RealWorld's messages: a decorator,
+// listed as layer.Decorate(conduit.NewValidator).
+func NewValidator(v *validator.Validator) *validator.Validator {
+	return v.Message("required", "can't be blank")
 }
 
 // AuthProblems gives security's failures RealWorld's bodies.

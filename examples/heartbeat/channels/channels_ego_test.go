@@ -58,8 +58,6 @@ func TestAlerts(t *testing.T) {
 	t.Setenv("MAILER_DSN", smtp.DSN())
 	hooks := webhooktest.NewReceiver(t)
 	synctest.Test(t, func(t *testing.T) {
-
-//line channels_test.ego:51
 		a, acme := testapp.Boot(t)
 		acme.Post("/api/v1/channels", `{"kind":"email","target":"ops@example.com"}`).Status(201)
 		var ch struct {
@@ -123,6 +121,5 @@ func TestAlerts(t *testing.T) {
 		if got[0].ID != got[2].ID || got[3].ID == got[0].ID || alerts[2]["status"] != "down" || alerts[3]["status"] != "up" || alerts[2]["name"] != "backup" {
 			t.Errorf("webhooks %v, of IDs %s, %s and %s", alerts, got[0].ID, got[2].ID, got[3].ID)
 		}
-
 	})
 }

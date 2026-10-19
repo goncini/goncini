@@ -154,8 +154,6 @@ func NewAccess(c Config, voters []Voter) *Access {
 func (a *Access) IsGranted(ctx context.Context, attribute string, subject any) bool {
 	grants, denials := 0, 0
 	count := func(v Vote) {
-
-//line access.ego:101
 		switch v {
 		case Grant:
 //line access.ego:102
@@ -166,7 +164,6 @@ func (a *Access) IsGranted(ctx context.Context, attribute string, subject any) b
 		case Abstain:
 
 		}
-
 	}
 //line access.ego:108
 	count(a.builtIn(ctx, attribute))

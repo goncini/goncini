@@ -182,8 +182,6 @@ func bearer(c *webtest.Client, token string) *webtest.Response {
 // their time, don't.
 func TestVerify(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line oidc_test.ego:156
 		p := newProvider()
 		c := api(t, verifier(t, p, oidc.Config{}))
 		for name, tok := range map[string]string{
@@ -203,27 +201,17 @@ func TestVerify(t *testing.T) {
 		hmac := []byte("a secret that the API doesn't have, however long")
 		for detail, tok := range map[string]string{
 			"it isn't for this API": token(jwt.SigningMethodRS256, "rsa", rsaKey, func(c jwt.MapClaims) {
-
-//line oidc_test.ego:171
 				c["aud"] = "api://other"
-
 			}),
 			"it isn't the identity provider's": token(jwt.SigningMethodRS256, "rsa", rsaKey, func(c jwt.MapClaims) {
-
-//line oidc_test.ego:174
 				c["iss"] = "https://evil.example"
-
 			}),
 			"it names no user": token(jwt.SigningMethodRS256, "rsa", rsaKey, func(c jwt.MapClaims) {
-
-//line oidc_test.ego:177
 				delete(c, "sub")
-
 			}),
 		} {
 			bearer(c, tok).Problem(401).HasDetail("invalid token: " + detail)
 		}
-//line oidc_test.ego:182
 		for name, tok := range map[string]string{
 			"another key":    token(jwt.SigningMethodRS256, "rsa", other, nil),
 			"an unknown key": token(jwt.SigningMethodRS256, "nope", other, nil),
@@ -245,19 +233,14 @@ func TestVerify(t *testing.T) {
 		bearer(c, tok).Status(200)
 		time.Sleep(2 * time.Second)
 		bearer(c, tok).Problem(401).HasDetail("invalid token: it has expired")
-
 	})
 }
 
 // TestKeys checks that the keys are fetched when needed only: a new key of
 // the provider's is fetched, once a minute at most, and the keys it had
 // serve while the provider is down.
-//
-//line oidc_test.ego:205
 func TestKeys(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line oidc_test.ego:207
 		p := newProvider()
 		c := api(t, verifier(t, p, oidc.Config{}))
 		bearer(c, token(jwt.SigningMethodRS256, "rsa", rsaKey, nil)).Status(200)
@@ -293,13 +276,10 @@ func TestKeys(t *testing.T) {
 		// A verifier that never had the keys answers 503.
 		down := api(t, verifier(t, p, oidc.Config{}))
 		bearer(down, token(jwt.SigningMethodRS256, "rsa", rsaKey, nil)).Problem(503).HasDetail("the identity provider is unavailable")
-
 	})
 }
 
 // TestConfig checks the config, and the provider's discovery document.
-//
-//line oidc_test.ego:242
 func TestConfig(t *testing.T) {
 	for _, c := range []oidc.Config{
 		{Issuer: issuer},

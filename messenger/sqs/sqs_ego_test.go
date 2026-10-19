@@ -44,8 +44,6 @@ func transport(t *testing.T) *sqs.Transport {
 	} // creates the queue
 //line sqs_test.ego:35
 	t.Cleanup(func() {
-
-//line sqs_test.ego:36
 		cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion("us-east-1"))
 		if err != nil {
 			panic(err)
@@ -60,7 +58,6 @@ func transport(t *testing.T) *sqs.Transport {
 		if _, err := raw.DeleteQueue(ctx, &awssqs.DeleteQueueInput{QueueUrl: url.QueueUrl}); err != nil {
 			panic(err)
 		}
-
 	})
 //line sqs_test.ego:41
 	return tr

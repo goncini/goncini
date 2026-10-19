@@ -20,8 +20,6 @@ import (
 func TestProvider(t *testing.T) {
 	idp := oidctest.NewProvider(t)
 	synctest.Test(t, func(t *testing.T) {
-
-//line oidctest_test.ego:19
 		v, err := oidc.New(oidc.Config{Issuer: idp.Issuer(), Audience: "api://notes"}, httpclient.New(httpclient.Config{}))
 		if err != nil {
 			panic(err)
@@ -47,6 +45,5 @@ func TestProvider(t *testing.T) {
 		if _, err := v.Verify(ctx, idp.Token("api://notes", "ann", nil)); err != nil {
 			panic(err)
 		}
-
 	})
 }

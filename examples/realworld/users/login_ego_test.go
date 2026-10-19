@@ -20,8 +20,6 @@ import (
 //line login_test.ego:17
 func TestLoginThrottling(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line login_test.ego:19
 		a := webtest.Boot(t, config.Load, app.Build)
 		webtest.Run(t, a, "db:migrate")
 		c := webtest.NewClient(t, a)
@@ -45,18 +43,13 @@ func TestLoginThrottling(t *testing.T) {
 		c.Post("/api/users/login", wrong).Status(429) // half the last minute's attempts still count
 		time.Sleep(time.Minute)
 		c.Post("/api/users/login", right).Status(200)
-
 	})
 }
 
 // TestLoginThrottlingByAddress checks that an address gets 25 logins a
 // minute, whatever their emails.
-//
-//line login_test.ego:47
 func TestLoginThrottlingByAddress(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line login_test.ego:49
 		a := webtest.Boot(t, config.Load, app.Build)
 		webtest.Run(t, a, "db:migrate")
 		c := webtest.NewClient(t, a)
@@ -64,6 +57,5 @@ func TestLoginThrottlingByAddress(t *testing.T) {
 			c.Post("/api/users/login", fmt.Sprintf(`{"user":{"email":"user%d@example.com","password":"guess"}}`, i)).Status(401)
 		}
 		c.Post("/api/users/login", `{"user":{"email":"another@example.com","password":"guess"}}`).Status(429)
-
 	})
 }

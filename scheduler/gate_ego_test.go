@@ -65,17 +65,13 @@ func TestOneInstancePerTickInSQL(t *testing.T) {
 		store.NoSetup = true
 		s := scheduler.New(scheduler.Config{}, store, nil, slog.New(slog.NewTextHandler(t.Output(), &slog.HandlerOptions{Level: slog.LevelWarn})))
 		s.Add("report", scheduler.Every(200*time.Millisecond), func(ctx context.Context) error {
-
-//line gate_test.ego:42
 			at, _ := scheduler.Tick(ctx)
 			tick := at.UnixMilli()
 			mu.Lock()
 			defer mu.Unlock()
 			ticks[tick] = append(ticks[tick], instance)
 			return nil
-
 		})
-//line gate_test.ego:49
 		wg.Go(func() {
 //line gate_test.ego:49
 			s.Run(ctx)

@@ -60,6 +60,16 @@
   that the app's instances share their limits. An update watches the key,
   and tries again when another changed it first: a `Store`'s `Update` may
   call its function more than once.
+- **Wiring:** goncini requires effect-go v0.6.0, whose `layer.Decorate`
+  and `layer.Lazy` an app's `Services` can use: a decorator changes a
+  service, goncini's too, rather than replacing it, and a lazy service is
+  built at its first `Get`. `goncini generate` reads both, and
+  `debug:container` lists the decorators and marks the lazy services.
+  RealWorld decorates goncini's validator with its messages, rather than
+  replacing it, which kept it from `validator.Config`.
+  - **Breaking:** `goncini.NewValidator` returns the `*validator.Validator`,
+    which decorators take, rather than an `httpkernel.Validator`. An app
+    that replaces it with a provider of `httpkernel.Validator` still does.
 - **lock:** semaphores, which up to a number of processes hold at once, as
   Symfony's Semaphore component's are: `Factory.NewSemaphore(key, limit)`,
   with `Acquire`, `Refresh`, `Release`, `Wait` and `Run`, as a lock has.

@@ -154,14 +154,10 @@ type Workflow struct {
 func New(d Definition, access *security.Access, events *event.Dispatcher) (*Workflow, error) {
 	var errs []error
 	place := func(p string) {
-
-//line workflow.ego:117
 		if !slices.Contains(d.Places, p) {
 			errs = append(errs, fmt.Errorf("workflow %s: unknown place %q", d.Name, p))
 		}
-
 	}
-//line workflow.ego:121
 	place(d.Initial)
 	seen := map[string]bool{}
 	for _, t := range d.Transitions {

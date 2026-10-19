@@ -116,8 +116,6 @@ func TestConcurrentTakes(t *testing.T) {
 	allowed := 0
 	for range 100 {
 		wg.Go(func() {
-
-//line ratelimit_test.ego:92
 			res, err := l.Take(context.Background(), "k", 1)
 			if err != nil {
 				panic(err)
@@ -128,10 +126,8 @@ func TestConcurrentTakes(t *testing.T) {
 			if res.Allowed {
 				allowed++
 			}
-
 		})
 	}
-//line ratelimit_test.ego:100
 	wg.Wait()
 	if allowed != 50 {
 		t.Errorf("%d allowed, want 50", allowed)

@@ -33,8 +33,6 @@ type traced struct {
 // db.system.name has it, found once.
 func (s *SQL) dbSystem() string {
 	s.systemOnce.Do(func() {
-
-//line trace.ego:32
 		switch DialectOf(s.DB) {
 		case SQLite:
 			s.system = "sqlite"
@@ -43,7 +41,6 @@ func (s *SQL) dbSystem() string {
 		default:
 			s.system = "other_sql"
 		}
-
 	})
 //line trace.ego:38
 	return s.system

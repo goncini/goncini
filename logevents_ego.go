@@ -30,13 +30,9 @@ func (s spanEvents) Handle(ctx context.Context, r slog.Record) error {
 	if span := trace.SpanFromContext(ctx); span.IsRecording() {
 		kvs := append(slices.Clone(s.attrs), attribute.String("log.severity", r.Level.String()), attribute.String("log.message", r.Message))
 		r.Attrs(func(a slog.Attr) bool {
-
-//line logevents.ego:29
 			kvs = appendAttr(kvs, s.prefix, a)
 			return true
-
 		})
-//line logevents.ego:32
 		span.AddEvent("log", trace.WithTimestamp(r.Time), trace.WithAttributes(kvs...))
 	}
 	return s.h.Handle(ctx, r)

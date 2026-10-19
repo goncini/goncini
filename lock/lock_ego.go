@@ -141,8 +141,6 @@ func run(ctx context.Context, h holder, ttl time.Duration, f func(ctx context.Co
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Go(func() {
-
-//line lock.ego:132
 		tick := time.NewTicker(ttl / 3)
 		defer tick.Stop()
 		for {
@@ -158,9 +156,7 @@ func run(ctx context.Context, h holder, ttl time.Duration, f func(ctx context.Co
 				}
 			}
 		}
-
 	})
-//line lock.ego:148
 	err := f(ctx)
 	close(done)
 	wg.Wait()

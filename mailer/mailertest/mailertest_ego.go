@@ -48,13 +48,9 @@ func NewServer(t testing.TB) *Server {
 	s := &Server{ln: ln}
 	s.wg.Go(s.accept)
 	t.Cleanup(func() {
-
-//line mailertest.ego:47
 		ln.Close()
 		s.wg.Wait()
-
 	})
-//line mailertest.ego:50
 	return s
 }
 

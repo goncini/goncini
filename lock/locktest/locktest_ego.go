@@ -26,8 +26,6 @@ func Run(t *testing.T, newStore func(t *testing.T) lock.Store) {
 	ctx := context.Background()
 
 	t.Run("holding", func(t *testing.T) {
-
-//line locktest.ego:25
 		f := &lock.Factory{Store: newStore(t), TTL: 100 * time.Millisecond}
 		a, b := f.New("report"), f.New("report")
 		gotA, err := a.Acquire(ctx)
@@ -94,23 +92,17 @@ func Run(t *testing.T, newStore func(t *testing.T) lock.Store) {
 		if refreshed {
 			t.Error("b refreshed a lock it lost")
 		}
-
 	})
 
 	// Run keeps the lock while its function runs, beyond the TTL, and one
 	// of two concurrent runs gets it.
-//line locktest.ego:57
 	t.Run("running", func(t *testing.T) {
-
-//line locktest.ego:58
 		f := &lock.Factory{Store: newStore(t), TTL: 60 * time.Millisecond}
 		var mu sync.Mutex
 		ran := 0
 		var wg sync.WaitGroup
 		for range 2 {
 			wg.Go(func() {
-
-//line locktest.ego:64
 				if _, err := f.New("job").Run(ctx, func(ctx context.Context) error {
 					mu.Lock()
 					ran++
@@ -120,7 +112,6 @@ func Run(t *testing.T, newStore func(t *testing.T) lock.Store) {
 				}); err != nil {
 					panic(err)
 				}
-
 			})
 		}
 //line locktest.ego:73
@@ -136,6 +127,5 @@ func Run(t *testing.T, newStore func(t *testing.T) lock.Store) {
 		if !held {
 			t.Error("Run didn't release the lock")
 		}
-
 	})
 }

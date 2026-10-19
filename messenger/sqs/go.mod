@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.9
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.52.4
 	github.com/aws/smithy-go v1.28.5
-	github.com/effect-go/effect-go v0.5.0
+	github.com/effect-go/effect-go v0.6.0
 	github.com/goncini/goncini v0.3.0
 	modernc.org/sqlite v1.60.1
 )

@@ -13,7 +13,7 @@ replace (
 )
 
 require (
-	github.com/effect-go/effect-go v0.5.0
+	github.com/effect-go/effect-go v0.6.0
 	github.com/goncini/goncini v0.3.0
 	github.com/goncini/goncini/db/goosedb v0.0.0
 	github.com/pressly/goose/v3 v3.28.0

@@ -21,8 +21,6 @@ const govulncheck = "golang.org/x/vuln/cmd/govulncheck@v1.9.0"
 func checkApp(out io.Writer, root string) error {
 	var failed []string
 	report := func(what string, err error) {
-
-//line check.ego:20
 		if err != nil {
 			var lines []string
 			for line := range strings.Lines(err.Error()) {
@@ -35,9 +33,7 @@ func checkApp(out io.Writer, root string) error {
 		} else {
 			fmt.Fprintf(out, "ok   %s\n", what)
 		}
-
 	}
-//line check.ego:33
 	report("the Go of the .ego files is up to date", run(root, "go", "tool", "ego", "generate", "-check", "./..."))
 	report("the wiring is up to date", generate(root, true))
 	report("no known vulnerability in the code the app calls", run(root, "go", "run", govulncheck, "./..."))

@@ -87,8 +87,6 @@ func describe(p Profile) string {
 func printProfile(out io.Writer, p Profile) {
 	fmt.Fprintf(out, "%s  %d  %s  %s\n", describe(p), p.Status, micros(p.Micros), p.Time.Local().Format(time.DateTime))
 	p.walk(func(s Span, depth int) {
-
-//line command.ego:78
 		indent := strings.Repeat("  ", depth+1)
 		fmt.Fprintf(out, "%s%s  +%s  %s", indent, s.Name, micros(s.Start), micros(s.Micros))
 		if s.Error != "" {
@@ -103,13 +101,10 @@ func printProfile(out io.Writer, p Profile) {
 				fmt.Fprintf(out, "%s  [%s] %s\n", indent, e.Attributes["log.severity"], e.Attributes["log.message"])
 			}
 		}
-
 	})
 }
 
 // micros writes a duration in microseconds, rounded for reading.
-//
-//line command.ego:96
 func micros(us int64) string {
 	d := time.Duration(us) * time.Microsecond
 	if d >= time.Millisecond {

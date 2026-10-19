@@ -144,15 +144,11 @@ func TestAPIs(t *testing.T) {
 		var got *http.Request
 		var body string
 		h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line mailer_test.ego:124
 			got = r
 			body = requestBody(t, r)
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"id":"1"}`))
-
 		})
-//line mailer_test.ego:129
 		switch api := tr.(type) {
 		case *mailer.PostmarkTransport:
 			api.Client.Transport = httpclient.Handler(h)
@@ -188,13 +184,9 @@ func TestAPIs(t *testing.T) {
 	}
 //line mailer_test.ego:156
 	tr.(*mailer.ResendTransport).Client.Transport = httpclient.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line mailer_test.ego:157
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		w.Write([]byte(`{"message":"Invalid to field"}`))
-
 	}))
-//line mailer_test.ego:160
 	e.From = mime.Address{Email: "hello@conduit.example"}
 	raw, err3 := e.Bytes()
 	if err3 != nil {

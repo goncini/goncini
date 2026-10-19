@@ -60,8 +60,6 @@ func TestStream(t *testing.T) {
 // until the client leaves.
 func TestStreamKeepAlive(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-
-//line stream_test.ego:60
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 		defer cancel()
 		rec := httptest.NewRecorder()
@@ -69,15 +67,12 @@ func TestStreamKeepAlive(t *testing.T) {
 		if rec.Body.String() != ":\n\n:\n\n" {
 			t.Errorf("%q", rec.Body)
 		}
-
 	})
 }
 
 // TestStreamEndsWithServer checks that a stream outlasts the server's
 // WriteTimeout, and that a server that shuts down ends it, rather than waiting
 // for it.
-//
-//line stream_test.ego:73
 func TestStreamEndsWithServer(t *testing.T) {
 	ln := listen(t)
 	events := make(chan httpkernel.Event[tick], 1)

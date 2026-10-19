@@ -13,16 +13,11 @@ import (
 
 //line cors_test.ego:12
 var ok = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-//line cors_test.ego:13
 	w.Header().Set("X-Total", "3")
 	w.Write([]byte("ok"))
-
 })
 
 // serve sends a request with the headers through the middleware of c.
-//
-//line cors_test.ego:18
 func serve(t *testing.T, c cors.Config, method string, header map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	mw, err := cors.New(c)

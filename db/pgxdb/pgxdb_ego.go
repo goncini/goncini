@@ -116,7 +116,6 @@ func (t *Transactor) begin(ctx context.Context) (context.Context, pgx.Tx, func()
 			return nil, nil, nil, fmt.Errorf("pgxdb: beginning a transaction: %w", err)
 		}
 		return context.WithValue(ctx, txKey{t.Pool}, tx), tx, func() {
-
 		}, nil
 	}
 //line pgxdb.ego:116
