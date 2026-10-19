@@ -3,6 +3,7 @@
 package httpkernel_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,7 +11,7 @@ import (
 	"github.com/goncini/goncini/httpkernel"
 )
 
-//line negotiate_test.ego:11
+//line negotiate_test.ego:12
 func TestNegotiate(t *testing.T) {
 	jsonXML := []string{"application/json", "application/xml"}
 	tests := []struct {
@@ -82,5 +83,51 @@ func TestNegotiateRejectsNaNQuality(t *testing.T) {
 	r.Header.Set("Accept", "application/json;q=NaN")
 	if got := httpkernel.Negotiate(r, "application/json"); got != "" {
 		t.Errorf("Negotiate = %q: q=NaN isn't a quality", got)
+	}
+}
+
+// TestEndpointNotAcceptable checks that an endpoint answers 406 to a
+// client whose Accept header allows none of its result's media type, and
+// lets the others through.
+func TestEndpointNotAcceptable(t *testing.T) {
+	type out struct {
+		N int `json:"n"`
+	}
+	json := httpkernel.Endpoint(func(ctx context.Context, in struct{}) (out, error) { return out{1}, nil })
+	none := httpkernel.Endpoint(func(ctx context.Context, in struct{}) (httpkernel.NoContent, error) {
+		return httpkernel.NoContent{}, nil
+	})
+	stream := httpkernel.Endpoint(func(ctx context.Context, in struct{}) (httpkernel.Stream[out], error) {
+		events := make(chan httpkernel.Event[out])
+		close(events)
+		return httpkernel.Stream[out]{Events: events}, nil
+	})
+	for _, tt := range []struct {
+		h      http.Handler
+		accept string
+		want   int
+	}{
+		{json, "", 200},
+		{json, "application/json", 200},
+		{json, "application/*", 200},
+		{json, "*/*;q=0.1, text/html", 200},
+		{json, "application/xml, application/json;q=0.5", 200},
+		{json, "application/vnd.api+json", 200},
+		{json, "not a media type", 200},
+		{json, "text/html", 406},
+		{json, "application/json;q=0, text/html", 406},
+		{none, "text/html", 204},
+		{stream, "text/event-stream", 200},
+		{stream, "application/json", 406},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		if tt.accept != "" {
+			r.Header.Set("Accept", tt.accept)
+		}
+		rec := httptest.NewRecorder()
+		tt.h.ServeHTTP(rec, r)
+		if rec.Code != tt.want {
+			t.Errorf("Accept %q: %d %s, want %d", tt.accept, rec.Code, rec.Body, tt.want)
+		}
 	}
 }

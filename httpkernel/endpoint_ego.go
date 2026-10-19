@@ -6,8 +6,10 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -36,20 +38,61 @@ import (
 //
 // The result is written with status 200, unless it writes its own response
 // by implementing Responder, as Created, NoContent, Response, Cached and
-// Stream do.
+// Stream do. A request whose Accept header allows none of the result's
+// media type, JSON or an event stream, is answered 406 first.
 //
 // The handler has a String method naming h, which route listings show:
 // articles.(*Controller).Show.
 //
-//line endpoint.ego:41
+//line endpoint.ego:43
 func Endpoint[In, Out any](h func(context.Context, In) (Out, error)) http.Handler {
-	return &endpoint[In, Out]{h: h, b: newBinder(reflect.TypeFor[In]())}
+	return &endpoint[In, Out]{h: h, b: newBinder(reflect.TypeFor[In]()), mediaType: bodyMediaType[Out]()}
 }
 
 // endpoint is the handler Endpoint returns.
 type endpoint[In, Out any] struct {
-	h func(context.Context, In) (Out, error)
-	b *binder
+	h         func(context.Context, In) (Out, error)
+	b         *binder
+	mediaType string // of the body that an Out is written as; "" for none, or unknown
+}
+
+// bodyMediaType is the media type of the body that an Out is written as:
+// JSON, or a MediaTypeDescriber's; "" for a ResponseDescriber without a
+// body, or a Responder that writes what it writes.
+func bodyMediaType[Out any]() string {
+	var out Out
+	switch v := any(out).(type) {
+	case MediaTypeDescriber:
+		return v.DescribeMediaType()
+	case ResponseDescriber:
+		_, body := v.DescribeResponse()
+		var v2 string
+		if body != nil {
+			v2 = "application/json"
+		} else {
+			v2 = ""
+		}
+		return v2
+//line endpoint.ego:65
+	case Responder:
+		return ""
+	}
+	return "application/json"
+}
+
+// acceptable reports whether the Accept header of r allows mediaType; for
+// application/json, any JSON type, whose subtype ends in +json, as
+// application/vnd.api+json, which a Response may answer. A request without
+// an Accept header, or without one that parses, accepts anything.
+func acceptable(r *http.Request, mediaType string) bool {
+	if mediaType == "" {
+		return true
+	}
+	ranges := parseAccept(r.Header.Values("Accept"))
+	if len(ranges) == 0 || quality(ranges, mediaType) > 0 {
+		return true
+	}
+	return mediaType == "application/json" && slices.ContainsFunc(ranges, func(m mediaRange) bool { return m.q > 0 && m.typ == "application" && strings.HasSuffix(m.sub, "+json") })
 }
 
 func (e *endpoint[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +108,11 @@ func (e *endpoint[In, Out]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if st != nil {
 		k = st.kernel
 	}
-//line endpoint.ego:61
+//line endpoint.ego:96
+	if !acceptable(r, e.mediaType) {
+		WriteError(w, r, Problem{Status: http.StatusNotAcceptable, Detail: fmt.Sprintf("the response is %s, which the Accept header doesn't allow", e.mediaType)})
+		return
+	}
 	var in In
 	cleanup, err := e.b.bind(w, r, reflect.ValueOf(&in).Elem(), cmp.Or(e.b.limit, k.bodyLimit()))
 	if err != nil {

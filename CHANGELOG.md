@@ -29,6 +29,10 @@
   `httpkernel.Stopping(ctx)` tells other responses that last.
   `MediaTypeDescriber` lets a `Responder` give its media type to the
   OpenAPI document.
+- **httpkernel:** an endpoint answers 406 to a request whose `Accept`
+  header allows none of its result's media type: JSON, in any of its
+  `+json` types, or a `Stream`'s `text/event-stream`. A request without an
+  `Accept` header, or with one that doesn't parse, still gets JSON.
 - **hub:** a new package that fans events out to the clients that stream
   them, as Symfony's Mercure does. `hub.Subscribe[T]` returns a stream's
   channel of a topic's events, and `Hub.Publish` publishes to it. Each

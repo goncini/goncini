@@ -200,7 +200,8 @@ type UpdateInput struct {
 - An input with no values is `struct{}`.
 
 A request is checked in this order, each step answering for itself: the
-route's middleware, such as `security.Required` (401); binding the path,
+route's middleware, such as `security.Required` (401); the `Accept`
+header, which must allow JSON, or the result's media type (406); binding the path,
 query and headers (400) and the JSON body (400, 413, 415, 422); the
 `validate` tags, then `Validate()` (422); then the endpoint, with its own
 404s and 403s.
