@@ -354,6 +354,43 @@ Form login, sessions, remember-me and CSRF stay out, as browser concerns.
 
 > **Status (2026-10-19), step 7:** the profiler's routes are pages in a browser, its list of requests and each one's timeline, queries and logs, and still JSON for the others. The user decided the same day the forks of steps 7 to 11: HTML pages for the profiler; decoration and lazy services asked of effect-go, whose `layer` would own them, rather than built in goncini's generator; Symfony's constraints that go-playground lacks as tags of goncini's, with a table of those it has; Amazon SES, Brevo and Mailjet for the mailer; an HTML sanitizer and a semaphore. Decisions taken on the user's behalf: the same URLs as the JSON, chosen by the `Accept` header, so that a link from a log or `debug:requests` opens in a browser; `html/template` with the page embedded, without JavaScript, the details of a span unfolding with `<details>`; no toolbar, which an API's responses can't show.
 
+> **Status (2026-10-19), step 8:** decoration and lazy services are written up as requests to effect-go, in §4.7, with a formatting bug that step 6 found; goncini builds them once `layer` has them.
+
+### 4.7 Asked of effect-go
+
+Step 8 of the backlog needs effect-go's `layer`, whose resolver `ego
+generate` runs, as the user decided on 2026-10-19. Its maintainers' session
+wasn't running that day; these are the requests to give it.
+
+1. **Decoration**, as Symfony's `#[AsDecorator]`: `layer.Decorate(NewCachedRepo)`,
+   whose provider `func NewCachedRepo(inner articles.Repo, c *cache.Cache) articles.Repo`
+   takes the service it wraps as its parameter of its own result's type.
+   Every other provider that needs a `Repo` gets the decorator's; the
+   decorated one, only the decorator. Several decorators of a type wrap in
+   the order they are listed, the first nearest the original. goncini would
+   use it to wrap a `mailer.Transport` with one that logs, a store with a
+   cache, and a bundle's service with an app's.
+2. **Lazy services**: a parameter of type `layer.Lazy[T]`, whose `Get()
+   (T, error)` builds T the first time, with the dependencies that nothing
+   eager built yet, once, its cleanup registered with the scope. goncini
+   builds the whole app for each console command, `list` included: what
+   only some commands or requests need, such as a client that loads a
+   service account's keys, would wait for them.
+3. **A formatting fix**: an expression-bodied lambda whose parameter's
+   type is a struct literal that spans lines is lowered to
+   `func(x struct {…}) bool { return … })` on one line, which `gofmt -l`
+   reports, so the generated file fails a check that it is formatted:
+
+   ```go
+   func f(xs []struct {
+   	A string `json:"a"`
+   }) bool {
+   	return slices.ContainsFunc(xs, x => x.A == "")
+   }
+   ```
+
+   goncini names the type instead, in `notifier/push.ego`.
+
 ## 5. Risks
 
 - **Tooling, once `goncini generate` comes.** Generation runs twice around `ego generate`, and stale generated files are the classic failure. If it's clumsy, ask effect-go for a hook between lowering and layer wiring; its maintainer session has offered to fix what a framework genuinely needs.
