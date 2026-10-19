@@ -1,0 +1,96 @@
+package lock
+
+import (
+	"context"
+	"sync"
+	"time"
+)
+
+// NewSemaphore returns the semaphore of key, which up to limit owners hold
+// at once, of the factory's store and TTL: the limit is the same in every
+// process that uses key. Its slots are locks of the store, of the keys
+// semaphore:key:0 to semaphore:key:limit-1, so that any store keeps them;
+// taking one tries them in turn.
+func (f *Factory) NewSemaphore(key string, limit int) *Semaphore {
+	if limit < 1 {
+		panic(f"lock: the semaphore {key} has a limit of {limit}, not at least 1")
+	}
+	owner := f.New(key)
+	s := &Semaphore{slots: make([]*Lock, limit), held: -1}
+	for i := range s.slots {
+		s.slots[i] = &Lock{store: owner.store, key: f"semaphore:{key}:{i}", owner: owner.owner, ttl: owner.ttl}
+	}
+	return s
+}
+
+// Semaphore is a semaphore of a key, one of whose slots its owner holds, or
+// not.
+type Semaphore struct {
+	slots []*Lock
+
+	mu   sync.Mutex
+	held int // the slot it holds, or -1
+}
+
+// Acquire takes a slot if one is free, and reports whether it did; it
+// doesn't wait. Acquiring a semaphore held already extends its slot, as
+// Refresh does.
+func (s *Semaphore) Acquire(ctx context.Context) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.held >= 0 {
+		ok := check s.slots[s.held].Acquire(ctx) ""
+		if ok {
+			return true, nil
+		}
+		s.held = -1
+	}
+	for i, slot := range s.slots {
+		ok := check slot.Acquire(ctx) ""
+		if ok {
+			s.held = i
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Refresh extends the slot for its TTL, and reports whether it still held
+// it: false if it had expired and someone else took it.
+func (s *Semaphore) Refresh(ctx context.Context) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.held < 0 {
+		return false, nil
+	}
+	ok := check s.slots[s.held].Refresh(ctx) ""
+	if !ok {
+		s.held = -1
+	}
+	return ok, nil
+}
+
+// Release frees the slot, if it holds one.
+func (s *Semaphore) Release(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.held < 0 {
+		return nil
+	}
+	slot := s.slots[s.held]
+	s.held = -1
+	return slot.Release(ctx)
+}
+
+// Wait takes a slot, trying again every interval until one is free or ctx
+// is done.
+func (s *Semaphore) Wait(ctx context.Context, interval time.Duration) error {
+	return wait(ctx, s, interval)
+}
+
+// Run calls f holding a slot, as Lock's Run does: refreshing it while f
+// runs, false without calling f if none is free, and f's context cancelled
+// with ErrLost if a refresh finds the slot lost.
+func (s *Semaphore) Run(ctx context.Context, f func(ctx context.Context) error) (bool, error) {
+	return run(ctx, s, s.slots[0].ttl, f)
+}

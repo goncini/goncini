@@ -1,0 +1,90 @@
+package lock_test
+
+import (
+	"context"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/goncini/goncini/lock"
+)
+
+func TestSemaphore(t *testing.T) {
+	synctest.Test(t, (t *testing.T) => {
+		ctx := context.Background()
+		f := &lock.Factory{Store: &lock.MemoryStore{}, TTL: time.Minute}
+		a, b, c := f.NewSemaphore("pdf", 2), f.NewSemaphore("pdf", 2), f.NewSemaphore("pdf", 2)
+		gotA := must a.Acquire(ctx)
+		gotB := must b.Acquire(ctx)
+		gotC := must c.Acquire(ctx)
+		again := must a.Acquire(ctx) // its slot, extended, rather than another
+		if !gotA || !gotB || gotC || !again {
+			t.Fatalf("a %v, b %v, c %v, a again %v", gotA, gotB, gotC, again)
+		}
+		must a.Release(ctx)
+		gotC = must c.Acquire(ctx)
+		held := must a.Refresh(ctx)
+		if !gotC || held {
+			t.Fatalf("c %v once a released, a still %v", gotC, held)
+		}
+
+		// b's slot expires, and a takes it: b no longer holds one, and
+		// takes none.
+		time.Sleep(50 * time.Second)
+		must c.Refresh(ctx)
+		time.Sleep(20 * time.Second)
+		gotA = must a.Acquire(ctx)
+		held = must b.Refresh(ctx)
+		gotB = must b.Acquire(ctx)
+		if !gotA || held || gotB {
+			t.Errorf("a %v, b still %v, b again %v", gotA, held, gotB)
+		}
+
+		go () => {
+			time.Sleep(2500 * time.Millisecond)
+			must c.Release(ctx)
+		}()
+		start := time.Now()
+		must b.Wait(ctx, time.Second)
+		if waited := time.Since(start); waited != 3*time.Second {
+			t.Errorf("b waited %v for c's slot, freed after 2.5s", waited)
+		}
+	})
+}
+
+// TestSemaphoreRun checks that Run keeps the number of its functions
+// running at once to the limit, refreshing their slots beyond the TTL.
+func TestSemaphoreRun(t *testing.T) {
+	synctest.Test(t, (t *testing.T) => {
+		ctx := context.Background()
+		f := &lock.Factory{Store: &lock.MemoryStore{}, TTL: time.Second}
+		var running, most, ran atomic.Int32
+		var wg sync.WaitGroup
+		for range 10 {
+			wg.Go(() => {
+				s := f.NewSemaphore("render", 3)
+				for {
+					ok := must s.Run(ctx, func(ctx context.Context) error {
+						n := running.Add(1)
+						for m := most.Load(); n > m && !most.CompareAndSwap(m, n); m = most.Load() {
+						}
+						time.Sleep(5 * time.Second) // beyond the TTL
+						running.Add(-1)
+						return context.Cause(ctx)
+					})
+					if ok {
+						ran.Add(1)
+						return
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+			})
+		}
+		wg.Wait()
+		if most.Load() != 3 || ran.Load() != 10 {
+			t.Errorf("%d at most at once, %d ran", most.Load(), ran.Load())
+		}
+	})
+}

@@ -1,0 +1,35 @@
+package htmlsanitizer_test
+
+import (
+	"testing"
+
+	"github.com/goncini/goncini/htmlsanitizer"
+)
+
+func TestSanitize(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		config   htmlsanitizer.Config
+		in, want string
+	}{
+		{"user content", htmlsanitizer.Config{},
+			`<p onclick="steal()">Hi <script>steal()</script><b>Ann</b> <a href="javascript:steal()">x</a> <a href="https://example.com">y</a> <a href="/about">z</a><img src="https://example.com/a.png" onerror="steal()"></p>`,
+			`<p>Hi <b>Ann</b> x <a href="https://example.com" rel="nofollow">y</a> <a href="/about" rel="nofollow">z</a><img src="https://example.com/a.png"></p>`},
+		{"strict", htmlsanitizer.Config{Strict: true}, `<b>Hi</b> <i>Ann</i> &amp; <script>steal()</script>Bob`, `Hi Ann &amp; Bob`},
+		{"allowed", htmlsanitizer.Config{Strict: true, Allow: map[string][]string{"b": nil, "a": {"href"}}},
+			`<b>Hi</b> <i>Ann</i> <a href="javascript:steal()">x</a> <a href="mailto:ann@example.com">y</a>`,
+			`<b>Hi</b> Ann x <a href="mailto:ann@example.com" rel="nofollow">y</a>`},
+		{"attributes of all", htmlsanitizer.Config{Allow: map[string][]string{"*": {"class"}, "mark": nil}},
+			`<p class="lead">Hi <mark class="x">Ann</mark></p>`, `<p class="lead">Hi <mark class="x">Ann</mark></p>`},
+		{"schemes", htmlsanitizer.Config{URLSchemes: []string{"HTTPS"}},
+			`<a href="http://example.com">a</a> <a href="https://example.com">b</a> <a href="mailto:ann@example.com">c</a>`,
+			`a <a href="https://example.com" rel="nofollow">b</a> c`},
+		{"hosts", htmlsanitizer.Config{URLHosts: []string{"Example.com"}},
+			`<a href="https://example.com/a">a</a> <a href="https://evil.example/b">b</a> <a href="//evil.example/c">c</a> <a href="/d">d</a> <a href="mailto:ann@evil.example">e</a><img src="https://evil.example/x.png">`,
+			`<a href="https://example.com/a" rel="nofollow">a</a> b c d <a href="mailto:ann@evil.example" rel="nofollow">e</a>`},
+	} {
+		if got := htmlsanitizer.New(c.config).Sanitize(c.in); got != c.want {
+			t.Errorf("%s:\n got %s\nwant %s", c.name, got, c.want)
+		}
+	}
+}

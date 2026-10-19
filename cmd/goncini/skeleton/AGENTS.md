@@ -167,6 +167,9 @@ type UpdateInput struct {
   input's pointer, which runs after the tags and returns
   `httpkernel.Invalid(httpkernel.Violation{Pointer: "#/article/title",
   Detail: "can't be blank"})`.
+- HTML from users, such as a rich text's, goes through the
+  `htmlsanitizer` module's `Sanitizer.Sanitize` before it's kept, which
+  keeps what can't run code: `htmlsanitizer.New` in `Services`.
 - `httpkernel.Optional[T]` tells an absent member from `null` and from a
   value, for updates: `.Set`, `.Null`, `.Value`, `.Present()`. Its
   `validate` tags check its value when it is present:
@@ -382,6 +385,10 @@ func (n *Notifications) Schedule(s *scheduler.Scheduler) {
 
 `scheduler:trigger notifications:prune` runs a task now, once: by hand, or
 in a test.
+
+A lock store also keeps semaphores, which a number of processes hold at
+once: `(&lock.Factory{Store: store}).NewSemaphore("pdf", 2)` has `Acquire`,
+`Release`, `Wait` and `Run`, as a lock has.
 
 A message dispatched inside `InTx`, to a queue in the same database
 (`messenger.SQL`), is queued only if the transaction commits: write what

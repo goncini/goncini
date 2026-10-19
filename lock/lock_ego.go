@@ -15,6 +15,10 @@
 // forever: Run refreshes it while its function runs. A Store keeps the
 // locks: MemoryStore within a process, SQLStore across the processes that
 // share a database.
+//
+// A Semaphore is a lock that a number of processes hold at once, as
+// Symfony's Semaphore component's are: two renderings of PDFs at a time,
+// across the app's servers.
 package lock
 
 import (
@@ -29,7 +33,7 @@ import (
 
 // Store keeps locks: who holds each key, until when.
 //
-//line lock.ego:29
+//line lock.ego:33
 type Store interface {
 	// Acquire gives key to owner for ttl, if no one else holds it or their
 	// hold has expired, and reports whether it did. An owner that holds
@@ -87,12 +91,31 @@ func (l *Lock) Release(ctx context.Context) error {
 // Wait takes the lock, trying again every interval until it is free or ctx
 // is done.
 func (l *Lock) Wait(ctx context.Context, interval time.Duration) error {
+	return wait(ctx, l, interval)
+}
+
+// Run calls f holding the lock, refreshing it every third of its TTL while
+// f runs, and reports whether it held it: false, without calling f, if
+// someone else does. If a refresh finds the lock lost, f's context is
+// cancelled with ErrLost. The lock is released when f returns.
+func (l *Lock) Run(ctx context.Context, f func(ctx context.Context) error) (bool, error) {
+	return run(ctx, l, l.ttl, f)
+}
+
+// holder is what Wait and Run take and keep: a Lock or a Semaphore.
+type holder interface {
+	Acquire(ctx context.Context) (bool, error)
+	Refresh(ctx context.Context) (bool, error)
+	Release(ctx context.Context) error
+}
+
+func wait(ctx context.Context, h holder, interval time.Duration) error {
 	for {
-		ok, err := l.Acquire(ctx)
+		ok, err := h.Acquire(ctx)
 		if err != nil {
 			return err
 		}
-//line lock.ego:88
+//line lock.ego:111
 		if ok {
 			return nil
 		}
@@ -104,16 +127,12 @@ func (l *Lock) Wait(ctx context.Context, interval time.Duration) error {
 	}
 }
 
-// Run calls f holding the lock, refreshing it every third of its TTL while
-// f runs, and reports whether it held it: false, without calling f, if
-// someone else does. If a refresh finds the lock lost, f's context is
-// cancelled with ErrLost. The lock is released when f returns.
-func (l *Lock) Run(ctx context.Context, f func(ctx context.Context) error) (bool, error) {
-	ok, err2 := l.Acquire(ctx)
+func run(ctx context.Context, h holder, ttl time.Duration, f func(ctx context.Context) error) (bool, error) {
+	ok, err2 := h.Acquire(ctx)
 	if err2 != nil {
 		return false, err2
 	}
-//line lock.ego:105
+//line lock.ego:124
 	if !ok {
 		return false, nil
 	}
@@ -123,8 +142,8 @@ func (l *Lock) Run(ctx context.Context, f func(ctx context.Context) error) (bool
 	var wg sync.WaitGroup
 	wg.Go(func() {
 
-//line lock.ego:113
-		tick := time.NewTicker(l.ttl / 3)
+//line lock.ego:132
+		tick := time.NewTicker(ttl / 3)
 		defer tick.Stop()
 		for {
 			select {
@@ -133,7 +152,7 @@ func (l *Lock) Run(ctx context.Context, f func(ctx context.Context) error) (bool
 			case <-tick.C:
 				// An error may be passing: the next tick tries again, and
 				// the lock runs out if they all fail.
-				if held, err := l.Refresh(ctx); err == nil && !held {
+				if held, err := h.Refresh(ctx); err == nil && !held {
 					cancel(ErrLost)
 					return
 				}
@@ -141,19 +160,19 @@ func (l *Lock) Run(ctx context.Context, f func(ctx context.Context) error) (bool
 		}
 
 	})
-//line lock.ego:129
+//line lock.ego:148
 	err := f(ctx)
 	close(done)
 	wg.Wait()
-	releaseErr := l.Release(context.WithoutCancel(ctx))
+	releaseErr := h.Release(context.WithoutCancel(ctx))
 	if err == nil {
 		err = releaseErr
 	}
 	return true, err
 }
 
-// ErrLost is the cause of the cancellation of Run's function when its lock
-// expired and someone else took it.
+// ErrLost is the cause of the cancellation of Run's function when its lock,
+// or its semaphore's slot, expired and someone else took it.
 var ErrLost = lostError{}
 
 type lostError struct{}

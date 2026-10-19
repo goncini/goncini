@@ -60,6 +60,16 @@
   that the app's instances share their limits. An update watches the key,
   and tries again when another changed it first: a `Store`'s `Update` may
   call its function more than once.
+- **lock:** semaphores, which up to a number of processes hold at once, as
+  Symfony's Semaphore component's are: `Factory.NewSemaphore(key, limit)`,
+  with `Acquire`, `Refresh`, `Release`, `Wait` and `Run`, as a lock has.
+  Its slots are locks of the factory's store, so that the memory, SQL and
+  Redis stores keep them as they are.
+- **htmlsanitizer:** a new module that keeps of users' HTML what can't run
+  code, as Symfony's HtmlSanitizer does, with bluemonday: the elements of
+  user content by default, or none with `Strict`; more with `Allow`, and
+  the URLs' schemes and hosts with `URLSchemes` and `URLHosts`, which every
+  link and medium is checked against.
 - **mailer:** Brevo's and Mailjet's APIs, `brevo+api://KEY@default` and
   `mailjet+api://KEY:SECRET@default`, with `?sandbox=true` for Mailjet's
   checks without sending. Both take one Reply-To at most, and refuse an
