@@ -10,7 +10,7 @@ tool (
 
 require (
 	github.com/effect-go/effect-go v0.6.1
-	github.com/goncini/goncini v0.3.0
+	github.com/goncini/goncini v0.4.0
 	github.com/goncini/goncini/db/goosedb v0.0.0
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/pressly/goose/v3 v3.28.0
