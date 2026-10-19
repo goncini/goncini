@@ -17,7 +17,8 @@ import (
 )
 
 // skeleton is the files of a new app, as templates: file.tmpl becomes
-// file, and env.tmpl, env.test.tmpl and gitignore.tmpl the dotfiles.
+// file, and env.tmpl, env.test.tmpl, gitignore.tmpl and dockerignore.tmpl
+// the dotfiles.
 //
 //go:embed skeleton
 var skeleton embed.FS
@@ -144,7 +145,7 @@ func write(dir string, data skeletonData, skip func(rel string) bool) error {
 		if skip(rel) {
 			return nil
 		}
-		if rel == "env" || rel == "env.test" || rel == "gitignore" {
+		if rel == "env" || rel == "env.test" || rel == "gitignore" || rel == "dockerignore" {
 			rel = "." + rel
 		}
 		src := check skeleton.ReadFile(name) ""

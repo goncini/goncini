@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1
+
+# The API's image: its binary, which serves it, runs its commands, such as
+# db:migrate, and embeds its migrations; and its prod vault.
+#
+#	docker build -t <%.Name%> .
+#	docker run -v <%.Name%>:/data -e DATABASE_URL=file:/data/<%.Name%>.db <%.Name%> db:migrate
+#	docker run -p 8080:8080 -v <%.Name%>:/data -e DATABASE_URL=file:/data/<%.Name%>.db <%.Name%>
+#
+# It has no .env file: the config, the vault, whose decryption key it is
+# given in GONCINI_DECRYPTION_KEY, and the container's environment are all
+# it reads. It runs as nonroot, which owns /data, for a SQLite database.
+
+FROM golang:1.27 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+# The generated Go is committed: go build needs no ego.
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+	CGO_ENABLED=0 go build -trimpath -ldflags=-s -o /out/<%.Name%> . && \
+	mkdir -p config/secrets/prod /out/data
+
+FROM gcr.io/distroless/static-debian13:nonroot
+WORKDIR /app
+COPY --from=build /src/config/secrets/prod config/secrets/prod
+COPY --from=build /out/<%.Name%> .
+COPY --from=build --chown=nonroot:nonroot /out/data /data
+ENV APP_ENV=prod
+EXPOSE 8080
+ENTRYPOINT ["/app/<%.Name%>"]

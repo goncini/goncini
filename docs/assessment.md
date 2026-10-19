@@ -305,6 +305,8 @@ through Messenger with retries; then a secrets vault, a Dockerfile from
 
 > **Status (2026-10-19), step 5:** the secrets vault is [secrets](../secrets), with the goncini tool's `secrets:` commands. Decisions taken on the user's behalf: HPKE from the standard library, with ML-KEM-768 and X25519, rather than a dependency on libsodium's sealed boxes as Symfony's, and post-quantum, since a vault is committed for years; a file per secret, so that two branches that set different secrets merge; the vault over the `.env` files, which hold dev's values, and under the process's environment; and a locked vault's secrets taking no `.env` value, so that a server without the key fails to start rather than running on dev's database.
 
+> **Status (2026-10-19), step 5:** `goncini new` writes a Dockerfile. Decisions taken on the user's behalf: no `.env` file in the image, which the `.dockerignore` keeps out of the build, so that a missing secret fails at start, rather than taking dev's value; distroless's static image, run as nonroot, since the binary is static, with modernc's SQLite; a `/data` that nonroot owns, for a new app's SQLite database in a volume; and no CI job that builds it, since a new app requires the released goncini, and the Dockerfile was checked by building and running a new app's image.
+
 ## 5. Risks
 
 - **Tooling, once `goncini generate` comes.** Generation runs twice around `ego generate`, and stale generated files are the classic failure. If it's clumsy, ask effect-go for a hook between lowering and layer wiring; its maintainer session has offered to fix what a framework genuinely needs.

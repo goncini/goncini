@@ -19,10 +19,11 @@ import (
 )
 
 // skeleton is the files of a new app, as templates: file.tmpl becomes
-// file, and env.tmpl, env.test.tmpl and gitignore.tmpl the dotfiles.
+// file, and env.tmpl, env.test.tmpl, gitignore.tmpl and dockerignore.tmpl
+// the dotfiles.
 //
 //go:embed skeleton
-//line new.ego:23
+//line new.ego:24
 var skeleton embed.FS
 
 // skeletonData is what the skeleton's templates are given.
@@ -56,7 +57,7 @@ func newApp(module, dir, replace string) (err error) {
 	if err2 := modpath.CheckPath(module); err2 != nil {
 		return err2
 	}
-//line new.ego:54
+//line new.ego:55
 	entries, err := os.ReadDir(dir)
 	if err == nil && len(entries) > 0 {
 		return fmt.Errorf("%s isn't empty", dir)
@@ -78,7 +79,7 @@ func newApp(module, dir, replace string) (err error) {
 		}
 		replace = v
 	}
-//line new.ego:71
+//line new.ego:72
 	prefix, _, _ := modpath.SplitPathVersion(module) // example.com/acme of example.com/acme/v2
 	data := skeletonData{Module: module, Name: path.Base(prefix), Replace: replace}
 	return writeApp(dir, data)
@@ -92,7 +93,7 @@ func replacement(dir, replace string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-//line new.ego:81
+//line new.ego:82
 	if _, err := os.Stat(filepath.Join(abs, "go.mod")); err != nil {
 		return "", fmt.Errorf("%s isn't a goncini checkout", replace)
 	}
@@ -104,29 +105,29 @@ func replacement(dir, replace string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-//line new.ego:90
+//line new.ego:91
 	app, err := filepath.Abs(dir)
 	if err != nil {
 		return "", err
 	}
-//line new.ego:91
+//line new.ego:92
 	v, err := filepath.EvalSymlinks(app)
 	if err != nil {
 		return "", err
 	}
 	app = v
-//line new.ego:92
+//line new.ego:93
 	v2, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		return "", err
 	}
 	abs = v2
-//line new.ego:93
+//line new.ego:94
 	rel, err := filepath.Rel(app, abs)
 	if err != nil {
 		return "", err
 	}
-//line new.ego:94
+//line new.ego:95
 	if !strings.HasPrefix(rel, ".") {
 		rel = "./" + rel // go.mod's relative paths start with ./ or ../
 	}
@@ -151,7 +152,7 @@ func writeApp(dir string, data skeletonData) error {
 	}
 	// Blank imports keep the dependencies while the module is tidied:
 	// tidy doesn't read .ego files, and their Go isn't generated yet.
-//line new.ego:116
+//line new.ego:117
 	var imports strings.Builder
 	for _, d := range deps {
 		imports.WriteString(fmt.Sprintf("\t_ %q\n", d))
@@ -160,39 +161,39 @@ func writeApp(dir string, data skeletonData) error {
 	if err := os.WriteFile(depsFile, []byte("//go:build tools\n\npackage main\n\nimport (\n"+imports.String()+")\n"), 0o644); err != nil {
 		return err
 	}
-//line new.ego:122
+//line new.ego:123
 	if data.Replace != "" {
 		if err := run(dir, "go", "mod", "edit", "-require=github.com/goncini/goncini@v0.0.0", "-require=github.com/goncini/goncini/db/goosedb@v0.0.0"); err != nil {
 			return err
 		}
 	} else {
-//line new.ego:125
+//line new.ego:126
 		v := version()
 		if err := run(dir, "go", "get", "github.com/goncini/goncini@"+v, "github.com/goncini/goncini/db/goosedb@"+v); err != nil {
 			return err
 		}
 	}
-//line new.ego:128
-	if err := run(dir, "go", "mod", "tidy"); err != nil {
-		return err
-	}
 //line new.ego:129
-	if err := write(dir, data, func(rel string) bool { return !injector(rel) }); err != nil {
+	if err := run(dir, "go", "mod", "tidy"); err != nil {
 		return err
 	}
 //line new.ego:130
-	if err := run(dir, "go", "tool", "goncini", "generate"); err != nil {
+	if err := write(dir, data, func(rel string) bool { return !injector(rel) }); err != nil {
 		return err
 	}
 //line new.ego:131
-	if err := os.Remove(depsFile); err != nil {
+	if err := run(dir, "go", "tool", "goncini", "generate"); err != nil {
 		return err
 	}
 //line new.ego:132
-	if err := run(dir, "go", "mod", "tidy"); err != nil {
+	if err := os.Remove(depsFile); err != nil {
 		return err
 	}
 //line new.ego:133
+	if err := run(dir, "go", "mod", "tidy"); err != nil {
+		return err
+	}
+//line new.ego:134
 	return nil
 }
 
@@ -202,7 +203,7 @@ func write(dir string, data skeletonData, skip func(rel string) bool) error {
 		if err != nil {
 			return err
 		}
-//line new.ego:140
+//line new.ego:141
 		if d.IsDir() {
 			return nil
 		}
@@ -210,29 +211,29 @@ func write(dir string, data skeletonData, skip func(rel string) bool) error {
 		if skip(rel) {
 			return nil
 		}
-		if rel == "env" || rel == "env.test" || rel == "gitignore" {
+		if rel == "env" || rel == "env.test" || rel == "gitignore" || rel == "dockerignore" {
 			rel = "." + rel
 		}
 		src, err2 := skeleton.ReadFile(name)
 		if err2 != nil {
 			return err2
 		}
-//line new.ego:151
+//line new.ego:152
 		t, err3 := template.New(rel).Delims("<%", "%>").Parse(string(src))
 		if err3 != nil {
 			return err3
 		}
-//line new.ego:152
+//line new.ego:153
 		var out bytes.Buffer
 		if err4 := t.Execute(&out, data); err4 != nil {
 			return err4
 		}
-//line new.ego:154
+//line new.ego:155
 		target := filepath.Join(dir, filepath.FromSlash(rel))
 		if err5 := os.MkdirAll(filepath.Dir(target), 0o755); err5 != nil {
 			return err5
 		}
-//line new.ego:156
+//line new.ego:157
 		return os.WriteFile(target, out.Bytes(), 0o644)
 	})
 }

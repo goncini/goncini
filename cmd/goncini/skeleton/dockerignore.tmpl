@@ -1,0 +1,9 @@
+# What the image is built without: git, the .env files, which hold local
+# secrets and dev's values, the vaults' decryption keys, and the dev
+# database and profiles
+.git
+.env*
+**/decrypt.key
+var/
+*.db
+/<%.Name%>

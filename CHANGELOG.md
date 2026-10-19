@@ -53,6 +53,9 @@ new` and the makers.
   authenticated the request, which a verifier records with
   `security.SetClaims`, as oidc's does: `Load` reads them to create the
   user of a first request.
+- **goncini new** writes a `Dockerfile` and a `.dockerignore`: a static
+  binary on distroless, run as nonroot, with the prod vault and no `.env`
+  file, which serves, and runs the app's commands, such as `db:migrate`.
 - **secrets**, a new package, is a vault of secrets per environment, as
   Symfony's is: in `config/secrets/<env>`, each secret sealed with HPKE,
   ML-KEM-768 and X25519, with its public `encrypt.key`; `decrypt.key`, or

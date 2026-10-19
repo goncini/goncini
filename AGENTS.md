@@ -63,6 +63,7 @@ requires the modules they import.
 main.ego              goncini.Main(config.Load, app.Build)
 .env, .env.test       APP_ENV and secrets for local work and tests
 config/secrets/<env>/ an environment's vault: its secrets, encrypted, committed
+Dockerfile            the image of the app: its binary and the prod vault
 config/               type Config, Load(env), and one file per environment
 app/                  the wiring: inject.go, services.ego, and the generated autoconfigured_gen.go
 migrations/           goose SQL files, embedded
